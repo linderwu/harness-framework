@@ -11,16 +11,18 @@ const token = process.env.HARNESS_BRIDGE_TOKEN
 const repoRoot = path.resolve(
   process.env.CODEX_BRIDGE_REPO_ROOT ?? process.cwd()
 )
+const activeAgentRuns = new Map()
+const activeWorkflowRuns = new Map()
 
 const server = http.createServer(async (request, response) => {
   try {
+    const requestUrl = new URL(
+      request.url ?? "/",
+      `http://${request.headers.host ?? `${host}:${port}`}`
+    )
+
     if (request.method === "GET" && request.url === "/health") {
       sendJson(response, 200, { ok: true, repoRoot })
-      return
-    }
-
-    if (request.method !== "POST" || request.url !== "/agent-runs") {
-      sendJson(response, 404, { error: "not found" })
       return
     }
 
@@ -29,10 +31,28 @@ const server = http.createServer(async (request, response) => {
       return
     }
 
+    const cancelMatch = requestUrl.pathname.match(
+      /^\/workflow-runs\/([^/]+)\/cancel$/
+    )
+
+    if (request.method === "POST" && cancelMatch) {
+      const workflowRunId = decodeURIComponent(cancelMatch[1])
+      sendJson(response, 200, {
+        ok: true,
+        cancelled: cancelWorkflowRun(workflowRunId)
+      })
+      return
+    }
+
+    if (request.method !== "POST" || requestUrl.pathname !== "/agent-runs") {
+      sendJson(response, 404, { error: "not found" })
+      return
+    }
+
     const payload = await readJson(request)
     const id = randomUUID()
     const startedAt = new Date().toISOString()
-    const result = await runCodex(buildPrompt(payload), id)
+    const result = await runCodex(buildPrompt(payload), id, payload.workflowRunId)
 
     sendJson(response, 200, {
       id,
@@ -53,7 +73,7 @@ server.listen(port, host, () => {
   }
 })
 
-async function runCodex(prompt, id) {
+async function runCodex(prompt, id, workflowRunId) {
   const outputFile = path.join(os.tmpdir(), `codex-bridge-${id}.txt`)
   const command = process.env.CODEX_BRIDGE_COMMAND ?? "codex"
   const sandbox = process.env.CODEX_BRIDGE_SANDBOX ?? "workspace-write"
@@ -81,7 +101,13 @@ async function runCodex(prompt, id) {
 
   let stdout = ""
   let stderr = ""
-  const timer = setTimeout(() => child.kill("SIGTERM"), timeoutMs)
+  const cancel = () => child.kill("SIGTERM")
+  const timer = setTimeout(cancel, timeoutMs)
+  activeAgentRuns.set(id, { cancel })
+
+  if (workflowRunId) {
+    activeWorkflowRuns.set(workflowRunId, id)
+  }
 
   child.stdout.on("data", (chunk) => {
     stdout += chunk.toString()
@@ -96,6 +122,11 @@ async function runCodex(prompt, id) {
     child.on("close", resolve)
   })
   clearTimeout(timer)
+  activeAgentRuns.delete(id)
+
+  if (workflowRunId) {
+    activeWorkflowRuns.delete(workflowRunId)
+  }
 
   const output = await fs.readFile(outputFile, "utf8").catch(() => "")
   await fs.unlink(outputFile).catch(() => {})
@@ -105,6 +136,27 @@ async function runCodex(prompt, id) {
     output: output.trim() || tail(stdout, 8000),
     stderr: tail(stderr, 8000)
   }
+}
+
+function cancelWorkflowRun(workflowRunId) {
+  const agentRunId = activeWorkflowRuns.get(workflowRunId)
+
+  if (!agentRunId) {
+    return false
+  }
+
+  return cancelAgentRun(agentRunId)
+}
+
+function cancelAgentRun(agentRunId) {
+  const activeRun = activeAgentRuns.get(agentRunId)
+
+  if (!activeRun) {
+    return false
+  }
+
+  activeRun.cancel()
+  return true
 }
 
 function buildPrompt(payload) {

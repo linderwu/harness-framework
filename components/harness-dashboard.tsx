@@ -111,6 +111,17 @@ export function HarnessDashboard({
     setIsMutating(false)
   }
 
+  async function cancelRun(runId: string) {
+    setIsMutating(true)
+    const response = await fetch(`/api/workflow-runs/${runId}/cancel`, {
+      method: "POST"
+    })
+    const run = (await response.json()) as WorkflowRun
+    await refreshRuns()
+    setSelectedRunId(run.id)
+    setIsMutating(false)
+  }
+
   async function decideGate(
     gate: ApprovalGate,
     decision: "approved" | "rejected" | "changes_requested"
@@ -214,10 +225,29 @@ export function HarnessDashboard({
             <ChevronRight size={18} />
           </button>
 
-          <button className="primaryButton createRunButton" disabled={isMutating}>
-            <Play size={17} />
-            Create Run
-          </button>
+          <div className="runActionRow">
+            <button
+              className="primaryButton createRunButton"
+              disabled={isMutating}
+            >
+              <Play size={17} />
+              Create Run
+            </button>
+            <button
+              className="dangerButton"
+              disabled={
+                isMutating ||
+                !selectedRun ||
+                !isCancellableStatus(selectedRun.status)
+              }
+              onClick={() => selectedRun && cancelRun(selectedRun.id)}
+              title="Stop and cancel selected run"
+              type="button"
+            >
+              <X size={17} />
+              Stop / Cancel
+            </button>
+          </div>
 
           {openComposeSection ? (
             <div className="composeOverlay" role="dialog" aria-modal="true">
@@ -428,6 +458,9 @@ function RunDetail({
   ) => void
 }) {
   const pendingGate = run.approvalGates.find((gate) => gate.status === "pending")
+  const [openDetailSection, setOpenDetailSection] = useState<
+    "skills" | "artifacts" | undefined
+  >()
 
   return (
     <div className="detailStack">
@@ -439,7 +472,11 @@ function RunDetail({
         </div>
         <button
           className="primaryButton"
-          disabled={isMutating || run.status === "waiting_for_approval"}
+          disabled={
+            isMutating ||
+            run.status === "waiting_for_approval" ||
+            isTerminalStatus(run.status)
+          }
           onClick={() => onAdvance(run.id)}
           title="Advance workflow"
         >
@@ -562,69 +599,137 @@ function RunDetail({
         </div>
       </section>
 
-      <section className="lowerGrid">
-        <section className="panel scrollPanel">
-          <div className="panelHeader">
-            <ClipboardList size={18} />
-            <h2>Event Skill Chain</h2>
-          </div>
-          <div className="skillChain">
-            {run.eventSkills.map((skill) => {
-              const matchingEvents = run.events.filter(
-                (event) => event.skillId === skill.id
-              )
-              const latestEvent = matchingEvents[matchingEvents.length - 1]
-              const executor = run.skillAssignments[skill.id] ?? run.selectedAgent
+      <section className="detailLaunchGrid">
+        <button
+          className="composeLaunchButton detailLaunchButton"
+          onClick={() => setOpenDetailSection("skills")}
+          type="button"
+        >
+          <ClipboardList size={18} />
+          <span>
+            <strong>Event Skill Chain</strong>
+            <small>
+              {run.eventSkills.length} skills - {run.events.length} events
+              recorded
+            </small>
+          </span>
+          <ChevronRight size={18} />
+        </button>
 
-              return (
-                <article className="skillCard" key={skill.id}>
-                  <div className="skillCardHeader">
-                    <div>
-                      <strong>{skill.name}</strong>
-                      <small>
-                        {eventTypeLabels[skill.eventType]} -{" "}
-                        {stageLabels[skill.stage]}
-                      </small>
-                    </div>
-                    <StatusPill status={latestEvent?.status ?? "pending"} />
-                  </div>
-                  <p>{skill.purpose}</p>
-                  <div className="skillMetaGrid">
-                    <SkillMeta title="Executor" values={[executor]} />
-                    <SkillMeta title="Trigger" values={[skill.trigger]} />
-                    <SkillMeta
-                      title="Knowledge"
-                      values={skill.knowledgeSources}
-                    />
-                    <SkillMeta title="Constraints" values={skill.constraints} />
-                    <SkillMeta title="Gates" values={skill.gates} />
-                  </div>
-                </article>
-              )
-            })}
-          </div>
-        </section>
-
-        <section className="panel scrollPanel">
-          <div className="panelHeader">
-            <Bot size={18} />
-            <h2>Artifacts</h2>
-          </div>
-          <div className="artifactList">
-            {run.artifacts.map((artifact) => (
-              <article className="artifact" key={artifact.id}>
-                <div>
-                  <strong>{artifact.title}</strong>
-                  <small>
-                    {stageLabels[artifact.stage]} - {artifact.type}
-                  </small>
-                </div>
-                <pre>{artifact.body}</pre>
-              </article>
-            ))}
-          </div>
-        </section>
+        <button
+          className="composeLaunchButton detailLaunchButton"
+          onClick={() => setOpenDetailSection("artifacts")}
+          type="button"
+        >
+          <Bot size={18} />
+          <span>
+            <strong>Artifacts</strong>
+            <small>
+              {run.artifacts.length} artifacts - {run.currentStage} stage
+            </small>
+          </span>
+          <ChevronRight size={18} />
+        </button>
       </section>
+
+      {openDetailSection ? (
+        <div className="composeOverlay" role="dialog" aria-modal="true">
+          <div className="composeSheet">
+            <div className="composeSheetHeader">
+              <div>
+                <p className="eyebrow">Run Detail</p>
+                <h2>
+                  {openDetailSection === "skills"
+                    ? "Event Skill Chain"
+                    : "Artifacts"}
+                </h2>
+              </div>
+              <button
+                className="iconButton"
+                onClick={() => setOpenDetailSection(undefined)}
+                title="Close"
+                type="button"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="composeSheetBody">
+              {openDetailSection === "skills" ? (
+                <div className="skillChain">
+                  {run.eventSkills.map((skill) => {
+                    const matchingEvents = run.events.filter(
+                      (event) => event.skillId === skill.id
+                    )
+                    const latestEvent = matchingEvents[matchingEvents.length - 1]
+                    const executor =
+                      run.skillAssignments[skill.id] ?? run.selectedAgent
+
+                    return (
+                      <article className="skillCard" key={skill.id}>
+                        <div className="skillCardHeader">
+                          <div>
+                            <strong>{skill.name}</strong>
+                            <small>
+                              {eventTypeLabels[skill.eventType]} -{" "}
+                              {stageLabels[skill.stage]}
+                            </small>
+                          </div>
+                          <StatusPill
+                            status={latestEvent?.status ?? "pending"}
+                          />
+                        </div>
+                        <p>{skill.purpose}</p>
+                        <div className="skillMetaGrid">
+                          <SkillMeta title="Executor" values={[executor]} />
+                          <SkillMeta title="Trigger" values={[skill.trigger]} />
+                          <SkillMeta
+                            title="Knowledge"
+                            values={skill.knowledgeSources}
+                          />
+                          <SkillMeta
+                            title="Constraints"
+                            values={skill.constraints}
+                          />
+                          <SkillMeta title="Gates" values={skill.gates} />
+                        </div>
+                      </article>
+                    )
+                  })}
+                </div>
+              ) : (
+                <div className="artifactList">
+                  {run.artifacts.length === 0 ? (
+                    <p className="muted">No artifacts yet</p>
+                  ) : (
+                    run.artifacts.map((artifact) => (
+                      <article className="artifact" key={artifact.id}>
+                        <div>
+                          <strong>{artifact.title}</strong>
+                          <small>
+                            {stageLabels[artifact.stage]} - {artifact.type}
+                          </small>
+                        </div>
+                        <pre>{artifact.body}</pre>
+                      </article>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div className="composeSheetFooter">
+              <button
+                className="primaryButton"
+                onClick={() => setOpenDetailSection(undefined)}
+                type="button"
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   )
 }
@@ -709,4 +814,16 @@ function SkillMeta({ title, values }: { title: string; values: string[] }) {
 
 function StatusPill({ status }: { status: string }) {
   return <span className={`statusPill ${status}`}>{status}</span>
+}
+
+function isCancellableStatus(status: WorkflowRun["status"]) {
+  return (
+    status === "pending" ||
+    status === "running" ||
+    status === "waiting_for_approval"
+  )
+}
+
+function isTerminalStatus(status: WorkflowRun["status"]) {
+  return status === "completed" || status === "failed" || status === "cancelled"
 }

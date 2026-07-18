@@ -90,21 +90,50 @@ export async function invokeConfiguredAgent(
   }
 }
 
+export async function cancelConfiguredAgentRun(run: WorkflowRun) {
+  const bridgeUrl = getAgentBridgeUrl(run.selectedAgent)
+
+  if (!bridgeUrl) {
+    return
+  }
+
+  await fetch(new URL(`workflow-runs/${run.id}/cancel`, normalizeUrl(bridgeUrl)), {
+    method: "POST",
+    headers: createBridgeHeaders(run.selectedAgent),
+    signal: AbortSignal.timeout(2000)
+  }).catch(() => undefined)
+}
+
 function normalizeUrl(value: string) {
   return value.endsWith("/") ? value : `${value}/`
 }
 
-function createBridgeHeaders() {
+function createBridgeHeaders(agent: AgentKind = "codex") {
   const headers: Record<string, string> = {
     "Content-Type": "application/json"
   }
-  const token = process.env.CODEX_BRIDGE_TOKEN
+  const token =
+    agent === "openclaw"
+      ? process.env.OPENCLAW_BRIDGE_TOKEN
+      : process.env.CODEX_BRIDGE_TOKEN
 
   if (token) {
     headers.Authorization = `Bearer ${token}`
   }
 
   return headers
+}
+
+function getAgentBridgeUrl(agent: AgentKind) {
+  if (agent === "codex") {
+    return process.env.CODEX_BRIDGE_URL
+  }
+
+  if (agent === "openclaw") {
+    return process.env.OPENCLAW_BRIDGE_URL
+  }
+
+  return undefined
 }
 
 function formatError(error: unknown) {

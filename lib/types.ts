@@ -3,6 +3,7 @@ export type WorkflowStatus =
   | "running"
   | "waiting_for_approval"
   | "failed"
+  | "cancelled"
   | "completed"
 
 export type WorkflowStage =
@@ -26,6 +27,7 @@ export type ApprovalStatus =
   | "pending"
   | "approved"
   | "rejected"
+  | "cancelled"
   | "changes_requested"
 
 export type WorkflowEventStatus =
@@ -33,6 +35,7 @@ export type WorkflowEventStatus =
   | "running"
   | "waiting_for_gate"
   | "completed"
+  | "cancelled"
   | "failed"
 
 export type WorkflowEventType =

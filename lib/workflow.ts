@@ -336,6 +336,10 @@ export async function advanceWorkflow(
   run: WorkflowRun,
   options: { invokeAgent?: AgentInvoker } = {}
 ): Promise<WorkflowRun> {
+  if (isTerminalStatus(run.status)) {
+    return run
+  }
+
   if (run.status === "waiting_for_approval") {
     return run
   }
@@ -458,6 +462,10 @@ export function decideApprovalGate(
   decision: "approved" | "rejected" | "changes_requested",
   note?: string
 ): WorkflowRun {
+  if (isTerminalStatus(run.status)) {
+    return run
+  }
+
   const nextRun = cloneRun(run)
   ensureEventSkillState(nextRun)
   const gate = nextRun.approvalGates.find((item) => item.id === gateId)
@@ -484,6 +492,59 @@ export function decideApprovalGate(
 
   nextRun.updatedAt = new Date().toISOString()
   return nextRun
+}
+
+export function cancelWorkflowRun(run: WorkflowRun): WorkflowRun {
+  if (isTerminalStatus(run.status)) {
+    return run
+  }
+
+  const nextRun = cloneRun(run)
+  const now = new Date().toISOString()
+  ensureEventSkillState(nextRun)
+
+  nextRun.status = "cancelled"
+  nextRun.updatedAt = now
+
+  nextRun.approvalGates
+    .filter((gate) => gate.status === "pending")
+    .forEach((gate) => {
+      gate.status = "cancelled"
+      gate.decidedAt = now
+      gate.decidedBy = "dashboard"
+      gate.decisionNote = "Workflow run cancelled from the dashboard."
+    })
+
+  nextRun.events
+    .filter(
+      (event) =>
+        event.status === "pending" ||
+        event.status === "running" ||
+        event.status === "waiting_for_gate"
+    )
+    .forEach((event) => {
+      event.status = "cancelled"
+      event.note = "Workflow run cancelled from the dashboard."
+      event.completedAt = now
+    })
+
+  nextRun.agentRuns
+    .filter(
+      (agentRun) =>
+        agentRun.status === "pending" ||
+        agentRun.status === "running" ||
+        agentRun.status === "waiting_for_approval"
+    )
+    .forEach((agentRun) => {
+      agentRun.status = "cancelled"
+      agentRun.finishedAt = now
+    })
+
+  return nextRun
+}
+
+function isTerminalStatus(status: WorkflowRun["status"]) {
+  return status === "completed" || status === "failed" || status === "cancelled"
 }
 
 function maybeAutoApproveGate(run: WorkflowRun, stage: WorkflowStage) {

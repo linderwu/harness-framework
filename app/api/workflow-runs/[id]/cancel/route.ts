@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server"
-import { invokeConfiguredAgent } from "@/lib/agent-bridge"
+import { cancelConfiguredAgentRun } from "@/lib/agent-bridge"
 import { getWorkflowRun, upsertWorkflowRun } from "@/lib/store"
-import { advanceWorkflow } from "@/lib/workflow"
+import { cancelWorkflowRun } from "@/lib/workflow"
 
 export async function POST(
   _request: Request,
@@ -14,15 +14,8 @@ export async function POST(
     return NextResponse.json({ error: "Workflow run not found" }, { status: 404 })
   }
 
-  const advancedRun = await advanceWorkflow(run, {
-    invokeAgent: invokeConfiguredAgent
-  })
-  const latestRun = await getWorkflowRun(id)
+  const nextRun = await upsertWorkflowRun(cancelWorkflowRun(run))
+  await cancelConfiguredAgentRun(run)
 
-  if (latestRun?.status === "cancelled") {
-    return NextResponse.json(latestRun)
-  }
-
-  const nextRun = await upsertWorkflowRun(advancedRun)
   return NextResponse.json(nextRun)
 }
