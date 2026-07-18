@@ -131,6 +131,27 @@ legend {
   font-weight: 700;
 }
 
+.requirementHeader {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+}
+
+.requirementActions {
+  align-items: center;
+  display: inline-flex;
+  gap: 8px;
+  min-width: 0;
+}
+
+.requirementActions small {
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 input,
 textarea {
   background: #fbfcfb;
@@ -416,6 +437,31 @@ small,
 .iconTextButton.reject {
   background: var(--red-soft);
   color: var(--red);
+}
+
+.importButton {
+  background: #eef2ee;
+  border: 1px solid var(--panel-border);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 12px;
+  min-height: 32px;
+  position: relative;
+}
+
+.importButton:focus-within,
+.importButton:focus {
+  border-color: var(--green);
+  box-shadow: 0 0 0 3px rgba(22, 106, 79, 0.14);
+  outline: none;
+}
+
+.fileImportInput {
+  cursor: pointer;
+  inset: 0;
+  opacity: 0;
+  padding: 0;
+  position: absolute;
 }
 
 .artifact {

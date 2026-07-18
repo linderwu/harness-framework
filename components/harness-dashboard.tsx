@@ -6,6 +6,7 @@ import {
   ChevronRight,
   CircleDot,
   ClipboardList,
+  FileUp,
   GitBranch,
   Play,
   RefreshCw,
@@ -13,7 +14,7 @@ import {
   UserCheck,
   X
 } from "lucide-react"
-import { FormEvent, useMemo, useState } from "react"
+import { ChangeEvent, FormEvent, useMemo, useState } from "react"
 import type {
   AgentKind,
   ApprovalActorType,
@@ -56,6 +57,7 @@ export function HarnessDashboard({
   )
   const [isLoading, setIsLoading] = useState(false)
   const [isMutating, setIsMutating] = useState(false)
+  const [importedRequirementName, setImportedRequirementName] = useState("")
   const [form, setForm] = useState({
     projectName: "Harness MVP",
     repository: "owner/repository",
@@ -140,6 +142,24 @@ export function HarnessDashboard({
     })
   }
 
+  async function importRequirementFile(
+    event: ChangeEvent<HTMLInputElement>
+  ) {
+    const file = event.target.files?.[0]
+
+    if (!file) {
+      return
+    }
+
+    const text = await file.text()
+    setForm((currentForm) => ({
+      ...currentForm,
+      requirement: text
+    }))
+    setImportedRequirementName(file.name)
+    event.target.value = ""
+  }
+
   return (
     <main className="shell">
       <header className="topbar">
@@ -180,7 +200,24 @@ export function HarnessDashboard({
           </label>
 
           <label>
-            <span>Requirement</span>
+            <span className="requirementHeader">
+              <span>Requirement</span>
+              <span className="requirementActions">
+                {importedRequirementName ? (
+                  <small>{importedRequirementName}</small>
+                ) : null}
+                <span className="iconTextButton importButton" tabIndex={0}>
+                  <FileUp size={15} />
+                  Import .md
+                  <input
+                    accept=".md,.markdown,text/markdown,text/plain"
+                    className="fileImportInput"
+                    onChange={importRequirementFile}
+                    type="file"
+                  />
+                </span>
+              </span>
+            </span>
             <textarea
               value={form.requirement}
               onChange={(event) =>
