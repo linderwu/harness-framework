@@ -1,0 +1,7 @@
+.next/
+node_modules/
+data/harness-state.json
+.env
+.env.local
+npm-debug.log*
+tsconfig.tsbuildinfo
