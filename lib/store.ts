@@ -56,6 +56,18 @@ export async function upsertWorkflowRun(nextRun: WorkflowRun) {
   return nextRun
 }
 
+export async function deleteWorkflowRun(id: string) {
+  const state = await readState()
+  const nextRuns = state.workflowRuns.filter((run) => run.id !== id)
+
+  if (nextRuns.length === state.workflowRuns.length) {
+    return false
+  }
+
+  await writeState({ workflowRuns: nextRuns })
+  return true
+}
+
 function normalizeWorkflowRun(run: WorkflowRun): WorkflowRun {
   const eventSkills = run.eventSkills ?? createDefaultEventSkills()
 

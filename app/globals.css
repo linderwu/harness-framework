@@ -228,6 +228,7 @@ textarea:focus {
 }
 
 .primaryButton,
+.stopButton,
 .dangerButton,
 .iconTextButton,
 .iconButton {
@@ -258,7 +259,19 @@ textarea:focus {
 .runActionRow {
   display: grid;
   gap: 10px;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.stopButton {
+  background: var(--amber);
+  border-radius: 7px;
+  color: white;
+  min-height: 44px;
+  padding: 0 15px;
+}
+
+.stopButton:hover {
+  background: #765100;
 }
 
 .dangerButton {
@@ -274,6 +287,7 @@ textarea:focus {
 }
 
 .primaryButton:disabled,
+.stopButton:disabled,
 .dangerButton:disabled {
   cursor: not-allowed;
   opacity: 0.45;
@@ -611,7 +625,8 @@ small,
 }
 
 .statusPill.running,
-.statusPill.waiting_for_gate {
+.statusPill.waiting_for_gate,
+.statusPill.stopped {
   background: var(--amber-soft);
   color: var(--amber);
 }

@@ -10,8 +10,10 @@ import {
   GitBranch,
   Play,
   RefreshCw,
+  Square,
   SlidersHorizontal,
   ShieldCheck,
+  Trash2,
   UserCheck,
   X
 } from "lucide-react"
@@ -82,7 +84,9 @@ export function HarnessDashboard({
     const response = await fetch("/api/workflow-runs", { cache: "no-store" })
     const data = (await response.json()) as WorkflowRun[]
     setRuns(data)
-    setSelectedRunId((current) => current ?? data[0]?.id)
+    setSelectedRunId((current) =>
+      data.some((run) => run.id === current) ? current : data[0]?.id
+    )
     setIsLoading(false)
   }
 
@@ -111,14 +115,31 @@ export function HarnessDashboard({
     setIsMutating(false)
   }
 
-  async function cancelRun(runId: string) {
+  async function stopRun(runId: string) {
     setIsMutating(true)
-    const response = await fetch(`/api/workflow-runs/${runId}/cancel`, {
+    const response = await fetch(`/api/workflow-runs/${runId}/stop`, {
       method: "POST"
     })
     const run = (await response.json()) as WorkflowRun
     await refreshRuns()
     setSelectedRunId(run.id)
+    setIsMutating(false)
+  }
+
+  async function cancelRun(run: WorkflowRun) {
+    const confirmed = window.confirm(
+      `Cancel "${run.projectName}" and delete all artifacts for this run?`
+    )
+
+    if (!confirmed) {
+      return
+    }
+
+    setIsMutating(true)
+    await fetch(`/api/workflow-runs/${run.id}/cancel`, {
+      method: "POST"
+    })
+    await refreshRuns()
     setIsMutating(false)
   }
 
@@ -234,18 +255,32 @@ export function HarnessDashboard({
               Create Run
             </button>
             <button
+              className="stopButton"
+              disabled={
+                isMutating ||
+                !selectedRun ||
+                !isStoppableStatus(selectedRun.status)
+              }
+              onClick={() => selectedRun && stopRun(selectedRun.id)}
+              title="Stop selected run's current stage"
+              type="button"
+            >
+              <Square size={16} />
+              Stop Stage
+            </button>
+            <button
               className="dangerButton"
               disabled={
                 isMutating ||
                 !selectedRun ||
-                !isCancellableStatus(selectedRun.status)
+                !isCancelableStatus(selectedRun.status)
               }
-              onClick={() => selectedRun && cancelRun(selectedRun.id)}
-              title="Stop and cancel selected run"
+              onClick={() => selectedRun && cancelRun(selectedRun)}
+              title="Cancel selected run and delete its artifacts"
               type="button"
             >
-              <X size={17} />
-              Stop / Cancel
+              <Trash2 size={17} />
+              Cancel Run
             </button>
           </div>
 
@@ -816,12 +851,16 @@ function StatusPill({ status }: { status: string }) {
   return <span className={`statusPill ${status}`}>{status}</span>
 }
 
-function isCancellableStatus(status: WorkflowRun["status"]) {
+function isStoppableStatus(status: WorkflowRun["status"]) {
   return (
     status === "pending" ||
     status === "running" ||
     status === "waiting_for_approval"
   )
+}
+
+function isCancelableStatus(status: WorkflowRun["status"]) {
+  return status !== "completed"
 }
 
 function isTerminalStatus(status: WorkflowRun["status"]) {

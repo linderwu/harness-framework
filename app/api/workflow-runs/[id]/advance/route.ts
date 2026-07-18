@@ -19,6 +19,10 @@ export async function POST(
   })
   const latestRun = await getWorkflowRun(id)
 
+  if (!latestRun) {
+    return NextResponse.json({ deleted: true, id })
+  }
+
   if (latestRun?.status === "cancelled") {
     return NextResponse.json(latestRun)
   }

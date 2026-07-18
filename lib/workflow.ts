@@ -543,6 +543,60 @@ export function cancelWorkflowRun(run: WorkflowRun): WorkflowRun {
   return nextRun
 }
 
+export function stopWorkflowStage(run: WorkflowRun): WorkflowRun {
+  if (isTerminalStatus(run.status)) {
+    return run
+  }
+
+  const nextRun = cloneRun(run)
+  const now = new Date().toISOString()
+  ensureEventSkillState(nextRun)
+
+  nextRun.status = "stopped"
+  nextRun.updatedAt = now
+
+  nextRun.approvalGates
+    .filter(
+      (gate) =>
+        gate.stage === nextRun.currentStage && gate.status === "pending"
+    )
+    .forEach((gate) => {
+      gate.status = "stopped"
+      gate.decidedAt = now
+      gate.decidedBy = "dashboard"
+      gate.decisionNote = "Current workflow stage stopped from the dashboard."
+    })
+
+  nextRun.events
+    .filter(
+      (event) =>
+        event.stage === nextRun.currentStage &&
+        (event.status === "pending" ||
+          event.status === "running" ||
+          event.status === "waiting_for_gate")
+    )
+    .forEach((event) => {
+      event.status = "stopped"
+      event.note = "Current workflow stage stopped from the dashboard."
+      event.completedAt = now
+    })
+
+  nextRun.agentRuns
+    .filter(
+      (agentRun) =>
+        agentRun.stage === nextRun.currentStage &&
+        (agentRun.status === "pending" ||
+          agentRun.status === "running" ||
+          agentRun.status === "waiting_for_approval")
+    )
+    .forEach((agentRun) => {
+      agentRun.status = "stopped"
+      agentRun.finishedAt = now
+    })
+
+  return nextRun
+}
+
 function isTerminalStatus(status: WorkflowRun["status"]) {
   return status === "completed" || status === "failed" || status === "cancelled"
 }

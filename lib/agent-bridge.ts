@@ -91,13 +91,24 @@ export async function invokeConfiguredAgent(
 }
 
 export async function cancelConfiguredAgentRun(run: WorkflowRun) {
+  await sendConfiguredAgentControl(run, "cancel")
+}
+
+export async function stopConfiguredAgentRun(run: WorkflowRun) {
+  await sendConfiguredAgentControl(run, "stop")
+}
+
+async function sendConfiguredAgentControl(
+  run: WorkflowRun,
+  action: "cancel" | "stop"
+) {
   const bridgeUrl = getAgentBridgeUrl(run.selectedAgent)
 
   if (!bridgeUrl) {
     return
   }
 
-  await fetch(new URL(`workflow-runs/${run.id}/cancel`, normalizeUrl(bridgeUrl)), {
+  await fetch(new URL(`workflow-runs/${run.id}/${action}`, normalizeUrl(bridgeUrl)), {
     method: "POST",
     headers: createBridgeHeaders(run.selectedAgent),
     signal: AbortSignal.timeout(2000)

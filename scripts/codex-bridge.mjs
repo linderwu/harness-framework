@@ -31,15 +31,17 @@ const server = http.createServer(async (request, response) => {
       return
     }
 
-    const cancelMatch = requestUrl.pathname.match(
-      /^\/workflow-runs\/([^/]+)\/cancel$/
+    const controlMatch = requestUrl.pathname.match(
+      /^\/workflow-runs\/([^/]+)\/(cancel|stop)$/
     )
 
-    if (request.method === "POST" && cancelMatch) {
-      const workflowRunId = decodeURIComponent(cancelMatch[1])
+    if (request.method === "POST" && controlMatch) {
+      const workflowRunId = decodeURIComponent(controlMatch[1])
+      const action = controlMatch[2]
       sendJson(response, 200, {
         ok: true,
-        cancelled: cancelWorkflowRun(workflowRunId)
+        [action === "cancel" ? "cancelled" : "stopped"]:
+          stopWorkflowRun(workflowRunId)
       })
       return
     }
@@ -138,17 +140,17 @@ async function runCodex(prompt, id, workflowRunId) {
   }
 }
 
-function cancelWorkflowRun(workflowRunId) {
+function stopWorkflowRun(workflowRunId) {
   const agentRunId = activeWorkflowRuns.get(workflowRunId)
 
   if (!agentRunId) {
     return false
   }
 
-  return cancelAgentRun(agentRunId)
+  return stopAgentRun(agentRunId)
 }
 
-function cancelAgentRun(agentRunId) {
+function stopAgentRun(agentRunId) {
   const activeRun = activeAgentRuns.get(agentRunId)
 
   if (!activeRun) {
