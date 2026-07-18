@@ -11,6 +11,7 @@ import type {
   WorkflowRun,
   WorkflowStage
 } from "@/lib/types"
+import type { AgentInvocationInput } from "@/lib/agent-bridge"
 
 const stages: WorkflowStage[] = [
   "intake",
@@ -47,6 +48,17 @@ export const eventTypeLabels: Record<WorkflowEventType, string> = {
   verification_approval: "Verification Approval",
   closeout: "Closeout"
 }
+
+export interface AgentArtifactResult {
+  status: "completed" | "failed"
+  source: "simulated" | "codex-bridge"
+  body: string
+  externalRunId?: string
+}
+
+export type AgentInvoker = (
+  input: AgentInvocationInput
+) => Promise<AgentArtifactResult | undefined>
 
 export function createDefaultEventSkills(): WorkflowEventSkill[] {
   return [
@@ -320,7 +332,10 @@ export function createWorkflowRun(input: {
   }
 }
 
-export function advanceWorkflow(run: WorkflowRun): WorkflowRun {
+export async function advanceWorkflow(
+  run: WorkflowRun,
+  options: { invokeAgent?: AgentInvoker } = {}
+): Promise<WorkflowRun> {
   if (run.status === "waiting_for_approval") {
     return run
   }
@@ -336,7 +351,7 @@ export function advanceWorkflow(run: WorkflowRun): WorkflowRun {
     case "intake":
       nextRun.currentStage = "plan"
       nextRun.status = "running"
-      addAgentArtifact(
+      const planResult = await addAgentArtifact(
         nextRun,
         "plan.interview",
         "plan",
@@ -349,14 +364,18 @@ export function advanceWorkflow(run: WorkflowRun): WorkflowRun {
           "- Requirement is captured as a first-class artifact.",
           "- Design approval must pass before implementation.",
           "- Verification approval must pass before PR-ready completion."
-        ].join("\n")
+        ].join("\n"),
+        options.invokeAgent
       )
+      if (planResult.status === "failed") {
+        break
+      }
       openApprovalGate(nextRun, "plan")
       break
     case "plan":
       nextRun.currentStage = "design"
       nextRun.status = "running"
-      addAgentArtifact(
+      const designResult = await addAgentArtifact(
         nextRun,
         "design.openspec",
         "design",
@@ -367,15 +386,19 @@ export function advanceWorkflow(run: WorkflowRun): WorkflowRun {
           "Stages: plan, design, implementation, verification.",
           "Approval policies: human, verification subagent, or independent agent.",
           "Adapter boundary: Codex and OpenClaw run behind a shared interface."
-        ].join("\n")
+        ].join("\n"),
+        options.invokeAgent
       )
+      if (designResult.status === "failed") {
+        break
+      }
       openApprovalGate(nextRun, "design")
       maybeAutoApproveGate(nextRun, "design")
       break
     case "design":
       nextRun.currentStage = "implementation"
       nextRun.status = "running"
-      addAgentArtifact(
+      await addAgentArtifact(
         nextRun,
         "implementation.dispatch",
         "implementation",
@@ -385,13 +408,14 @@ export function advanceWorkflow(run: WorkflowRun): WorkflowRun {
           `Assigned executor: ${resolveSkillExecutor(nextRun, "implementation.dispatch")}`,
           "Runner mode: simulated MVP adapter.",
           "Expected output: branch, commits, PR link, and implementation notes."
-        ].join("\n")
+        ].join("\n"),
+        options.invokeAgent
       )
       break
     case "implementation":
       nextRun.currentStage = "verification"
       nextRun.status = "running"
-      addAgentArtifact(
+      const verificationResult = await addAgentArtifact(
         nextRun,
         "verification.generate",
         "verification",
@@ -402,8 +426,12 @@ export function advanceWorkflow(run: WorkflowRun): WorkflowRun {
           "- Unit coverage target prepared.",
           "- Acceptance criteria mapped to verification checklist.",
           "- Final gate waits for configured approval actor."
-        ].join("\n")
+        ].join("\n"),
+        options.invokeAgent
       )
+      if (verificationResult.status === "failed") {
+        break
+      }
       openApprovalGate(nextRun, "verification")
       maybeAutoApproveGate(nextRun, "verification")
       break
@@ -507,36 +535,67 @@ function openApprovalGate(run: WorkflowRun, stage: WorkflowStage) {
   )
 }
 
-function addAgentArtifact(
+async function addAgentArtifact(
   run: WorkflowRun,
   skillId: string,
   stage: WorkflowStage,
   type: Artifact["type"],
   title: string,
-  body: string
+  body: string,
+  invokeAgent?: AgentInvoker
 ) {
-  const artifact = createArtifact(run.id, stage, type, title, body)
   const executor = resolveSkillExecutor(run, skillId)
+  const skill = run.eventSkills.find((item) => item.id === skillId)
+  const agentResult =
+    skill && invokeAgent
+      ? await invokeAgent({
+          run,
+          skill,
+          executor,
+          stage,
+          artifactType: type,
+          title,
+          fallbackBody: body
+        })
+      : undefined
+  const finalResult: AgentArtifactResult = agentResult ?? {
+    status: "completed",
+    source: "simulated",
+    body
+  }
+  const artifact = createArtifact(run.id, stage, type, title, finalResult.body)
   run.artifacts.push(artifact)
   addWorkflowEvent(
     run,
     skillId,
-    "completed",
+    finalResult.status,
     executor,
     [artifact.id],
-    `${title} generated by ${executor}.`
+    [
+      `${title} generated by ${executor}.`,
+      `Runner source: ${finalResult.source}.`,
+      finalResult.externalRunId ? `External run: ${finalResult.externalRunId}.` : undefined
+    ]
+      .filter(Boolean)
+      .join(" ")
   )
   run.agentRuns.push({
     id: crypto.randomUUID(),
     workflowRunId: run.id,
     stage,
     agent: executor,
-    status: "completed",
+    status: finalResult.status,
     inputArtifactIds: run.artifacts.slice(0, -1).map((item) => item.id),
     outputArtifactIds: [artifact.id],
     startedAt: new Date().toISOString(),
     finishedAt: new Date().toISOString()
   })
+
+  if (finalResult.status === "failed") {
+    run.status = "failed"
+  }
+
+  return finalResult
 }
 
 function ensureEventSkillState(run: WorkflowRun) {
