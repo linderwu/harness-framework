@@ -10,11 +10,13 @@ import {
   GitBranch,
   Play,
   RefreshCw,
+  SlidersHorizontal,
   ShieldCheck,
   UserCheck,
   X
 } from "lucide-react"
 import { ChangeEvent, FormEvent, useMemo, useState } from "react"
+import type { CSSProperties } from "react"
 import type {
   AgentKind,
   ApprovalActorType,
@@ -58,6 +60,9 @@ export function HarnessDashboard({
   const [isLoading, setIsLoading] = useState(false)
   const [isMutating, setIsMutating] = useState(false)
   const [importedRequirementName, setImportedRequirementName] = useState("")
+  const [openComposeSection, setOpenComposeSection] = useState<
+    "requirement" | "automation" | undefined
+  >()
   const [form, setForm] = useState({
     projectName: "Harness MVP",
     repository: "owner/repository",
@@ -179,100 +184,184 @@ export function HarnessDashboard({
             <h2>New Workflow Run</h2>
           </div>
 
-          <label>
-            <span>Project</span>
-            <input
-              value={form.projectName}
-              onChange={(event) =>
-                setForm({ ...form, projectName: event.target.value })
-              }
-            />
-          </label>
-
-          <label>
-            <span>Repository</span>
-            <input
-              value={form.repository}
-              onChange={(event) =>
-                setForm({ ...form, repository: event.target.value })
-              }
-            />
-          </label>
-
-          <label>
-            <span className="requirementHeader">
-              <span>Requirement</span>
-              <span className="requirementActions">
-                {importedRequirementName ? (
-                  <small>{importedRequirementName}</small>
-                ) : null}
-                <span className="iconTextButton importButton" tabIndex={0}>
-                  <FileUp size={15} />
-                  Import .md
-                  <input
-                    accept=".md,.markdown,text/markdown,text/plain"
-                    className="fileImportInput"
-                    onChange={importRequirementFile}
-                    type="file"
-                  />
-                </span>
-              </span>
+          <button
+            className="composeLaunchButton"
+            onClick={() => setOpenComposeSection("requirement")}
+            type="button"
+          >
+            <ClipboardList size={18} />
+            <span>
+              <strong>Project / Repository / Requirement</strong>
+              <small>
+                {form.projectName} - {form.repository}
+              </small>
             </span>
-            <textarea
-              value={form.requirement}
-              onChange={(event) =>
-                setForm({ ...form, requirement: event.target.value })
-              }
-            />
-          </label>
+            <ChevronRight size={18} />
+          </button>
 
-          <fieldset>
-            <legend>Default Development Agent</legend>
-            <AgentSelect value={form.selectedAgent} onChange={updateSelectedAgent} />
-          </fieldset>
+          <button
+            className="composeLaunchButton"
+            onClick={() => setOpenComposeSection("automation")}
+            type="button"
+          >
+            <SlidersHorizontal size={18} />
+            <span>
+              <strong>Agent / Skills / Approval Policies</strong>
+              <small>
+                {form.selectedAgent} - design and verification gates
+              </small>
+            </span>
+            <ChevronRight size={18} />
+          </button>
 
-          <fieldset>
-            <legend>Skill Executors</legend>
-            <div className="skillAssignmentList">
-              {defaultEventSkills.map((skill) => (
-                <div className="skillAssignmentRow" key={skill.id}>
-                  <div>
-                    <strong>{skill.name}</strong>
-                    <small>{eventTypeLabels[skill.eventType]}</small>
-                  </div>
-                  <AgentSelect
-                    value={form.skillAssignments[skill.id] ?? form.selectedAgent}
-                    onChange={(agent) => updateSkillAssignment(skill.id, agent)}
-                  />
-                </div>
-              ))}
-            </div>
-          </fieldset>
-
-          <fieldset>
-            <legend>Design Approval Policy</legend>
-            <ActorSelect
-              value={form.designApprovalActor}
-              onChange={(designApprovalActor) =>
-                setForm({ ...form, designApprovalActor })
-              }
-            />
-          </fieldset>
-
-          <fieldset>
-            <legend>Verification Approval Policy</legend>
-            <ActorSelect
-              value={form.verificationApprovalActor}
-              onChange={(verificationApprovalActor) =>
-                setForm({ ...form, verificationApprovalActor })
-              }
-            />
-          </fieldset>
-
-          <button className="primaryButton" disabled={isMutating}>
+          <button className="primaryButton createRunButton" disabled={isMutating}>
             <Play size={17} />
             Create Run
           </button>
+
+          {openComposeSection ? (
+            <div className="composeOverlay" role="dialog" aria-modal="true">
+              <div className="composeSheet">
+                <div className="composeSheetHeader">
+                  <div>
+                    <p className="eyebrow">Workflow Setup</p>
+                    <h2>
+                      {openComposeSection === "requirement"
+                        ? "Project / Repository / Requirement"
+                        : "Agent / Skills / Approval Policies"}
+                    </h2>
+                  </div>
+                  <button
+                    className="iconButton"
+                    onClick={() => setOpenComposeSection(undefined)}
+                    title="Close"
+                    type="button"
+                  >
+                    <X size={18} />
+                  </button>
+                </div>
+
+                {openComposeSection === "requirement" ? (
+                  <div className="composeSheetBody">
+                    <label>
+                      <span>Project</span>
+                      <input
+                        value={form.projectName}
+                        onChange={(event) =>
+                          setForm({ ...form, projectName: event.target.value })
+                        }
+                      />
+                    </label>
+
+                    <label>
+                      <span>Repository</span>
+                      <input
+                        value={form.repository}
+                        onChange={(event) =>
+                          setForm({ ...form, repository: event.target.value })
+                        }
+                      />
+                    </label>
+
+                    <label>
+                      <span className="requirementHeader">
+                        <span>Requirement</span>
+                        <span className="requirementActions">
+                          {importedRequirementName ? (
+                            <small>{importedRequirementName}</small>
+                          ) : null}
+                          <span
+                            className="iconTextButton importButton"
+                            tabIndex={0}
+                          >
+                            <FileUp size={15} />
+                            Import .md
+                            <input
+                              accept=".md,.markdown,text/markdown,text/plain"
+                              className="fileImportInput"
+                              onChange={importRequirementFile}
+                              type="file"
+                            />
+                          </span>
+                        </span>
+                      </span>
+                      <textarea
+                        value={form.requirement}
+                        onChange={(event) =>
+                          setForm({ ...form, requirement: event.target.value })
+                        }
+                      />
+                    </label>
+                  </div>
+                ) : (
+                  <div className="composeSheetBody">
+                    <fieldset>
+                      <legend>Default Development Agent</legend>
+                      <AgentSelect
+                        value={form.selectedAgent}
+                        onChange={updateSelectedAgent}
+                      />
+                    </fieldset>
+
+                    <fieldset>
+                      <legend>Skill Executors</legend>
+                      <div className="skillAssignmentList">
+                        {defaultEventSkills.map((skill) => (
+                          <div className="skillAssignmentRow" key={skill.id}>
+                            <div>
+                              <strong>{skill.name}</strong>
+                              <small>{eventTypeLabels[skill.eventType]}</small>
+                            </div>
+                            <AgentSelect
+                              value={
+                                form.skillAssignments[skill.id] ??
+                                form.selectedAgent
+                              }
+                              onChange={(agent) =>
+                                updateSkillAssignment(skill.id, agent)
+                              }
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    </fieldset>
+
+                    <div className="policyGrid">
+                      <fieldset>
+                        <legend>Design Approval Policy</legend>
+                        <ActorSelect
+                          value={form.designApprovalActor}
+                          onChange={(designApprovalActor) =>
+                            setForm({ ...form, designApprovalActor })
+                          }
+                        />
+                      </fieldset>
+
+                      <fieldset>
+                        <legend>Verification Approval Policy</legend>
+                        <ActorSelect
+                          value={form.verificationApprovalActor}
+                          onChange={(verificationApprovalActor) =>
+                            setForm({ ...form, verificationApprovalActor })
+                          }
+                        />
+                      </fieldset>
+                    </div>
+                  </div>
+                )}
+
+                <div className="composeSheetFooter">
+                  <button
+                    className="primaryButton"
+                    onClick={() => setOpenComposeSection(undefined)}
+                    type="button"
+                  >
+                    Done
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : null}
         </form>
 
         <section className="workspace">
@@ -361,20 +450,41 @@ function RunDetail({
 
       <section className="panel timelinePanel">
         <div className="stageTrack">
-          {orderedStages.map((stage) => (
-            <div
-              className={
-                orderedStages.indexOf(stage) <=
-                orderedStages.indexOf(run.currentStage)
-                  ? "stage done"
+          {orderedStages.map((stage) => {
+            const stageIndex = orderedStages.indexOf(stage)
+            const currentIndex = orderedStages.indexOf(run.currentStage)
+            const progress =
+              stageIndex < currentIndex
+                ? 100
+                : stageIndex === currentIndex
+                  ? run.currentStage === "completed"
+                    ? 100
+                    : 68
+                  : 0
+            const stageClass =
+              stageIndex < currentIndex ||
+              (stage === "completed" && run.currentStage === "completed")
+                ? "stage done"
+                : stageIndex === currentIndex
+                  ? "stage current"
                   : "stage"
-              }
-              key={stage}
-            >
-              <span />
-              <small>{stageLabels[stage]}</small>
-            </div>
-          ))}
+
+            return (
+              <div className={stageClass} key={stage}>
+                <span
+                  className="stageRing"
+                  style={
+                    {
+                      "--stage-progress": `${progress}%`
+                    } as CSSProperties
+                  }
+                >
+                  {progress}%
+                </span>
+                <small>{stageLabels[stage]}</small>
+              </div>
+            )
+          })}
         </div>
       </section>
 
@@ -452,63 +562,68 @@ function RunDetail({
         </div>
       </section>
 
-      <section className="panel">
-        <div className="panelHeader">
-          <ClipboardList size={18} />
-          <h2>Event Skill Chain</h2>
-        </div>
-        <div className="skillChain">
-          {run.eventSkills.map((skill) => {
-            const matchingEvents = run.events.filter(
-              (event) => event.skillId === skill.id
-            )
-            const latestEvent = matchingEvents[matchingEvents.length - 1]
-            const executor = run.skillAssignments[skill.id] ?? run.selectedAgent
+      <section className="lowerGrid">
+        <section className="panel scrollPanel">
+          <div className="panelHeader">
+            <ClipboardList size={18} />
+            <h2>Event Skill Chain</h2>
+          </div>
+          <div className="skillChain">
+            {run.eventSkills.map((skill) => {
+              const matchingEvents = run.events.filter(
+                (event) => event.skillId === skill.id
+              )
+              const latestEvent = matchingEvents[matchingEvents.length - 1]
+              const executor = run.skillAssignments[skill.id] ?? run.selectedAgent
 
-            return (
-              <article className="skillCard" key={skill.id}>
-                <div className="skillCardHeader">
-                  <div>
-                    <strong>{skill.name}</strong>
-                    <small>
-                      {eventTypeLabels[skill.eventType]} -{" "}
-                      {stageLabels[skill.stage]}
-                    </small>
+              return (
+                <article className="skillCard" key={skill.id}>
+                  <div className="skillCardHeader">
+                    <div>
+                      <strong>{skill.name}</strong>
+                      <small>
+                        {eventTypeLabels[skill.eventType]} -{" "}
+                        {stageLabels[skill.stage]}
+                      </small>
+                    </div>
+                    <StatusPill status={latestEvent?.status ?? "pending"} />
                   </div>
-                  <StatusPill status={latestEvent?.status ?? "pending"} />
-                </div>
-                <p>{skill.purpose}</p>
-                <div className="skillMetaGrid">
-                  <SkillMeta title="Executor" values={[executor]} />
-                  <SkillMeta title="Trigger" values={[skill.trigger]} />
-                  <SkillMeta title="Knowledge" values={skill.knowledgeSources} />
-                  <SkillMeta title="Constraints" values={skill.constraints} />
-                  <SkillMeta title="Gates" values={skill.gates} />
-                </div>
-              </article>
-            )
-          })}
-        </div>
-      </section>
+                  <p>{skill.purpose}</p>
+                  <div className="skillMetaGrid">
+                    <SkillMeta title="Executor" values={[executor]} />
+                    <SkillMeta title="Trigger" values={[skill.trigger]} />
+                    <SkillMeta
+                      title="Knowledge"
+                      values={skill.knowledgeSources}
+                    />
+                    <SkillMeta title="Constraints" values={skill.constraints} />
+                    <SkillMeta title="Gates" values={skill.gates} />
+                  </div>
+                </article>
+              )
+            })}
+          </div>
+        </section>
 
-      <section className="panel">
-        <div className="panelHeader">
-          <Bot size={18} />
-          <h2>Artifacts</h2>
-        </div>
-        <div className="artifactList">
-          {run.artifacts.map((artifact) => (
-            <article className="artifact" key={artifact.id}>
-              <div>
-                <strong>{artifact.title}</strong>
-                <small>
-                  {stageLabels[artifact.stage]} - {artifact.type}
-                </small>
-              </div>
-              <pre>{artifact.body}</pre>
-            </article>
-          ))}
-        </div>
+        <section className="panel scrollPanel">
+          <div className="panelHeader">
+            <Bot size={18} />
+            <h2>Artifacts</h2>
+          </div>
+          <div className="artifactList">
+            {run.artifacts.map((artifact) => (
+              <article className="artifact" key={artifact.id}>
+                <div>
+                  <strong>{artifact.title}</strong>
+                  <small>
+                    {stageLabels[artifact.stage]} - {artifact.type}
+                  </small>
+                </div>
+                <pre>{artifact.body}</pre>
+              </article>
+            ))}
+          </div>
+        </section>
       </section>
     </div>
   )
