@@ -57,17 +57,17 @@ async function runCodex(prompt, id) {
   const outputFile = path.join(os.tmpdir(), `codex-bridge-${id}.txt`)
   const command = process.env.CODEX_BRIDGE_COMMAND ?? "codex"
   const sandbox = process.env.CODEX_BRIDGE_SANDBOX ?? "workspace-write"
-  const approval = process.env.CODEX_BRIDGE_APPROVAL ?? "never"
+  const serviceTier = process.env.CODEX_BRIDGE_SERVICE_TIER ?? "fast"
   const timeoutMs = Number(process.env.CODEX_BRIDGE_TIMEOUT_MS ?? 900000)
   const args = [
     "exec",
+    "-c",
+    `service_tier="${serviceTier}"`,
     "-C",
     repoRoot,
     "--skip-git-repo-check",
     "--sandbox",
     sandbox,
-    "-a",
-    approval,
     "--output-last-message",
     outputFile,
     "-"

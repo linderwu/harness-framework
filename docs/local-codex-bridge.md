@@ -20,7 +20,7 @@ npm run dev
 When a workflow event is assigned to `codex`, the Next.js API calls `POST /agent-runs` on the bridge. The bridge runs:
 
 ```powershell
-codex exec -C <repo> --sandbox workspace-write -a never -
+codex exec -c service_tier="fast" -C <repo> --sandbox workspace-write -
 ```
 
 Without `CODEX_BRIDGE_URL`, the dashboard keeps using the simulated MVP adapter.
