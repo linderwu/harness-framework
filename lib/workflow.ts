@@ -12,6 +12,7 @@ import type {
   WorkflowStage
 } from "@/lib/types"
 import type { AgentInvocationInput } from "@/lib/agent-bridge"
+import { getAgentLabel, normalizeAgentKind, openClawAgentKinds } from "@/lib/agents"
 
 const stages: WorkflowStage[] = [
   "intake",
@@ -51,7 +52,7 @@ export const eventTypeLabels: Record<WorkflowEventType, string> = {
 
 export interface AgentArtifactResult {
   status: "completed" | "failed"
-  source: "simulated" | "codex-bridge"
+  source: "simulated" | "codex-bridge" | "openclaw-bridge"
   body: string
   externalRunId?: string
 }
@@ -69,7 +70,7 @@ export function createDefaultEventSkills(): WorkflowEventSkill[] {
       name: "Requirement Intake Skill",
       purpose: "Capture the user's development request as the first durable artifact.",
       trigger: "A dashboard request, GitHub issue, or imported requirement appears.",
-      allowedActors: ["human", "codex", "openclaw"],
+      allowedActors: ["human", "codex", ...openClawAgentKinds],
       inputs: ["raw requirement", "repository reference", "source metadata"],
       outputs: ["requirement artifact", "initial workflow run"],
       constraints: [
@@ -88,7 +89,7 @@ export function createDefaultEventSkills(): WorkflowEventSkill[] {
       name: "Plan Interview Skill",
       purpose: "Clarify scope, risks, acceptance criteria, and non-goals before design.",
       trigger: "Intake is complete and the run advances into planning.",
-      allowedActors: ["human", "codex", "openclaw"],
+      allowedActors: ["human", "codex", ...openClawAgentKinds],
       inputs: ["requirement artifact", "repository context", "omx_wiki pages"],
       outputs: ["plan artifact", "acceptance criteria", "risk list"],
       constraints: [
@@ -128,7 +129,7 @@ export function createDefaultEventSkills(): WorkflowEventSkill[] {
       name: "OpenSpec Design Skill",
       purpose: "Turn an approved plan into OpenSpec-backed design artifacts.",
       trigger: "PlanApproval is approved.",
-      allowedActors: ["codex", "openclaw", "human"],
+      allowedActors: ["codex", ...openClawAgentKinds, "human"],
       inputs: ["approved plan", "repository context", "architecture wiki"],
       outputs: ["OpenSpec change", "technical design", "task breakdown"],
       constraints: [
@@ -173,7 +174,7 @@ export function createDefaultEventSkills(): WorkflowEventSkill[] {
       name: "Implementation Dispatch Skill",
       purpose: "Send the approved design to the selected development agent.",
       trigger: "DesignApproval is approved.",
-      allowedActors: ["codex", "openclaw", "human"],
+      allowedActors: ["codex", ...openClawAgentKinds, "human"],
       inputs: ["approved design", "task breakdown", "repository branch policy"],
       outputs: ["patch artifact", "branch plan", "agent run record"],
       constraints: [
@@ -192,7 +193,7 @@ export function createDefaultEventSkills(): WorkflowEventSkill[] {
       name: "Verification Generation Skill",
       purpose: "Generate and run tests against the implementation and acceptance criteria.",
       trigger: "Implementation dispatch completes.",
-      allowedActors: ["codex", "openclaw", "verification_subagent"],
+      allowedActors: ["codex", ...openClawAgentKinds, "verification_subagent"],
       inputs: ["patch artifact", "acceptance criteria", "test strategy"],
       outputs: ["test report", "coverage report", "manual checklist"],
       constraints: [
@@ -233,7 +234,7 @@ export function createDefaultEventSkills(): WorkflowEventSkill[] {
       name: "Closeout Skill",
       purpose: "Finalize the run and preserve artifacts for future wiki-backed learning.",
       trigger: "VerificationApproval is approved.",
-      allowedActors: ["human", "codex", "openclaw"],
+      allowedActors: ["human", "codex", ...openClawAgentKinds],
       inputs: ["all artifacts", "approval gates", "agent runs"],
       outputs: ["completed workflow run", "wiki capture candidate"],
       constraints: [
@@ -259,6 +260,7 @@ export function createWorkflowRun(input: {
   const now = new Date().toISOString()
   const id = crypto.randomUUID()
   const eventSkills = createDefaultEventSkills()
+  const selectedAgent = normalizeAgentKind(input.selectedAgent)
   const requirementArtifact = createArtifact(
     id,
     "intake",
@@ -272,7 +274,7 @@ export function createWorkflowRun(input: {
   const skillAssignments = Object.fromEntries(
     eventSkills.map((skill) => [
       skill.id,
-      input.skillAssignments?.[skill.id] ?? input.selectedAgent
+      normalizeAgentKind(input.skillAssignments?.[skill.id] ?? selectedAgent)
     ])
   ) as Record<string, AgentKind>
 
@@ -286,7 +288,7 @@ export function createWorkflowRun(input: {
       stage: "design",
       actorType: input.designApprovalActor,
       agent:
-        input.designApprovalActor === "human" ? undefined : input.selectedAgent,
+        input.designApprovalActor === "human" ? undefined : selectedAgent,
       requireIndependence: input.designApprovalActor === "independent_agent"
     },
     {
@@ -295,7 +297,7 @@ export function createWorkflowRun(input: {
       agent:
         input.verificationApprovalActor === "human"
           ? undefined
-          : input.selectedAgent,
+          : selectedAgent,
       requireIndependence: input.verificationApprovalActor === "independent_agent"
     }
   ]
@@ -308,7 +310,7 @@ export function createWorkflowRun(input: {
     source: "dashboard",
     currentStage: "intake",
     status: "pending",
-    selectedAgent: input.selectedAgent,
+    selectedAgent,
     stageModes,
     skillAssignments,
     approvalPolicies,
@@ -409,7 +411,7 @@ export async function advanceWorkflow(
         "patch",
         "Implementation Plan",
         [
-          `Assigned executor: ${resolveSkillExecutor(nextRun, "implementation.dispatch")}`,
+          `Assigned executor: ${getAgentLabel(resolveSkillExecutor(nextRun, "implementation.dispatch"))}`,
           "Runner mode: simulated MVP adapter.",
           "Expected output: branch, commits, PR link, and implementation notes."
         ].join("\n"),
@@ -687,7 +689,7 @@ async function addAgentArtifact(
     executor,
     [artifact.id],
     [
-      `${title} generated by ${executor}.`,
+      `${title} generated by ${getAgentLabel(executor)}.`,
       `Runner source: ${finalResult.source}.`,
       finalResult.externalRunId ? `External run: ${finalResult.externalRunId}.` : undefined
     ]
@@ -719,12 +721,15 @@ function ensureEventSkillState(run: WorkflowRun) {
   run.skillAssignments =
     run.skillAssignments ??
     (Object.fromEntries(
-      run.eventSkills.map((skill) => [skill.id, run.selectedAgent])
+      run.eventSkills.map((skill) => [
+        skill.id,
+        normalizeAgentKind(run.selectedAgent)
+      ])
     ) as Record<string, AgentKind>)
 }
 
 function resolveSkillExecutor(run: WorkflowRun, skillId: string): AgentKind {
-  return run.skillAssignments?.[skillId] ?? run.selectedAgent
+  return normalizeAgentKind(run.skillAssignments?.[skillId] ?? run.selectedAgent)
 }
 
 function addWorkflowEvent(

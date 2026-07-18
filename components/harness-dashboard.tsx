@@ -19,6 +19,7 @@ import {
 } from "lucide-react"
 import { ChangeEvent, FormEvent, useMemo, useState } from "react"
 import type { CSSProperties } from "react"
+import { agentProfiles, defaultAgentKind, getAgentLabel } from "@/lib/agents"
 import type {
   AgentKind,
   ApprovalActorType,
@@ -44,7 +45,7 @@ const orderedStages: WorkflowStage[] = [
 
 const defaultEventSkills = createDefaultEventSkills()
 const defaultSkillAssignments = Object.fromEntries(
-  defaultEventSkills.map((skill) => [skill.id, "codex" as AgentKind])
+  defaultEventSkills.map((skill) => [skill.id, defaultAgentKind])
 ) as Record<string, AgentKind>
 
 const sampleRequirement =
@@ -69,7 +70,7 @@ export function HarnessDashboard({
     projectName: "Harness MVP",
     repository: "owner/repository",
     requirement: sampleRequirement,
-    selectedAgent: "codex" as AgentKind,
+    selectedAgent: defaultAgentKind,
     skillAssignments: defaultSkillAssignments,
     designApprovalActor: "independent_agent" as ApprovalActorType,
     verificationApprovalActor: "verification_subagent" as ApprovalActorType
@@ -240,7 +241,7 @@ export function HarnessDashboard({
             <span>
               <strong>Agent / Skills / Approval Policies</strong>
               <small>
-                {form.selectedAgent} - design and verification gates
+                {getAgentLabel(form.selectedAgent)} - design and verification gates
               </small>
             </span>
             <ChevronRight size={18} />
@@ -625,7 +626,7 @@ function RunDetail({
                 <div className="agentRow" key={agentRun.id}>
                   <strong>{stageLabels[agentRun.stage]}</strong>
                   <small>
-                    {agentRun.agent} - {agentRun.status}
+                    {getAgentLabel(agentRun.agent)} - {agentRun.status}
                   </small>
                 </div>
               ))
@@ -716,7 +717,10 @@ function RunDetail({
                         </div>
                         <p>{skill.purpose}</p>
                         <div className="skillMetaGrid">
-                          <SkillMeta title="Executor" values={[executor]} />
+                          <SkillMeta
+                            title="Executor"
+                            values={[getAgentLabel(executor)]}
+                          />
                           <SkillMeta title="Trigger" values={[skill.trigger]} />
                           <SkillMeta
                             title="Knowledge"
@@ -779,11 +783,7 @@ function AgentSelect({
   return (
     <SegmentedControl
       value={value}
-      options={[
-        ["codex", "Codex"],
-        ["openclaw", "OpenClaw"],
-        ["manual", "Manual"]
-      ]}
+      options={agentProfiles.map((agent) => [agent.id, agent.label])}
       onChange={(nextValue) => onChange(nextValue as AgentKind)}
     />
   )

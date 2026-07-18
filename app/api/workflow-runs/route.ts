@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server"
+import { defaultAgentKind, normalizeAgentKind } from "@/lib/agents"
 import { createWorkflowRun } from "@/lib/workflow"
 import { listWorkflowRuns, upsertWorkflowRun } from "@/lib/store"
 import type { AgentKind, ApprovalActorType } from "@/lib/types"
@@ -29,7 +30,7 @@ export async function POST(request: Request) {
     projectName: body.projectName,
     repository: body.repository ?? "",
     requirement: body.requirement,
-    selectedAgent: body.selectedAgent ?? "codex",
+    selectedAgent: normalizeAgentKind(body.selectedAgent ?? defaultAgentKind),
     skillAssignments: body.skillAssignments,
     designApprovalActor: body.designApprovalActor ?? "independent_agent",
     verificationApprovalActor:

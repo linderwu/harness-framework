@@ -1,6 +1,6 @@
 # Local Codex Bridge
 
-The dashboard records `codex`, `openclaw`, and `manual` as workflow executors. To make `codex` execute on this machine, run the local bridge and point the app at it.
+The dashboard records `codex`, concrete OpenClaw profiles, and `manual` as workflow executors. To make `codex` execute on this machine, run the local bridge and point the app at it.
 
 ## Local Development
 
@@ -24,6 +24,8 @@ codex exec -c service_tier="fast" -C <repo> --sandbox workspace-write -
 ```
 
 Without `CODEX_BRIDGE_URL`, the dashboard keeps using the simulated MVP adapter.
+
+OpenClaw profiles use ids such as `openclaw.rowlet`, `openclaw.roaringmoon`, and `openclaw.charizard`. When one is assigned, the Next.js API calls `OPENCLAW_BRIDGE_URL` and includes `mainAgent` in the payload.
 
 ## Zeabur To Local Codex
 

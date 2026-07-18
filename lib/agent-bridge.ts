@@ -5,6 +5,7 @@ import type {
   WorkflowRun,
   WorkflowStage
 } from "@/lib/types"
+import { getAgentProfile } from "@/lib/agents"
 import type { AgentArtifactResult } from "@/lib/workflow"
 
 export interface AgentInvocationInput {
@@ -28,11 +29,14 @@ interface BridgeResponse {
 export async function invokeConfiguredAgent(
   input: AgentInvocationInput
 ): Promise<AgentArtifactResult | undefined> {
-  if (input.executor !== "codex") {
+  const profile = getAgentProfile(input.executor)
+
+  if (profile.family === "manual") {
     return undefined
   }
 
-  const bridgeUrl = process.env.CODEX_BRIDGE_URL
+  const bridgeUrl = getAgentBridgeUrl(input.executor)
+  const source = getBridgeSource(input.executor)
 
   if (!bridgeUrl) {
     return undefined
@@ -41,7 +45,7 @@ export async function invokeConfiguredAgent(
   try {
     const response = await fetch(new URL("agent-runs", normalizeUrl(bridgeUrl)), {
       method: "POST",
-      headers: createBridgeHeaders(),
+      headers: createBridgeHeaders(input.executor),
       body: JSON.stringify({
         workflowRunId: input.run.id,
         projectName: input.run.projectName,
@@ -50,6 +54,9 @@ export async function invokeConfiguredAgent(
         stage: input.stage,
         artifactType: input.artifactType,
         title: input.title,
+        executor: input.executor,
+        agentFamily: profile.family,
+        mainAgent: profile.mainAgent,
         skill: input.skill,
         artifacts: input.run.artifacts,
         fallbackBody: input.fallbackBody
@@ -61,9 +68,9 @@ export async function invokeConfiguredAgent(
     if (!response.ok) {
       return {
         status: "failed",
-        source: "codex-bridge",
+        source,
         body: [
-          `Codex bridge request failed with HTTP ${response.status}.`,
+          `${profile.label} bridge request failed with HTTP ${response.status}.`,
           data.error ? `Error: ${data.error}` : undefined
         ]
           .filter(Boolean)
@@ -73,7 +80,7 @@ export async function invokeConfiguredAgent(
 
     return {
       status: data.status === "failed" ? "failed" : "completed",
-      source: "codex-bridge",
+      source,
       externalRunId: data.id,
       body:
         data.output?.trim() ||
@@ -84,8 +91,8 @@ export async function invokeConfiguredAgent(
   } catch (error) {
     return {
       status: "failed",
-      source: "codex-bridge",
-      body: `Codex bridge is not reachable: ${formatError(error)}`
+      source,
+      body: `${profile.label} bridge is not reachable: ${formatError(error)}`
     }
   }
 }
@@ -123,8 +130,9 @@ function createBridgeHeaders(agent: AgentKind = "codex") {
   const headers: Record<string, string> = {
     "Content-Type": "application/json"
   }
+  const profile = getAgentProfile(agent)
   const token =
-    agent === "openclaw"
+    profile.family === "openclaw"
       ? process.env.OPENCLAW_BRIDGE_TOKEN
       : process.env.CODEX_BRIDGE_TOKEN
 
@@ -136,15 +144,23 @@ function createBridgeHeaders(agent: AgentKind = "codex") {
 }
 
 function getAgentBridgeUrl(agent: AgentKind) {
-  if (agent === "codex") {
+  const profile = getAgentProfile(agent)
+
+  if (profile.family === "codex") {
     return process.env.CODEX_BRIDGE_URL
   }
 
-  if (agent === "openclaw") {
+  if (profile.family === "openclaw") {
     return process.env.OPENCLAW_BRIDGE_URL
   }
 
   return undefined
+}
+
+function getBridgeSource(agent: AgentKind): AgentArtifactResult["source"] {
+  return getAgentProfile(agent).family === "openclaw"
+    ? "openclaw-bridge"
+    : "codex-bridge"
 }
 
 function formatError(error: unknown) {

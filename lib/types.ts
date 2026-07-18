@@ -17,7 +17,12 @@ export type WorkflowStage =
 
 export type ExecutionMode = "manual" | "agent" | "hybrid"
 
-export type AgentKind = "codex" | "openclaw" | "manual"
+export type OpenClawMainAgent = "rowlet" | "roaringmoon" | "charizard"
+
+export type AgentKind =
+  | "codex"
+  | `openclaw.${OpenClawMainAgent}`
+  | "manual"
 
 export type ApprovalActorType =
   | "human"

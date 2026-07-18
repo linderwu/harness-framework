@@ -1,6 +1,7 @@
 import { promises as fs } from "fs"
 import path from "path"
 import type { HarnessState, WorkflowRun } from "@/lib/types"
+import { normalizeAgentKind } from "@/lib/agents"
 import { createDefaultEventSkills } from "@/lib/workflow"
 
 const statePath = path.join(process.cwd(), "data", "harness-state.json")
@@ -70,15 +71,33 @@ export async function deleteWorkflowRun(id: string) {
 
 function normalizeWorkflowRun(run: WorkflowRun): WorkflowRun {
   const eventSkills = run.eventSkills ?? createDefaultEventSkills()
+  const selectedAgent = normalizeAgentKind(run.selectedAgent)
+  const skillAssignments = Object.fromEntries(
+    eventSkills.map((skill) => [
+      skill.id,
+      normalizeAgentKind(run.skillAssignments?.[skill.id] ?? selectedAgent)
+    ])
+  )
 
   return {
     ...run,
+    selectedAgent,
     eventSkills,
-    skillAssignments:
-      run.skillAssignments ??
-      Object.fromEntries(
-        eventSkills.map((skill) => [skill.id, run.selectedAgent])
-      ),
+    skillAssignments,
+    approvalPolicies: (run.approvalPolicies ?? []).map((policy) => ({
+      ...policy,
+      agent: policy.agent ? normalizeAgentKind(policy.agent) : undefined
+    })),
+    approvalGates: (run.approvalGates ?? []).map((gate) => ({
+      ...gate,
+      assignedAgent: gate.assignedAgent
+        ? normalizeAgentKind(gate.assignedAgent)
+        : undefined
+    })),
+    agentRuns: (run.agentRuns ?? []).map((agentRun) => ({
+      ...agentRun,
+      agent: normalizeAgentKind(agentRun.agent)
+    })),
     events: run.events ?? []
   }
 }
