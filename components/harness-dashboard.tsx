@@ -51,7 +51,7 @@ const defaultSkillAssignments = Object.fromEntries(
 ) as Record<string, AgentKind>
 
 const sampleRequirement =
-  "Build a harness dashboard that can select Codex/OpenClaw agents and control design/verification with approval gates."
+  "Build a Jormungandr dashboard that can select Codex/OpenClaw agents and control design/verification with approval gates."
 
 export function HarnessDashboard({
   initialRuns
@@ -73,7 +73,7 @@ export function HarnessDashboard({
   const [bulkStage, setBulkStage] = useState<WorkflowStage | "all">("all")
   const [bulkAgent, setBulkAgent] = useState<AgentKind>(defaultAgentKind)
   const [form, setForm] = useState({
-    projectName: "Harness MVP",
+    projectName: "Jormungandr MVP",
     repository: "owner/repository",
     requirement: sampleRequirement,
     selectedAgent: defaultAgentKind,
@@ -273,8 +273,8 @@ export function HarnessDashboard({
     <main className="shell">
       <header className="topbar">
         <div>
-          <p className="eyebrow">Agentic Delivery Harness</p>
-          <h1>Harness Framework</h1>
+          <p className="eyebrow">Agentic Delivery System</p>
+          <h1>Jormungandr</h1>
         </div>
         <button className="iconButton" onClick={refreshRuns} title="Refresh">
           <RefreshCw size={18} />

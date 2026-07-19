@@ -2,7 +2,7 @@ import type { Metadata } from "next"
 import "./globals.css"
 
 export const metadata: Metadata = {
-  title: "Harness Framework",
+  title: "Jormungandr",
   description: "Agentic development workflow dashboard"
 }
 
