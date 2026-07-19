@@ -32,9 +32,22 @@ OpenClaw profiles use ids such as `openclaw.rowlet`, `openclaw.roaringmoon`, and
 
 ## OpenClaw A2A Command
 
-OpenClaw can also run through the accepted ClawCodex A2A session protocol. Set
+OpenClaw can also run through an A2A command adapter. Set
 `OPENCLAW_A2A_COMMAND` to a local command that reads a JSON envelope from stdin
 and writes either OpenClaw `--json` output or plain text to stdout.
+
+The command adapter supports two envelope modes:
+
+```txt
+OPENCLAW_A2A_PROTOCOL=legacy-clawcodex-v0.1
+OPENCLAW_A2A_PROTOCOL=public-a2a-v0.3
+```
+
+`legacy-clawcodex-v0.1` is the default so existing local SSH/container wrappers
+keep working. `public-a2a-v0.3` emits a JSON-RPC 2.0 `message/send` request
+using the Linux Foundation Agent2Agent protocol shape. New integrations should
+target `public-a2a-v0.3`; the legacy envelope is kept only as a compatibility
+transport while OpenClaw does not yet expose a native public A2A server.
 
 The app passes these environment variables to the command:
 
@@ -42,6 +55,7 @@ The app passes these environment variables to the command:
 OPENCLAW_A2A_AGENT=rowlet|roaringmoon|charizard
 OPENCLAW_A2A_MODEL=minimax/MiniMax-M2.7
 OPENCLAW_A2A_SESSION_KEY=agent:<agent>:a2a-codex
+OPENCLAW_A2A_PROTOCOL=legacy-clawcodex-v0.1
 ```
 
 Example shape for the command:
@@ -64,6 +78,12 @@ openclaw agent \
 
 Use `OPENCLAW_BRIDGE_URL` for an HTTP request/response bridge. Use
 `OPENCLAW_A2A_COMMAND` when you want the persistent session-based A2A transport.
+
+The future production direction is a real OpenClaw A2A HTTP endpoint instead of
+the stdin command adapter. That endpoint should publish an Agent Card at
+`/.well-known/agent-card.json`, declare JSON-RPC transport, accept
+`message/send`, return `Message` or `Task` results, and later add `tasks/get`
+or streaming when long-running jobs need progress updates.
 
 ## Zeabur To Local Codex
 

@@ -5,6 +5,11 @@ import type {
   WorkflowRun,
   WorkflowStage
 } from "@/lib/types"
+import {
+  createOpenClawA2AEnvelope,
+  extractA2AResponseText,
+  resolveOpenClawA2AProtocol
+} from "@/lib/a2a-protocol"
 import { getAgentProfile } from "@/lib/agents"
 import { ensureGitHubRepository } from "@/lib/github-repository"
 import type { AgentArtifactResult } from "@/lib/workflow"
@@ -192,38 +197,22 @@ async function invokeOpenClawA2A(
   const profile = getAgentProfile(input.executor)
   const sessionKey = getOpenClawA2ASessionKey(input.executor)
   const model = process.env.OPENCLAW_A2A_MODEL ?? "minimax/MiniMax-M2.7"
-  const envelope = {
-    protocol: "ClawCodex-A2A",
-    version: "0.1",
-    msg_id: idempotencyKey,
-    in_reply_to: null,
-    from: "harness",
-    to: `openclaw:${profile.mainAgent}`,
-    intent: "task",
-    summary: input.title,
-    body: JSON.stringify({
-      workflowRunId: input.run.id,
-      workflowVersion: input.run.version,
-      projectName: input.run.projectName,
-      repository: input.run.repository,
-      requirement: input.run.requirement,
-      stage: input.stage,
-      artifactType: input.artifactType,
-      title: input.title,
-      skill: input.skill,
-      artifacts: input.run.artifacts,
-      fallbackBody: input.fallbackBody
-    }),
-    artifacts: [],
-    requested_action: "reply",
-    constraints: input.skill.constraints,
-    status: "accepted"
-  }
+  const protocol = resolveOpenClawA2AProtocol()
+  const envelope = createOpenClawA2AEnvelope(
+    {
+      ...input,
+      idempotencyKey,
+      sessionKey,
+      mainAgent: profile.mainAgent
+    },
+    protocol
+  )
 
   try {
     const result = await runCommandWithStdin(command, JSON.stringify(envelope), {
       OPENCLAW_A2A_AGENT: profile.mainAgent ?? "rowlet",
       OPENCLAW_A2A_MODEL: model,
+      OPENCLAW_A2A_PROTOCOL: protocol,
       OPENCLAW_A2A_SESSION_KEY: sessionKey
     })
     return {
@@ -233,10 +222,10 @@ async function invokeOpenClawA2A(
       idempotencyKey,
       statusMessage:
         result.exitCode === 0
-          ? `A2A session ${sessionKey} replied.`
+          ? `A2A (${protocol}) session ${sessionKey} replied.`
           : `A2A command exited with ${result.exitCode}.`,
       body:
-        extractOpenClawText(result.stdout).trim() ||
+        extractA2AResponseText(result.stdout).trim() ||
         result.stderr.trim() ||
         "OpenClaw A2A completed without a final message."
     }
@@ -285,22 +274,6 @@ async function runCommandWithStdin(
   clearTimeout(timer)
 
   return { exitCode, stdout, stderr }
-}
-
-function extractOpenClawText(raw: string) {
-  try {
-    const data = JSON.parse(raw) as BridgeResponse & {
-      result?: { payloads?: Array<{ text?: string }> }
-    }
-    const payloadText = data.result?.payloads
-      ?.map((payload) => payload.text)
-      .filter(Boolean)
-      .join("\n")
-
-    return payloadText || data.output || raw
-  } catch {
-    return raw
-  }
 }
 
 function createMissingBridgeResult(
