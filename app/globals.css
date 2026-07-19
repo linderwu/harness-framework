@@ -40,6 +40,7 @@ body {
 
 button,
 input,
+select,
 textarea {
   font: inherit;
 }
@@ -189,15 +190,295 @@ textarea {
   width: 100%;
 }
 
+.plainSelect {
+  background: #fbfcfb;
+  border: 1px solid var(--panel-border);
+  border-radius: 7px;
+  color: var(--text);
+  min-height: 42px;
+  outline: none;
+  padding: 0 12px;
+  width: 100%;
+}
+
 textarea {
   min-height: 136px;
   resize: vertical;
 }
 
 input:focus,
+select:focus,
 textarea:focus {
   border-color: var(--green);
   box-shadow: 0 0 0 3px rgba(22, 106, 79, 0.14);
+}
+
+.agentSelectWrap {
+  display: block;
+  position: relative;
+  width: 100%;
+}
+
+.agentSelectWrap::after {
+  border-color: var(--muted) transparent transparent;
+  border-style: solid;
+  border-width: 5px 5px 0;
+  content: "";
+  pointer-events: none;
+  position: absolute;
+  right: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.agentSelect {
+  appearance: none;
+  background: #fbfcfb;
+  border: 1px solid var(--panel-border);
+  border-radius: 7px;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 800;
+  min-height: 42px;
+  outline: none;
+  padding: 0 40px 0 12px;
+  width: 100%;
+}
+
+.assignmentWorkbench {
+  display: grid;
+  gap: 16px;
+}
+
+.assignmentHeader {
+  align-items: start;
+  border-bottom: 1px solid #e7ede7;
+  display: flex;
+  gap: 18px;
+  justify-content: space-between;
+  padding-bottom: 14px;
+}
+
+.assignmentHeader h3 {
+  font-size: 18px;
+  line-height: 1.2;
+  margin: 0;
+}
+
+.assignmentHeader p {
+  color: #405047;
+  font-size: 13px;
+  line-height: 1.5;
+  margin: 6px 0 0;
+  max-width: 62ch;
+}
+
+.assignmentSummary {
+  align-items: center;
+  background: #eef2ee;
+  border: 1px solid var(--panel-border);
+  border-radius: 7px;
+  display: grid;
+  justify-items: center;
+  min-width: 94px;
+  padding: 9px 12px;
+}
+
+.assignmentSummary strong {
+  color: var(--green);
+  font-size: 22px;
+  line-height: 1;
+}
+
+.assignmentSummary span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.defaultExecutorRow {
+  align-items: center;
+  background: #fbfcfb;
+  border: 1px solid #e7ede7;
+  border-radius: 8px;
+  display: grid;
+  gap: 16px;
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 320px);
+  padding: 13px 14px;
+}
+
+.defaultExecutorRow > div:first-child {
+  display: grid;
+  gap: 4px;
+}
+
+.defaultExecutorRow strong {
+  font-size: 14px;
+}
+
+.assignmentToolbar {
+  align-items: end;
+  display: grid;
+  gap: 12px;
+  grid-template-columns:
+    minmax(220px, 1.4fr)
+    minmax(150px, 0.65fr)
+    minmax(200px, 0.8fr)
+    auto;
+}
+
+.searchField {
+  min-width: 0;
+}
+
+.searchInputWrap {
+  align-items: center;
+  background: #fbfcfb;
+  border: 1px solid var(--panel-border);
+  border-radius: 7px;
+  color: var(--muted);
+  display: flex;
+  gap: 8px;
+  min-height: 42px;
+  padding: 0 11px;
+}
+
+.searchInputWrap input {
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  min-height: 40px;
+  padding: 0;
+}
+
+.searchInputWrap input:focus {
+  box-shadow: none;
+}
+
+.searchInputWrap:focus-within {
+  border-color: var(--green);
+  box-shadow: 0 0 0 3px rgba(22, 106, 79, 0.14);
+}
+
+.toolbarActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.toolbarActions .iconTextButton {
+  background: #eef2ee;
+  border: 1px solid var(--panel-border);
+  color: var(--text);
+  min-height: 42px;
+}
+
+.toolbarActions .applyBulkButton {
+  background: var(--green);
+  border-color: var(--green);
+  color: white;
+}
+
+.toolbarActions .activeFilter {
+  background: var(--green-soft);
+  border-color: #95c9b6;
+  color: var(--green);
+}
+
+.assignmentTable {
+  border: 1px solid #e2e8e2;
+  border-radius: 8px;
+  display: grid;
+  max-height: 390px;
+  min-height: 0;
+  overflow: auto;
+}
+
+.assignmentTableHead,
+.assignmentTableRow {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(92px, 0.5fr) minmax(230px, 1.35fr) minmax(210px, 0.9fr) minmax(118px, 0.5fr);
+}
+
+.assignmentTableHead {
+  background: #eef2ee;
+  border-bottom: 1px solid #d8ded8;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  padding: 10px 12px;
+  position: sticky;
+  text-transform: uppercase;
+  top: 0;
+  z-index: 1;
+}
+
+.assignmentTableRow {
+  align-items: center;
+  background: var(--panel);
+  border-bottom: 1px solid #edf1ed;
+  padding: 11px 12px;
+}
+
+.assignmentTableRow:last-child {
+  border-bottom: 0;
+}
+
+.stageBadge,
+.policyBadge {
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 800;
+  justify-self: start;
+  padding: 5px 9px;
+  white-space: nowrap;
+}
+
+.stageBadge {
+  background: var(--green-soft);
+  color: var(--green);
+}
+
+.policyBadge {
+  background: #f5f7f5;
+  border: 1px solid #e2e8e2;
+  color: var(--muted);
+}
+
+.skillCell,
+.executorCell {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.skillCell strong {
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.executorCell small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.assignmentEmpty {
+  color: var(--muted);
+  font-size: 13px;
+  padding: 18px;
+  text-align: center;
+}
+
+.assignmentPolicyGrid {
+  border-top: 1px solid #e7ede7;
+  padding-top: 16px;
 }
 
 .segmented {
@@ -359,6 +640,7 @@ textarea:focus {
   box-shadow: 0 24px 70px rgba(13, 20, 16, 0.22);
   display: grid;
   gap: 18px;
+  grid-template-rows: auto minmax(0, 1fr) auto;
   max-height: calc(100vh - 48px);
   max-width: 1120px;
   min-height: min(760px, calc(100vh - 48px));
@@ -814,6 +1096,14 @@ pre {
   .stageTrack {
     grid-template-columns: repeat(3, minmax(80px, 1fr));
   }
+
+  .assignmentToolbar {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .toolbarActions {
+    justify-content: flex-start;
+  }
 }
 
 @media (max-width: 640px) {
@@ -850,5 +1140,32 @@ pre {
 
   .stageTrack {
     grid-template-columns: repeat(2, minmax(80px, 1fr));
+  }
+
+  .assignmentHeader,
+  .defaultExecutorRow {
+    align-items: stretch;
+    grid-template-columns: 1fr;
+  }
+
+  .assignmentHeader {
+    display: grid;
+  }
+
+  .assignmentToolbar {
+    grid-template-columns: 1fr;
+  }
+
+  .assignmentTableHead {
+    display: none;
+  }
+
+  .assignmentTableRow {
+    align-items: stretch;
+    grid-template-columns: 1fr;
+  }
+
+  .policyBadge {
+    justify-self: start;
   }
 }

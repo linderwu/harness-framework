@@ -3,7 +3,12 @@ import nextTypescript from "eslint-config-next/typescript"
 
 const eslintConfig = [
   {
-    ignores: ["node_modules/**", ".next/**", "data/harness-state.json"]
+    ignores: [
+      "node_modules/**",
+      ".next/**",
+      ".agents/**",
+      "data/harness-state.json"
+    ]
   },
   ...nextVitals,
   ...nextTypescript

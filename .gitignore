@@ -5,3 +5,5 @@ data/harness-state.json
 .env.local
 npm-debug.log*
 tsconfig.tsbuildinfo
+.agents/
+skills-lock.json
