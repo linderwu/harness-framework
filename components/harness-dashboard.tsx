@@ -71,6 +71,8 @@ const defaultEventSkills = createDefaultEventSkills()
 const defaultSkillAssignments = Object.fromEntries(
   defaultEventSkills.map((skill) => [skill.id, defaultAgentKind])
 ) as Record<string, AgentKind>
+const maxContextFileBytes = 2 * 1024 * 1024
+const maxContextTotalBytes = 5 * 1024 * 1024
 
 const sampleRequirement =
   "Build a Jormungandr dashboard that can select Codex/OpenClaw agents and control design/verification with approval gates."
@@ -86,6 +88,7 @@ export function HarnessDashboard({
   )
   const [isLoading, setIsLoading] = useState(false)
   const [isMutating, setIsMutating] = useState(false)
+  const [mutationError, setMutationError] = useState<string | undefined>()
   const [openComposeSection, setOpenComposeSection] = useState<
     "requirement" | "automation" | undefined
   >()
@@ -95,7 +98,7 @@ export function HarnessDashboard({
   const [bulkAgent, setBulkAgent] = useState<AgentKind>(defaultAgentKind)
   const [form, setForm] = useState({
     projectName: "Jormungandr MVP",
-    repository: "owner/repository",
+    repository: "",
     requirement: sampleRequirement,
     contextFiles: [] as ProjectContextFile[],
     selectedAgent: defaultAgentKind,
@@ -151,15 +154,22 @@ export function HarnessDashboard({
   async function createRun(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setIsMutating(true)
-    const response = await fetch("/api/workflow-runs", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(form)
-    })
-    const run = (await response.json()) as WorkflowRun
-    await refreshRuns()
-    setSelectedRunId(run.id)
-    setIsMutating(false)
+    setMutationError(undefined)
+
+    try {
+      const response = await fetch("/api/workflow-runs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(form)
+      })
+      const run = await readRunMutationResponse(response)
+      await refreshRuns()
+      setSelectedRunId(run.id)
+    } catch (error) {
+      setMutationError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setIsMutating(false)
+    }
   }
 
   async function advanceRun(runId: string) {
@@ -167,7 +177,7 @@ export function HarnessDashboard({
     const response = await fetch(`/api/workflow-runs/${runId}/advance`, {
       method: "POST"
     })
-    const run = (await response.json()) as WorkflowRun
+    const run = await readRunMutationResponse(response)
     await refreshRuns()
     setSelectedRunId(run.id)
     setIsMutating(false)
@@ -178,7 +188,7 @@ export function HarnessDashboard({
     const response = await fetch(`/api/workflow-runs/${runId}/stop`, {
       method: "POST"
     })
-    const run = (await response.json()) as WorkflowRun
+    const run = await readRunMutationResponse(response)
     await refreshRuns()
     setSelectedRunId(run.id)
     setIsMutating(false)
@@ -186,7 +196,7 @@ export function HarnessDashboard({
 
   async function cancelRun(run: WorkflowRun) {
     const confirmed = window.confirm(
-      `Cancel "${run.projectName}" and delete all artifacts for this run?`
+      `Cancel "${run.projectName}" and preserve its artifacts for review?`
     )
 
     if (!confirmed) {
@@ -211,7 +221,7 @@ export function HarnessDashboard({
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ decision })
     })
-    const run = (await response.json()) as WorkflowRun
+    const run = await readRunMutationResponse(response)
     await refreshRuns()
     setSelectedRunId(run.id)
     setIsMutating(false)
@@ -282,6 +292,19 @@ export function HarnessDashboard({
       return
     }
 
+    const oversizedFile = files.find((file) => file.size > maxContextFileBytes)
+    const totalBytes =
+      form.contextFiles.reduce((total, file) => total + file.size, 0) +
+      files.reduce((total, file) => total + file.size, 0)
+
+    if (oversizedFile || totalBytes > maxContextTotalBytes) {
+      window.alert(
+        "Context files are too large for the JSON-backed state store. Keep each file under 2 MB and the run under 5 MB."
+      )
+      event.target.value = ""
+      return
+    }
+
     const contextFiles = await Promise.all(files.map(readProjectContextFile))
 
     setForm((currentForm) => ({
@@ -296,6 +319,22 @@ export function HarnessDashboard({
       ...currentForm,
       contextFiles: currentForm.contextFiles.filter((file) => file.id !== fileId)
     }))
+  }
+
+  async function readRunMutationResponse(response: Response) {
+    const data = (await response.json()) as
+      | WorkflowRun
+      | { error?: string; latestRun?: WorkflowRun }
+
+    if (response.ok) {
+      return data as WorkflowRun
+    }
+
+    if ("latestRun" in data && data.latestRun) {
+      return data.latestRun
+    }
+
+    throw new Error(("error" in data && data.error) || "Workflow mutation failed")
   }
 
   return (
@@ -326,7 +365,7 @@ export function HarnessDashboard({
             <span>
               <strong>Project / Repository / Requirement</strong>
               <small>
-                {form.projectName} - {form.repository}
+                {form.projectName} - {form.repository || "GitHub repo not set"}
               </small>
             </span>
             <ChevronRight size={18} />
@@ -377,13 +416,19 @@ export function HarnessDashboard({
                 !isCancelableStatus(selectedRun.status)
               }
               onClick={() => selectedRun && cancelRun(selectedRun)}
-              title="Cancel selected run and delete its artifacts"
+              title="Cancel selected run and preserve its artifacts"
               type="button"
             >
               <Trash2 size={17} />
               Cancel Run
             </button>
           </div>
+
+          {mutationError ? (
+            <p className="formError" role="alert">
+              {mutationError}
+            </p>
+          ) : null}
 
           {openComposeSection ? (
             <div className="composeOverlay" role="dialog" aria-modal="true">
@@ -422,6 +467,7 @@ export function HarnessDashboard({
                     <label>
                       <span>Repository</span>
                       <input
+                        placeholder="my-new-repo or owner/repository"
                         value={form.repository}
                         onChange={(event) =>
                           setForm({ ...form, repository: event.target.value })
@@ -774,6 +820,15 @@ function RunDetail({
           <p className="eyebrow">{run.repository || "No repository"}</p>
           <h2>{run.projectName}</h2>
           <p className="requirement">{run.requirement}</p>
+          <p className="muted">
+            v{run.version} - event log {run.eventLogStatus}
+            {run.revisions.length > 0
+              ? ` - ${run.revisions.length} revision cycle(s)`
+              : ""}
+          </p>
+          {run.eventLogWarning ? (
+            <p className="muted">{run.eventLogWarning}</p>
+          ) : null}
         </div>
         <button
           className="primaryButton"

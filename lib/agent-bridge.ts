@@ -6,6 +6,7 @@ import type {
   WorkflowStage
 } from "@/lib/types"
 import { getAgentProfile } from "@/lib/agents"
+import { ensureGitHubRepository } from "@/lib/github-repository"
 import type { AgentArtifactResult } from "@/lib/workflow"
 
 export interface AgentInvocationInput {
@@ -24,6 +25,10 @@ interface BridgeResponse {
   output?: string
   error?: string
   stderr?: string
+  statusMessage?: string
+  idempotencyKey?: string
+  artifacts?: Array<{ type: string; title: string; body: string }>
+  capabilities?: string[]
 }
 
 export async function invokeConfiguredAgent(
@@ -31,23 +36,37 @@ export async function invokeConfiguredAgent(
 ): Promise<AgentArtifactResult | undefined> {
   const profile = getAgentProfile(input.executor)
 
+  if (input.skill.id === "intake.requirement") {
+    return invokeIntakeAgent(input)
+  }
+
   if (profile.family === "manual") {
     return undefined
+  }
+
+  const idempotencyKey = createIdempotencyKey(input)
+  const a2aCommand = getOpenClawA2ACommand(input.executor)
+
+  if (a2aCommand) {
+    return invokeOpenClawA2A(input, a2aCommand, idempotencyKey)
   }
 
   const bridgeUrl = getAgentBridgeUrl(input.executor)
   const source = getBridgeSource(input.executor)
 
   if (!bridgeUrl) {
-    return undefined
+    return createMissingBridgeResult(input, source)
   }
 
   try {
     const response = await fetch(new URL("agent-runs", normalizeUrl(bridgeUrl)), {
       method: "POST",
-      headers: createBridgeHeaders(input.executor),
+      headers: createBridgeHeaders(input.executor, idempotencyKey),
       body: JSON.stringify({
+        protocolVersion: "harness-agent-bridge/v0.2",
+        idempotencyKey,
         workflowRunId: input.run.id,
+        workflowVersion: input.run.version,
         projectName: input.run.projectName,
         repository: input.run.repository,
         requirement: input.run.requirement,
@@ -83,6 +102,10 @@ export async function invokeConfiguredAgent(
       status: data.status === "failed" ? "failed" : "completed",
       source,
       externalRunId: data.id,
+      idempotencyKey: data.idempotencyKey ?? idempotencyKey,
+      statusMessage: data.statusMessage,
+      artifacts: data.artifacts,
+      capabilities: data.capabilities,
       body:
         data.output?.trim() ||
         data.error ||
@@ -94,6 +117,40 @@ export async function invokeConfiguredAgent(
       status: "failed",
       source,
       body: `${profile.label} bridge is not reachable: ${formatError(error)}`
+    }
+  }
+}
+
+async function invokeIntakeAgent(
+  input: AgentInvocationInput
+): Promise<AgentArtifactResult> {
+  const repositoryRequest = input.run.repository.trim()
+  const source = getIntakeSource(input.executor)
+
+  try {
+    const repository = repositoryRequest
+      ? await ensureGitHubRepository(repositoryRequest)
+      : ""
+
+    return {
+      status: "completed",
+      source,
+      repository,
+      statusMessage: repository
+        ? `Repository ready: ${repository}.`
+        : "No repository requested during intake.",
+      body: [
+        `Project: ${input.run.projectName}`,
+        repository ? `Repository ready: ${repository}` : "Repository: not requested",
+        "Requirement:",
+        input.run.requirement
+      ].join("\n")
+    }
+  } catch (error) {
+    return {
+      status: "failed",
+      source,
+      body: `Intake agent could not create or verify the GitHub repository: ${formatError(error)}`
     }
   }
 }
@@ -127,7 +184,158 @@ function normalizeUrl(value: string) {
   return value.endsWith("/") ? value : `${value}/`
 }
 
-function createBridgeHeaders(agent: AgentKind = "codex") {
+async function invokeOpenClawA2A(
+  input: AgentInvocationInput,
+  command: string,
+  idempotencyKey: string
+): Promise<AgentArtifactResult> {
+  const profile = getAgentProfile(input.executor)
+  const sessionKey = getOpenClawA2ASessionKey(input.executor)
+  const model = process.env.OPENCLAW_A2A_MODEL ?? "minimax/MiniMax-M2.7"
+  const envelope = {
+    protocol: "ClawCodex-A2A",
+    version: "0.1",
+    msg_id: idempotencyKey,
+    in_reply_to: null,
+    from: "harness",
+    to: `openclaw:${profile.mainAgent}`,
+    intent: "task",
+    summary: input.title,
+    body: JSON.stringify({
+      workflowRunId: input.run.id,
+      workflowVersion: input.run.version,
+      projectName: input.run.projectName,
+      repository: input.run.repository,
+      requirement: input.run.requirement,
+      stage: input.stage,
+      artifactType: input.artifactType,
+      title: input.title,
+      skill: input.skill,
+      artifacts: input.run.artifacts,
+      fallbackBody: input.fallbackBody
+    }),
+    artifacts: [],
+    requested_action: "reply",
+    constraints: input.skill.constraints,
+    status: "accepted"
+  }
+
+  try {
+    const result = await runCommandWithStdin(command, JSON.stringify(envelope), {
+      OPENCLAW_A2A_AGENT: profile.mainAgent ?? "rowlet",
+      OPENCLAW_A2A_MODEL: model,
+      OPENCLAW_A2A_SESSION_KEY: sessionKey
+    })
+    return {
+      status: result.exitCode === 0 ? "completed" : "failed",
+      source: "openclaw-a2a",
+      externalRunId: idempotencyKey,
+      idempotencyKey,
+      statusMessage:
+        result.exitCode === 0
+          ? `A2A session ${sessionKey} replied.`
+          : `A2A command exited with ${result.exitCode}.`,
+      body:
+        extractOpenClawText(result.stdout).trim() ||
+        result.stderr.trim() ||
+        "OpenClaw A2A completed without a final message."
+    }
+  } catch (error) {
+    return {
+      status: "failed",
+      source: "openclaw-a2a",
+      externalRunId: idempotencyKey,
+      idempotencyKey,
+      body: `${profile.label} A2A command failed: ${formatError(error)}`
+    }
+  }
+}
+
+async function runCommandWithStdin(
+  command: string,
+  stdin: string,
+  env: Record<string, string>
+) {
+  const { spawn } = await import("child_process")
+  const timeoutMs = Number(process.env.OPENCLAW_A2A_TIMEOUT_MS ?? 600000)
+  const child = spawn(command, {
+    shell: true,
+    stdio: ["pipe", "pipe", "pipe"],
+    env: {
+      ...process.env,
+      ...env
+    }
+  })
+  let stdout = ""
+  let stderr = ""
+  const timer = setTimeout(() => child.kill("SIGTERM"), timeoutMs)
+
+  child.stdout.on("data", (chunk) => {
+    stdout += chunk.toString()
+  })
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk.toString()
+  })
+  child.stdin.end(stdin)
+
+  const exitCode = await new Promise<number>((resolve, reject) => {
+    child.on("error", reject)
+    child.on("close", (code) => resolve(code ?? 1))
+  })
+  clearTimeout(timer)
+
+  return { exitCode, stdout, stderr }
+}
+
+function extractOpenClawText(raw: string) {
+  try {
+    const data = JSON.parse(raw) as BridgeResponse & {
+      result?: { payloads?: Array<{ text?: string }> }
+    }
+    const payloadText = data.result?.payloads
+      ?.map((payload) => payload.text)
+      .filter(Boolean)
+      .join("\n")
+
+    return payloadText || data.output || raw
+  } catch {
+    return raw
+  }
+}
+
+function createMissingBridgeResult(
+  input: AgentInvocationInput,
+  source: AgentArtifactResult["source"]
+): AgentArtifactResult {
+  if (process.env.HARNESS_ALLOW_SIMULATED_AGENTS === "1") {
+    return {
+      status: "completed",
+      source: "simulated",
+      body: input.fallbackBody,
+      statusMessage: "Simulated because HARNESS_ALLOW_SIMULATED_AGENTS=1."
+    }
+  }
+
+  return {
+    status: "failed",
+    source,
+    body: `${getAgentProfile(input.executor).label} has no configured bridge. Set CODEX_BRIDGE_URL, OPENCLAW_BRIDGE_URL, or OPENCLAW_A2A_COMMAND.`
+  }
+}
+
+function createIdempotencyKey(input: AgentInvocationInput) {
+  return [
+    input.run.id,
+    input.run.version,
+    input.skill.id,
+    input.stage,
+    input.title
+  ]
+    .join(":")
+    .replaceAll(/\s+/g, "-")
+}
+
+function createBridgeHeaders(agent: AgentKind = "codex", idempotencyKey?: string) {
   const headers: Record<string, string> = {
     "Content-Type": "application/json"
   }
@@ -139,6 +347,10 @@ function createBridgeHeaders(agent: AgentKind = "codex") {
 
   if (token) {
     headers.Authorization = `Bearer ${token}`
+  }
+
+  if (idempotencyKey) {
+    headers["Idempotency-Key"] = idempotencyKey
   }
 
   return headers
@@ -158,10 +370,32 @@ function getAgentBridgeUrl(agent: AgentKind) {
   return undefined
 }
 
+function getOpenClawA2ACommand(agent: AgentKind) {
+  const profile = getAgentProfile(agent)
+
+  if (profile.family !== "openclaw") {
+    return undefined
+  }
+
+  return process.env.OPENCLAW_A2A_COMMAND
+}
+
+function getOpenClawA2ASessionKey(agent: AgentKind) {
+  const profile = getAgentProfile(agent)
+  return (
+    process.env.OPENCLAW_A2A_SESSION_KEY ??
+    `agent:${profile.mainAgent ?? "rowlet"}:a2a-codex`
+  )
+}
+
 function getBridgeSource(agent: AgentKind): AgentArtifactResult["source"] {
   return getAgentProfile(agent).family === "openclaw"
     ? "openclaw-bridge"
     : "codex-bridge"
+}
+
+function getIntakeSource(agent: AgentKind): AgentArtifactResult["source"] {
+  return getAgentProfile(agent).family === "manual" ? "simulated" : getBridgeSource(agent)
 }
 
 function formatError(error: unknown) {

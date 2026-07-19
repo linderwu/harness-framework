@@ -34,8 +34,12 @@ Each workflow run also stores per-skill executor assignment:
 
 ```ts
 interface WorkflowRun {
+  schemaVersion: number
+  version: number
   selectedAgent: AgentKind
   skillAssignments: Record<string, AgentKind>
+  revisions: WorkflowRevision[]
+  eventLogStatus: "consistent" | "drift_detected"
 }
 ```
 
@@ -73,33 +77,48 @@ interface WorkflowEvent {
    - Uses `standard-dev-workflow`, `omx_wiki`, and GitHub issue context.
    - Writes the plan artifact.
 
-3. `plan.approval`
+3. `plan.review`
+   - Reviews the plan for missing scope, weak acceptance criteria, and blockers.
+   - Defaults to Codex so planning is not approved without a separate review pass.
+   - Blocking findings return the run to planning.
+
+4. `plan.approval`
    - Stops the workflow until the plan is approved.
    - A rejected plan cannot move into design.
 
-4. `design.openspec`
+5. `design.openspec`
    - Converts the approved plan into an OpenSpec-style design artifact.
    - Cannot directly change product code.
 
-5. `design.approval`
+6. `design.approval`
    - Reviews the design before implementation.
    - May be handled by a human, verification subagent, or independent agent.
    - Prefer independent review when the implementation agent drafted the design.
 
-6. `implementation.dispatch`
+7. `implementation.dispatch`
    - Sends the approved design to the selected development agent.
    - Restricts edits to the approved task scope.
 
-7. `verification.generate`
+8. `implementation.code_review`
+   - Reviews implementation output for bugs, regressions, security risks, and missing tests.
+   - Defaults to Codex.
+   - HIGH or CRITICAL findings return the run to implementation before runtime verification.
+
+9. `verification.implementation_review`
+   - Exercises key user scenarios end to end.
+   - Stores implementation review reports and may store scenario logs, screenshots, and findings.
+   - Blocking findings return the run to implementation.
+
+10. `verification.generate`
    - Generates verification artifacts and maps checks to acceptance criteria.
    - Tests requirements, not merely the current implementation.
 
-8. `verification.approval`
+11. `verification.approval`
    - Gates final readiness.
    - May be handled by a human, verification subagent, or independent agent.
    - Failed verification returns to implementation.
 
-9. `closeout.archive`
+12. `closeout.archive`
    - Finalizes the run.
    - Keeps artifacts available for future wiki capture.
 
@@ -147,3 +166,49 @@ Design and verification approval may be assigned to:
 - `independent_agent`
 
 High-risk work should require `independent_agent` or human approval.
+
+## Review Findings Policy
+
+Plan review, code review, and implementation review reports must include
+severity labels and an explicit `Blocking findings: yes|no` line. HIGH and
+CRITICAL findings are blocking. A blocking review creates a revision request and
+routes the workflow back to the stage that can fix the issue:
+
+- Plan review findings return to `plan`.
+- Code review findings return to `implementation`.
+- Implementation review findings return to `implementation`.
+
+The next agent run receives prior artifacts, including the review report, so the
+fix loop has the same context a human reviewer would hand back.
+
+## Concurrency Policy
+
+Every stored workflow run carries a monotonically increasing `version`. Mutating
+API routes read a run, derive the next state, and write it back with
+`expectedVersion`. If another stop, cancel, approval, or advance writes first,
+the store rejects the stale write with HTTP 409 and returns the latest run.
+
+The JSON file store is still an MVP persistence layer, but writes are centralized
+and serialized inside the process. A database-backed store should keep the same
+compare-and-set contract.
+
+## Revision Cycle Policy
+
+`changes_requested` is not a terminal dead end. A gate decision creates a
+`WorkflowRevision` and moves the run back to its target stage:
+
+- Plan gate revisions return to `plan`.
+- Design gate revisions return to `design`.
+- Verification gate revisions return to `implementation`.
+
+The next advance resubmits work, links artifacts/events/gates to the revision,
+and opens a fresh approval gate. Approval accepts the revision; rejection marks
+it rejected and fails the run.
+
+## Event Log Integrity Policy
+
+`events[]` remains an audit log, not full event sourcing. The run records
+`eventLogStatus` so readers can distinguish a consistent audit trail from a
+state/event mismatch, such as an event output reference pointing at a missing
+artifact. Future event sourcing work should add replay/rebuild before treating
+events as the source of truth.

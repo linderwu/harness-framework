@@ -4,6 +4,7 @@ import type {
   ApprovalGate,
   ApprovalPolicy,
   Artifact,
+  AgentRunSource,
   ExecutionMode,
   ProjectContextFile,
   WorkflowEvent,
@@ -42,20 +43,28 @@ export const actorLabels: Record<ApprovalActorType, string> = {
 export const eventTypeLabels: Record<WorkflowEventType, string> = {
   requirement_intake: "Requirement Intake",
   plan_interview: "Plan Interview",
+  plan_review: "Plan Review",
   plan_approval: "Plan Approval",
   openspec_design: "OpenSpec Design",
   design_approval: "Design Approval",
   implementation_dispatch: "Implementation Dispatch",
+  implementation_code_review: "Code Review",
   verification_generate: "Verification Generation",
+  implementation_review: "Implementation Review",
   verification_approval: "Verification Approval",
   closeout: "Closeout"
 }
 
 export interface AgentArtifactResult {
   status: "completed" | "failed"
-  source: "simulated" | "codex-bridge" | "openclaw-bridge"
+  source: AgentRunSource
   body: string
+  repository?: string
   externalRunId?: string
+  idempotencyKey?: string
+  statusMessage?: string
+  artifacts?: Array<{ type: string; title: string; body: string }>
+  capabilities?: string[]
 }
 
 export type AgentInvoker = (
@@ -103,6 +112,28 @@ export function createDefaultEventSkills(): WorkflowEventSkill[] {
       verificationRules: [
         "Plan includes acceptance criteria.",
         "Plan names verification expectations."
+      ]
+    },
+    {
+      id: "plan.review",
+      eventType: "plan_review",
+      stage: "plan",
+      name: "Plan Review Skill",
+      purpose: "Review the plan for missing scope, weak acceptance criteria, and unresolved blockers before approval.",
+      trigger: "A plan draft is generated.",
+      allowedActors: ["codex", "independent_agent", ...openClawAgentKinds],
+      inputs: ["plan artifact", "requirement artifact", "repository context"],
+      outputs: ["plan review report", "blocking findings"],
+      constraints: [
+        "Review the plan before implementation details are accepted.",
+        "Flag vague acceptance criteria and missing user scenarios.",
+        "Use severity labels and include `Blocking findings: yes` when HIGH or CRITICAL issues remain."
+      ],
+      gates: ["Blocking plan review findings return the run to planning."],
+      knowledgeSources: ["standard-dev-workflow", "omx_wiki/project-context"],
+      verificationRules: [
+        "Review report includes severity counts.",
+        "Blocking findings are explicit."
       ]
     },
     {
@@ -188,14 +219,59 @@ export function createDefaultEventSkills(): WorkflowEventSkill[] {
       verificationRules: ["Agent run and implementation artifact are recorded."]
     },
     {
+      id: "implementation.code_review",
+      eventType: "implementation_code_review",
+      stage: "implementation",
+      name: "Code Review Skill",
+      purpose: "Review the implementation diff for correctness, maintainability, security, and missing tests before runtime verification.",
+      trigger: "Implementation output is generated.",
+      allowedActors: ["codex", "independent_agent", ...openClawAgentKinds],
+      inputs: ["patch artifact", "approved design", "acceptance criteria"],
+      outputs: ["code review report", "blocking findings"],
+      constraints: [
+        "Do not approve code written by the same implementation agent without independent scrutiny.",
+        "Prioritize bugs, regressions, security risks, and missing tests.",
+        "Use severity labels and include `Blocking findings: yes` when HIGH or CRITICAL issues remain."
+      ],
+      gates: ["Blocking code review findings return the run to implementation."],
+      knowledgeSources: ["standard-dev-workflow", "repository diff", "CI logs"],
+      verificationRules: [
+        "Review report includes file or artifact references.",
+        "HIGH and CRITICAL findings are treated as blocking."
+      ]
+    },
+    {
+      id: "verification.implementation_review",
+      eventType: "implementation_review",
+      stage: "verification",
+      name: "Implementation Review Skill",
+      purpose: "Exercise key user scenarios end to end and report product-quality findings by severity.",
+      trigger: "Code review passes and the implementation enters verification.",
+      allowedActors: ["codex", ...openClawAgentKinds, "verification_subagent"],
+      inputs: ["patch artifact", "code review report", "acceptance criteria", "test strategy"],
+      outputs: ["implementation review report", "scenario logs", "blocking findings"],
+      constraints: [
+        "Generate scenarios from acceptance criteria and important product flows.",
+        "For each scenario, inspect current state, record evidence, decide the next action, and continue until the scenario is complete.",
+        "Use Playwright for web apps and simulator-backed tooling for mobile apps when available.",
+        "Use severity labels and include `Blocking findings: yes` when HIGH or CRITICAL issues remain."
+      ],
+      gates: ["Blocking implementation review findings return the run to implementation."],
+      knowledgeSources: ["playwright-mcp", "XcodeBuildMCP", "acceptance criteria"],
+      verificationRules: [
+        "Each scenario records observed behavior.",
+        "Findings are grouped by severity."
+      ]
+    },
+    {
       id: "verification.generate",
       eventType: "verification_generate",
       stage: "verification",
       name: "Verification Generation Skill",
       purpose: "Generate and run tests against the implementation and acceptance criteria.",
-      trigger: "Implementation dispatch completes.",
+      trigger: "Implementation review completes.",
       allowedActors: ["codex", ...openClawAgentKinds, "verification_subagent"],
-      inputs: ["patch artifact", "acceptance criteria", "test strategy"],
+      inputs: ["implementation review report", "patch artifact", "acceptance criteria", "test strategy"],
       outputs: ["test report", "coverage report", "manual checklist"],
       constraints: [
         "Tests must validate requirements, not merely current implementation.",
@@ -249,6 +325,21 @@ export function createDefaultEventSkills(): WorkflowEventSkill[] {
   ]
 }
 
+export function getDefaultSkillExecutor(
+  skillId: string,
+  selectedAgent: AgentKind
+): AgentKind {
+  if (
+    skillId === "plan.review" ||
+    skillId === "implementation.code_review" ||
+    skillId === "verification.implementation_review"
+  ) {
+    return "codex"
+  }
+
+  return selectedAgent
+}
+
 export function createWorkflowRun(input: {
   projectName: string
   repository: string
@@ -263,20 +354,16 @@ export function createWorkflowRun(input: {
   const id = crypto.randomUUID()
   const eventSkills = createDefaultEventSkills()
   const selectedAgent = normalizeAgentKind(input.selectedAgent)
-  const requirementArtifact = createArtifact(
-    id,
-    "intake",
-    "requirement",
-    "Requirement",
-    input.requirement
-  )
   const stageModes = Object.fromEntries(
     stages.map((stage) => [stage, stage === "completed" ? "manual" : "hybrid"])
   ) as Record<WorkflowStage, ExecutionMode>
   const skillAssignments = Object.fromEntries(
     eventSkills.map((skill) => [
       skill.id,
-      normalizeAgentKind(input.skillAssignments?.[skill.id] ?? selectedAgent)
+      normalizeAgentKind(
+        input.skillAssignments?.[skill.id] ??
+          getDefaultSkillExecutor(skill.id, selectedAgent)
+      )
     ])
   ) as Record<string, AgentKind>
 
@@ -305,6 +392,8 @@ export function createWorkflowRun(input: {
   ]
 
   return {
+    schemaVersion: 2,
+    version: 1,
     id,
     projectName: input.projectName,
     repository: input.repository,
@@ -318,20 +407,12 @@ export function createWorkflowRun(input: {
     skillAssignments,
     approvalPolicies,
     eventSkills,
-    events: [
-      createWorkflowEvent({
-        workflowRunId: id,
-        skill: eventSkills[0],
-        status: "completed",
-        actor: skillAssignments["intake.requirement"],
-        inputArtifactIds: [],
-        outputArtifactIds: [requirementArtifact.id],
-        note: "Initial requirement captured from dashboard."
-      })
-    ],
-    artifacts: [requirementArtifact],
+    events: [],
+    artifacts: [],
     approvalGates: [],
     agentRuns: [],
+    revisions: [],
+    eventLogStatus: "consistent",
     createdAt: now,
     updatedAt: now
   }
@@ -358,71 +439,295 @@ export async function advanceWorkflow(
 
   switch (nextRun.currentStage) {
     case "intake":
-      nextRun.currentStage = "plan"
       nextRun.status = "running"
-      const planResult = await addAgentArtifact(
+      const intakeResult = await addAgentArtifact(
         nextRun,
-        "plan.interview",
-        "plan",
-        "plan",
-        "Plan Draft",
+        "intake.requirement",
+        "intake",
+        "requirement",
+        "Requirement Intake",
         [
           `Project: ${nextRun.projectName}`,
-          `Repository: ${nextRun.repository || "not linked yet"}`,
-          "Acceptance criteria:",
-          "- Requirement is captured as a first-class artifact.",
-          "- Design approval must pass before implementation.",
-          "- Verification approval must pass before PR-ready completion."
+          `Requested repository: ${nextRun.repository || "not requested"}`,
+          "Requirement:",
+          nextRun.requirement
         ].join("\n"),
         options.invokeAgent
       )
-      if (planResult.status === "failed") {
+      if (intakeResult.status === "failed") {
         break
       }
-      openApprovalGate(nextRun, "plan")
+      nextRun.currentStage = "plan"
+      nextRun.status = "pending"
       break
     case "plan":
-      nextRun.currentStage = "design"
-      nextRun.status = "running"
-      const designResult = await addAgentArtifact(
-        nextRun,
-        "design.openspec",
-        "design",
-        "openspec",
-        "OpenSpec Change Draft",
-        [
-          "Change: introduce agentic development harness workflow.",
-          "Stages: plan, design, implementation, verification.",
-          "Approval policies: human, verification subagent, or independent agent.",
-          "Adapter boundary: Codex and OpenClaw run behind a shared interface."
-        ].join("\n"),
-        options.invokeAgent
-      )
-      if (designResult.status === "failed") {
+      if (hasApprovedGate(nextRun, "plan")) {
+        nextRun.currentStage = "design"
+        nextRun.status = "running"
+        const designResult = await addAgentArtifact(
+          nextRun,
+          "design.openspec",
+          "design",
+          "openspec",
+          "OpenSpec Change Draft",
+          [
+            "Change: introduce agentic development harness workflow.",
+            "Stages: plan, design, implementation, verification.",
+            "Approval policies: human, verification subagent, or independent agent.",
+            "Adapter boundary: Codex and OpenClaw run behind a shared interface."
+          ].join("\n"),
+          options.invokeAgent
+        )
+        if (designResult.status === "failed") {
+          break
+        }
+        nextRun.currentStage = "implementation"
+        openApprovalGate(nextRun, "design")
+        maybeAutoApproveGate(nextRun, "design")
         break
       }
-      openApprovalGate(nextRun, "design")
-      maybeAutoApproveGate(nextRun, "design")
+
+      const latestPlan = getLatestArtifact(nextRun, "plan", "plan")
+      const latestPlanReview = getLatestArtifact(
+        nextRun,
+        "plan_review_report",
+        "plan"
+      )
+
+      if (
+        !latestPlan ||
+        (isArtifactAfter(nextRun, latestPlanReview, latestPlan) &&
+          hasBlockingFindings(latestPlanReview?.body ?? ""))
+      ) {
+        nextRun.status = "running"
+        const planResult = await addAgentArtifact(
+          nextRun,
+          "plan.interview",
+          "plan",
+          "plan",
+          "Plan Draft",
+          [
+            `Project: ${nextRun.projectName}`,
+            `Repository: ${nextRun.repository || "not linked yet"}`,
+            "Acceptance criteria:",
+            "- Requirement is captured as a first-class artifact.",
+            "- Design approval must pass before implementation.",
+            "- Verification approval must pass before PR-ready completion."
+          ].join("\n"),
+          options.invokeAgent
+        )
+        if (planResult.status === "failed") {
+          break
+        }
+        markActiveRevisionResubmitted(nextRun, "plan")
+        nextRun.status = "pending"
+        break
+      }
+
+      if (!isArtifactAfter(nextRun, latestPlanReview, latestPlan)) {
+        nextRun.status = "running"
+        const planReviewResult = await addAgentArtifact(
+          nextRun,
+          "plan.review",
+          "plan",
+          "plan_review_report",
+          "Plan Review Report",
+          [
+            "PLAN REVIEW REPORT",
+            "Blocking findings: no",
+            "CRITICAL (0)",
+            "HIGH (0)",
+            "MEDIUM (0)",
+            "LOW (0)",
+            "Recommendation: approve plan for human gate."
+          ].join("\n"),
+          options.invokeAgent
+        )
+        if (planReviewResult.status === "failed") {
+          break
+        }
+        if (hasBlockingFindings(planReviewResult.body)) {
+          createReviewRevision(
+            nextRun,
+            "plan",
+            "plan",
+            "plan.review",
+            "Plan review returned blocking findings."
+          )
+          nextRun.status = "pending"
+          break
+        }
+        resolveActiveRevisions(nextRun, "plan", "accepted")
+        openApprovalGate(nextRun, "plan")
+        break
+      }
+
+      nextRun.status = "running"
+      openApprovalGate(nextRun, "plan")
       break
     case "design":
-      nextRun.currentStage = "implementation"
-      nextRun.status = "running"
-      await addAgentArtifact(
-        nextRun,
-        "implementation.dispatch",
-        "implementation",
-        "patch",
-        "Implementation Plan",
-        [
-          `Assigned executor: ${getAgentLabel(resolveSkillExecutor(nextRun, "implementation.dispatch"))}`,
-          "Runner mode: simulated MVP adapter.",
-          "Expected output: branch, commits, PR link, and implementation notes."
-        ].join("\n"),
-        options.invokeAgent
-      )
       break
     case "implementation":
+      const latestPatch = getLatestArtifact(nextRun, "patch", "implementation")
+      const latestCodeReview = getLatestArtifact(
+        nextRun,
+        "code_review_report",
+        "implementation"
+      )
+
+      if (
+        !latestPatch ||
+        (isArtifactAfter(nextRun, latestCodeReview, latestPatch) &&
+          hasBlockingFindings(latestCodeReview?.body ?? ""))
+      ) {
+        nextRun.status = "running"
+        const implementationResult = await addAgentArtifact(
+          nextRun,
+          "implementation.dispatch",
+          "implementation",
+          "patch",
+          "Implementation Plan",
+          [
+            `Assigned executor: ${getAgentLabel(resolveSkillExecutor(nextRun, "implementation.dispatch"))}`,
+            "Runner mode: simulated MVP adapter.",
+            "Expected output: branch, commits, PR link, and implementation notes."
+          ].join("\n"),
+          options.invokeAgent
+        )
+        if (implementationResult.status === "failed") {
+          break
+        }
+        markActiveRevisionResubmitted(nextRun, "implementation")
+        nextRun.status = "pending"
+        break
+      }
+
+      if (!isArtifactAfter(nextRun, latestCodeReview, latestPatch)) {
+        nextRun.status = "running"
+        const codeReviewResult = await addAgentArtifact(
+          nextRun,
+          "implementation.code_review",
+          "implementation",
+          "code_review_report",
+          "Code Review Report",
+          [
+            "CODE REVIEW REPORT",
+            "Blocking findings: no",
+            "CRITICAL (0)",
+            "HIGH (0)",
+            "MEDIUM (0)",
+            "LOW (0)",
+            "Recommendation: approve for implementation review."
+          ].join("\n"),
+          options.invokeAgent
+        )
+        if (codeReviewResult.status === "failed") {
+          break
+        }
+        if (hasBlockingFindings(codeReviewResult.body)) {
+          createReviewRevision(
+            nextRun,
+            "implementation",
+            "implementation",
+            "implementation.code_review",
+            "Code review returned blocking findings."
+          )
+          nextRun.status = "pending"
+          break
+        }
+        resolveActiveRevisions(nextRun, "implementation", "accepted")
+      }
+
       nextRun.currentStage = "verification"
+      nextRun.status = "pending"
+      break
+    case "verification":
+      if (hasApprovedGate(nextRun, "verification")) {
+        nextRun.currentStage = "completed"
+        nextRun.status = "completed"
+        addWorkflowEvent(
+          nextRun,
+          "closeout.archive",
+          "completed",
+          resolveSkillExecutor(nextRun, "closeout.archive"),
+          []
+        )
+        break
+      }
+
+      const latestVerifiedPatch = getLatestArtifact(
+        nextRun,
+        "patch",
+        "implementation"
+      )
+      const latestImplementationReview = getLatestArtifact(
+        nextRun,
+        "implementation_review_report",
+        "verification"
+      )
+
+      if (
+        latestVerifiedPatch &&
+        !isArtifactAfter(
+          nextRun,
+          latestImplementationReview,
+          latestVerifiedPatch
+        )
+      ) {
+        nextRun.status = "running"
+        const implementationReviewResult = await addAgentArtifact(
+          nextRun,
+          "verification.implementation_review",
+          "verification",
+          "implementation_review_report",
+          "Implementation Review Report",
+          [
+            "IMPLEMENTATION REVIEW REPORT",
+            "Blocking findings: no",
+            "Scenarios:",
+            "- Key acceptance path reviewed.",
+            "CRITICAL (0)",
+            "HIGH (0)",
+            "MEDIUM (0)",
+            "LOW (0)",
+            "Recommendation: approve for verification report."
+          ].join("\n"),
+          options.invokeAgent
+        )
+        if (implementationReviewResult.status === "failed") {
+          break
+        }
+        if (hasBlockingFindings(implementationReviewResult.body)) {
+          createReviewRevision(
+            nextRun,
+            "verification",
+            "implementation",
+            "verification.implementation_review",
+            "Implementation review returned blocking findings."
+          )
+          nextRun.currentStage = "implementation"
+          nextRun.status = "pending"
+          break
+        }
+        nextRun.status = "pending"
+        break
+      }
+
+      const latestTestReport = getLatestArtifact(
+        nextRun,
+        "test_report",
+        "verification"
+      )
+
+      if (
+        latestImplementationReview &&
+        isArtifactAfter(nextRun, latestTestReport, latestImplementationReview)
+      ) {
+        openApprovalGate(nextRun, "verification")
+        maybeAutoApproveGate(nextRun, "verification")
+        break
+      }
+
       nextRun.status = "running"
       const verificationResult = await addAgentArtifact(
         nextRun,
@@ -434,6 +739,7 @@ export async function advanceWorkflow(
           "Checks:",
           "- Unit coverage target prepared.",
           "- Acceptance criteria mapped to verification checklist.",
+          "- Code review and implementation review completed before final approval.",
           "- Final gate waits for configured approval actor."
         ].join("\n"),
         options.invokeAgent
@@ -444,20 +750,12 @@ export async function advanceWorkflow(
       openApprovalGate(nextRun, "verification")
       maybeAutoApproveGate(nextRun, "verification")
       break
-    case "verification":
-      nextRun.currentStage = "completed"
-      nextRun.status = "completed"
-      addWorkflowEvent(
-        nextRun,
-        "closeout.archive",
-        "completed",
-        resolveSkillExecutor(nextRun, "closeout.archive"),
-        []
-      )
+    case "completed":
       break
   }
 
   nextRun.updatedAt = new Date().toISOString()
+  updateEventLogStatus(nextRun)
   return nextRun
 }
 
@@ -486,16 +784,22 @@ export function decideApprovalGate(
 
   if (decision === "approved") {
     nextRun.status = "running"
+    resolveRevision(nextRun, gate.revisionId, "accepted")
     completeApprovalEvent(nextRun, gate.stage, "completed", gate.decidedBy)
   } else if (decision === "changes_requested") {
-    nextRun.status = "waiting_for_approval"
+    const revision = createRevision(nextRun, gate, gate.decidedBy, note)
+    nextRun.revisions.push(revision)
+    nextRun.currentStage = revision.targetStage
+    nextRun.status = "running"
     completeApprovalEvent(nextRun, gate.stage, "failed", gate.decidedBy)
   } else {
     nextRun.status = "failed"
+    resolveRevision(nextRun, gate.revisionId, "rejected")
     completeApprovalEvent(nextRun, gate.stage, "failed", gate.decidedBy)
   }
 
   nextRun.updatedAt = new Date().toISOString()
+  updateEventLogStatus(nextRun)
   return nextRun
 }
 
@@ -545,6 +849,7 @@ export function cancelWorkflowRun(run: WorkflowRun): WorkflowRun {
       agentRun.finishedAt = now
     })
 
+  updateEventLogStatus(nextRun)
   return nextRun
 }
 
@@ -599,11 +904,190 @@ export function stopWorkflowStage(run: WorkflowRun): WorkflowRun {
       agentRun.finishedAt = now
     })
 
+  updateEventLogStatus(nextRun)
   return nextRun
 }
 
 function isTerminalStatus(status: WorkflowRun["status"]) {
   return status === "completed" || status === "failed" || status === "cancelled"
+}
+
+function hasApprovedGate(run: WorkflowRun, stage: WorkflowStage) {
+  const latestGate = [...run.approvalGates]
+    .reverse()
+    .find((gate) => gate.stage === stage)
+
+  return latestGate?.status === "approved"
+}
+
+function getLatestArtifact(
+  run: WorkflowRun,
+  type: Artifact["type"],
+  stage?: WorkflowStage
+) {
+  return [...run.artifacts]
+    .reverse()
+    .find((artifact) => artifact.type === type && (!stage || artifact.stage === stage))
+}
+
+function isArtifactAfter(
+  run: WorkflowRun,
+  artifact: Artifact | undefined,
+  baseline: Artifact | undefined
+) {
+  if (!artifact) {
+    return false
+  }
+
+  if (!baseline) {
+    return true
+  }
+
+  return run.artifacts.indexOf(artifact) > run.artifacts.indexOf(baseline)
+}
+
+function hasBlockingFindings(body: string) {
+  const explicitBlocking = body.match(
+    /blocking findings:\s*(yes|no|true|false)/i
+  )
+
+  if (explicitBlocking) {
+    return explicitBlocking[1].toLowerCase() === "yes" ||
+      explicitBlocking[1].toLowerCase() === "true"
+  }
+
+  if (/recommendation:\s*request changes/i.test(body)) {
+    return true
+  }
+
+  return hasPositiveSeverity(body, "critical") || hasPositiveSeverity(body, "high")
+}
+
+function hasPositiveSeverity(body: string, severity: "critical" | "high") {
+  const headingMatch = body.match(
+    new RegExp(`\\b${severity}\\s*\\((\\d+)\\)`, "i")
+  )
+
+  if (headingMatch) {
+    return Number(headingMatch[1]) > 0
+  }
+
+  const countMatch = body.match(
+    new RegExp(`\\b${severity}\\s*:\\s*(\\d+)`, "i")
+  )
+
+  if (countMatch) {
+    return Number(countMatch[1]) > 0
+  }
+
+  return new RegExp(`\\b${severity}\\b`, "i").test(body)
+}
+
+function createReviewRevision(
+  run: WorkflowRun,
+  stage: WorkflowStage,
+  targetStage: WorkflowStage,
+  requestedBy: string,
+  note: string
+) {
+  run.revisions.push({
+    id: crypto.randomUUID(),
+    workflowRunId: run.id,
+    stage,
+    targetStage,
+    sourceGateId: `review:${requestedBy}`,
+    status: "requested",
+    requestedBy,
+    note,
+    createdAt: new Date().toISOString()
+  })
+}
+
+function markActiveRevisionResubmitted(run: WorkflowRun, stage: WorkflowStage) {
+  const revision = getActiveRevision(run, stage)
+
+  if (!revision || revision.status === "resubmitted") {
+    return
+  }
+
+  revision.status = "resubmitted"
+  revision.resubmittedAt = new Date().toISOString()
+}
+
+function resolveActiveRevisions(
+  run: WorkflowRun,
+  stage: WorkflowStage,
+  status: "accepted" | "rejected"
+) {
+  run.revisions
+    .filter(
+      (revision) =>
+        revision.targetStage === stage &&
+        (revision.status === "requested" || revision.status === "resubmitted")
+    )
+    .forEach((revision) => {
+      revision.status = status
+      revision.resolvedAt = new Date().toISOString()
+    })
+}
+
+function createRevision(
+  run: WorkflowRun,
+  gate: ApprovalGate,
+  requestedBy: string | undefined,
+  note?: string
+) {
+  const now = new Date().toISOString()
+  const targetStage = getRevisionTargetStage(gate.stage)
+
+  return {
+    id: crypto.randomUUID(),
+    workflowRunId: run.id,
+    stage: gate.stage,
+    targetStage,
+    sourceGateId: gate.id,
+    status: "requested" as const,
+    requestedBy: requestedBy ?? gate.actorType,
+    note,
+    createdAt: now
+  }
+}
+
+function getRevisionTargetStage(stage: WorkflowStage): WorkflowStage {
+  if (stage === "verification") {
+    return "implementation"
+  }
+
+  return stage
+}
+
+function getActiveRevision(run: WorkflowRun, stage: WorkflowStage) {
+  return [...run.revisions]
+    .reverse()
+    .find(
+      (revision) =>
+        revision.targetStage === stage &&
+        (revision.status === "requested" || revision.status === "resubmitted")
+    )
+}
+
+function resolveRevision(
+  run: WorkflowRun,
+  revisionId: string | undefined,
+  status: "accepted" | "rejected"
+) {
+  if (!revisionId) {
+    return
+  }
+
+  const revision = run.revisions.find((item) => item.id === revisionId)
+
+  if (!revision) {
+    return
+  }
+
+  revision.status = status
+  revision.resolvedAt = new Date().toISOString()
 }
 
 function maybeAutoApproveGate(run: WorkflowRun, stage: WorkflowStage) {
@@ -626,11 +1110,13 @@ function maybeAutoApproveGate(run: WorkflowRun, stage: WorkflowStage) {
       ? "Approved by an independent reviewer agent."
       : "Approved by the configured verification subagent."
   run.status = "running"
+  resolveRevision(run, gate.revisionId, "accepted")
   completeApprovalEvent(run, stage, "completed", gate.decidedBy)
 }
 
 function openApprovalGate(run: WorkflowRun, stage: WorkflowStage) {
   const policy = run.approvalPolicies.find((item) => item.stage === stage)
+  const revision = getActiveRevision(run, stage)
   const gate: ApprovalGate = {
     id: crypto.randomUUID(),
     workflowRunId: run.id,
@@ -640,7 +1126,13 @@ function openApprovalGate(run: WorkflowRun, stage: WorkflowStage) {
     actorType: policy?.actorType ?? "human",
     assignedAgent: policy?.agent,
     requireIndependence: policy?.requireIndependence ?? false,
+    revisionId: revision?.id,
     createdAt: new Date().toISOString()
+  }
+
+  if (revision) {
+    revision.status = "resubmitted"
+    revision.resubmittedAt = gate.createdAt
   }
 
   run.approvalGates.push(gate)
@@ -651,7 +1143,8 @@ function openApprovalGate(run: WorkflowRun, stage: WorkflowStage) {
     "waiting_for_gate",
     resolveSkillExecutor(run, `${stage}.approval`),
     [],
-    `Gate reviewer policy: ${gate.actorType}.`
+    `Gate reviewer policy: ${gate.actorType}.`,
+    revision?.id
   )
 }
 
@@ -666,6 +1159,7 @@ async function addAgentArtifact(
 ) {
   const executor = resolveSkillExecutor(run, skillId)
   const skill = run.eventSkills.find((item) => item.id === skillId)
+  const revision = getActiveRevision(run, stage)
   const agentResult =
     skill && invokeAgent
       ? await invokeAgent({
@@ -683,21 +1177,46 @@ async function addAgentArtifact(
     source: "simulated",
     body
   }
-  const artifact = createArtifact(run.id, stage, type, title, finalResult.body)
-  run.artifacts.push(artifact)
+  const inputArtifactIds = run.artifacts.map((item) => item.id)
+  const artifact = createArtifact(
+    run.id,
+    stage,
+    type,
+    title,
+    finalResult.body,
+    revision?.id
+  )
+  const extraArtifacts = (finalResult.artifacts ?? []).map((item) =>
+    createArtifact(
+      run.id,
+      stage,
+      normalizeArtifactType(item.type),
+      item.title,
+      item.body,
+      revision?.id
+    )
+  )
+  const outputArtifactIds = [artifact, ...extraArtifacts].map((item) => item.id)
+  run.artifacts.push(artifact, ...extraArtifacts)
+  if (finalResult.repository) {
+    run.repository = finalResult.repository
+  }
   addWorkflowEvent(
     run,
     skillId,
     finalResult.status,
     executor,
-    [artifact.id],
+    outputArtifactIds,
     [
       `${title} generated by ${getAgentLabel(executor)}.`,
       `Runner source: ${finalResult.source}.`,
-      finalResult.externalRunId ? `External run: ${finalResult.externalRunId}.` : undefined
+      finalResult.externalRunId ? `External run: ${finalResult.externalRunId}.` : undefined,
+      finalResult.statusMessage,
+      revision ? `Revision: ${revision.id}.` : undefined
     ]
       .filter(Boolean)
-      .join(" ")
+      .join(" "),
+    revision?.id
   )
   run.agentRuns.push({
     id: crypto.randomUUID(),
@@ -705,8 +1224,13 @@ async function addAgentArtifact(
     stage,
     agent: executor,
     status: finalResult.status,
-    inputArtifactIds: run.artifacts.slice(0, -1).map((item) => item.id),
-    outputArtifactIds: [artifact.id],
+    source: finalResult.source,
+    externalRunId: finalResult.externalRunId,
+    idempotencyKey: finalResult.idempotencyKey,
+    statusMessage: finalResult.statusMessage,
+    revisionId: revision?.id,
+    inputArtifactIds,
+    outputArtifactIds,
     startedAt: new Date().toISOString(),
     finishedAt: new Date().toISOString()
   })
@@ -719,17 +1243,23 @@ async function addAgentArtifact(
 }
 
 function ensureEventSkillState(run: WorkflowRun) {
+  run.schemaVersion = run.schemaVersion ?? 2
+  run.version = run.version ?? 1
   run.eventSkills = run.eventSkills ?? createDefaultEventSkills()
   run.events = run.events ?? []
   run.contextFiles = run.contextFiles ?? []
-  run.skillAssignments =
-    run.skillAssignments ??
-    (Object.fromEntries(
-      run.eventSkills.map((skill) => [
-        skill.id,
-        normalizeAgentKind(run.selectedAgent)
-      ])
-    ) as Record<string, AgentKind>)
+  run.revisions = run.revisions ?? []
+  run.eventLogStatus = run.eventLogStatus ?? "consistent"
+  const skillAssignments = run.skillAssignments ?? {}
+  run.skillAssignments = Object.fromEntries(
+    run.eventSkills.map((skill) => [
+      skill.id,
+      normalizeAgentKind(
+        skillAssignments[skill.id] ??
+          getDefaultSkillExecutor(skill.id, run.selectedAgent)
+      )
+    ])
+  ) as Record<string, AgentKind>
 }
 
 function resolveSkillExecutor(run: WorkflowRun, skillId: string): AgentKind {
@@ -742,7 +1272,8 @@ function addWorkflowEvent(
   status: WorkflowEvent["status"],
   actor: string,
   outputArtifactIds: string[],
-  note?: string
+  note?: string,
+  revisionId?: string
 ) {
   const skill = run.eventSkills.find((item) => item.id === skillId)
 
@@ -758,7 +1289,8 @@ function addWorkflowEvent(
       actor,
       inputArtifactIds: run.artifacts.map((item) => item.id),
       outputArtifactIds,
-      note
+      note,
+      revisionId
     })
   )
 }
@@ -771,6 +1303,7 @@ function createWorkflowEvent(input: {
   inputArtifactIds: string[]
   outputArtifactIds: string[]
   note?: string
+  revisionId?: string
 }): WorkflowEvent {
   const now = new Date().toISOString()
 
@@ -785,6 +1318,7 @@ function createWorkflowEvent(input: {
     inputArtifactIds: input.inputArtifactIds,
     outputArtifactIds: input.outputArtifactIds,
     constraintsSnapshot: input.skill.constraints,
+    revisionId: input.revisionId,
     note: input.note,
     createdAt: now,
     completedAt:
@@ -821,7 +1355,8 @@ function createArtifact(
   stage: WorkflowStage,
   type: Artifact["type"],
   title: string,
-  body: string
+  body: string,
+  revisionId?: string
 ): Artifact {
   return {
     id: crypto.randomUUID(),
@@ -830,8 +1365,61 @@ function createArtifact(
     type,
     title,
     body,
+    revisionId,
     createdAt: new Date().toISOString()
   }
+}
+
+function normalizeArtifactType(type: string): Artifact["type"] {
+  const artifactTypes = new Set<Artifact["type"]>([
+    "requirement",
+    "plan",
+    "plan_review_report",
+    "openspec",
+    "design",
+    "patch",
+    "code_review_report",
+    "implementation_review_report",
+    "test_report",
+    "coverage_report",
+    "manual_checklist",
+    "scenario_log",
+    "screenshot",
+    "finding",
+    "log"
+  ])
+
+  return artifactTypes.has(type as Artifact["type"])
+    ? (type as Artifact["type"])
+    : "log"
+}
+
+function updateEventLogStatus(run: WorkflowRun) {
+  const artifactIds = new Set(run.artifacts.map((artifact) => artifact.id))
+  const missingOutputIds = run.events
+    .flatMap((event) => event.outputArtifactIds)
+    .filter((artifactId) => !artifactIds.has(artifactId))
+  const runScopedEvents = run.events.filter(
+    (event) => event.workflowRunId !== run.id
+  )
+
+  if (missingOutputIds.length > 0 || runScopedEvents.length > 0) {
+    run.eventLogStatus = "drift_detected"
+    run.eventLogWarning = [
+      missingOutputIds.length > 0
+        ? `${missingOutputIds.length} event output reference(s) point at missing artifacts`
+        : undefined,
+      runScopedEvents.length > 0
+        ? `${runScopedEvents.length} event(s) belong to a different workflow run`
+        : undefined
+    ]
+      .filter(Boolean)
+      .join("; ")
+    return
+  }
+
+  run.eventLogStatus = "consistent"
+  run.eventLogWarning = undefined
 }
 
 function cloneRun(run: WorkflowRun): WorkflowRun {

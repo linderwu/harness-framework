@@ -13,6 +13,7 @@ const repoRoot = path.resolve(
 )
 const activeAgentRuns = new Map()
 const activeWorkflowRuns = new Map()
+const activeIdempotencyKeys = new Map()
 
 const server = http.createServer(async (request, response) => {
   try {
@@ -22,7 +23,12 @@ const server = http.createServer(async (request, response) => {
     )
 
     if (request.method === "GET" && request.url === "/health") {
-      sendJson(response, 200, { ok: true, repoRoot })
+      sendJson(response, 200, {
+        ok: true,
+        repoRoot,
+        protocolVersion: "harness-agent-bridge/v0.2",
+        capabilities: bridgeCapabilities()
+      })
       return
     }
 
@@ -46,20 +52,60 @@ const server = http.createServer(async (request, response) => {
       return
     }
 
+    const agentRunMatch = requestUrl.pathname.match(/^\/agent-runs\/([^/]+)$/)
+
+    if (request.method === "GET" && agentRunMatch) {
+      const agentRunId = decodeURIComponent(agentRunMatch[1])
+      const activeRun = activeAgentRuns.get(agentRunId)
+
+      if (!activeRun) {
+        sendJson(response, 404, { error: "agent run not active" })
+        return
+      }
+
+      sendJson(response, 200, {
+        id: agentRunId,
+        workflowRunId: activeRun.workflowRunId,
+        status: "running",
+        startedAt: activeRun.startedAt,
+        statusMessage: "Codex process is still running.",
+        capabilities: bridgeCapabilities()
+      })
+      return
+    }
+
     if (request.method !== "POST" || requestUrl.pathname !== "/agent-runs") {
       sendJson(response, 404, { error: "not found" })
       return
     }
 
     const payload = await readJson(request)
+    const idempotencyKey =
+      payload.idempotencyKey || request.headers["idempotency-key"]
+
+    if (idempotencyKey && activeIdempotencyKeys.has(idempotencyKey)) {
+      sendJson(response, 409, {
+        error: "duplicate active idempotency key",
+        id: activeIdempotencyKeys.get(idempotencyKey),
+        idempotencyKey
+      })
+      return
+    }
+
     const id = randomUUID()
     const startedAt = new Date().toISOString()
     const contextDir = await materializeContextFiles(payload.contextFiles, id)
+    if (idempotencyKey) {
+      activeIdempotencyKeys.set(idempotencyKey, id)
+    }
     const result = await runCodex(
       buildPrompt(payload, contextDir),
       id,
       payload.workflowRunId
     ).finally(async () => {
+      if (idempotencyKey) {
+        activeIdempotencyKeys.delete(idempotencyKey)
+      }
       if (contextDir) {
         await fs.rm(contextDir, { recursive: true, force: true }).catch(() => {})
       }
@@ -67,8 +113,10 @@ const server = http.createServer(async (request, response) => {
 
     sendJson(response, 200, {
       id,
+      idempotencyKey,
       startedAt,
       finishedAt: new Date().toISOString(),
+      capabilities: bridgeCapabilities(),
       ...result
     })
   } catch (error) {
@@ -114,7 +162,11 @@ async function runCodex(prompt, id, workflowRunId) {
   let stderr = ""
   const cancel = () => child.kill("SIGTERM")
   const timer = setTimeout(cancel, timeoutMs)
-  activeAgentRuns.set(id, { cancel })
+  activeAgentRuns.set(id, {
+    cancel,
+    startedAt: new Date().toISOString(),
+    workflowRunId
+  })
 
   if (workflowRunId) {
     activeWorkflowRuns.set(workflowRunId, id)
@@ -145,7 +197,11 @@ async function runCodex(prompt, id, workflowRunId) {
   return {
     status: exitCode === 0 ? "completed" : "failed",
     output: output.trim() || tail(stdout, 8000),
-    stderr: tail(stderr, 8000)
+    stderr: tail(stderr, 8000),
+    statusMessage:
+      exitCode === 0
+        ? "Codex completed."
+        : `Codex exited with status ${exitCode}.`
   }
 }
 
@@ -234,6 +290,8 @@ function buildPrompt(payload, contextDir) {
     `Project: ${payload.projectName ?? "unknown"}`,
     `Repository reference: ${payload.repository ?? "unknown"}`,
     `Workflow run: ${payload.workflowRunId ?? "unknown"}`,
+    `Workflow version: ${payload.workflowVersion ?? "unknown"}`,
+    `Idempotency key: ${payload.idempotencyKey ?? "none"}`,
     `Stage: ${payload.stage ?? "unknown"}`,
     `Requested artifact: ${payload.title ?? "Agent Artifact"}`,
     "",
@@ -307,6 +365,10 @@ function sendJson(response, statusCode, body) {
     "Content-Type": "application/json; charset=utf-8"
   })
   response.end(JSON.stringify(body))
+}
+
+function bridgeCapabilities() {
+  return ["cancel", "stop", "active-run-status", "idempotency-key", "text-output"]
 }
 
 function tail(value, maxLength) {

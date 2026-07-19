@@ -49,24 +49,47 @@ export type WorkflowEventStatus =
 export type WorkflowEventType =
   | "requirement_intake"
   | "plan_interview"
+  | "plan_review"
   | "plan_approval"
   | "openspec_design"
   | "design_approval"
   | "implementation_dispatch"
+  | "implementation_code_review"
   | "verification_generate"
+  | "implementation_review"
   | "verification_approval"
   | "closeout"
 
 export type ArtifactType =
   | "requirement"
   | "plan"
+  | "plan_review_report"
   | "openspec"
   | "design"
   | "patch"
+  | "code_review_report"
+  | "implementation_review_report"
   | "test_report"
   | "coverage_report"
   | "manual_checklist"
+  | "scenario_log"
+  | "screenshot"
+  | "finding"
   | "log"
+
+export type AgentRunSource =
+  | "simulated"
+  | "codex-bridge"
+  | "openclaw-bridge"
+  | "openclaw-a2a"
+
+export type RevisionStatus =
+  | "requested"
+  | "resubmitted"
+  | "accepted"
+  | "rejected"
+
+export type EventLogStatus = "consistent" | "drift_detected"
 
 export interface ApprovalPolicy {
   stage: WorkflowStage
@@ -102,6 +125,7 @@ export interface WorkflowEvent {
   inputArtifactIds: string[]
   outputArtifactIds: string[]
   constraintsSnapshot: string[]
+  revisionId?: string
   note?: string
   createdAt: string
   completedAt?: string
@@ -114,6 +138,7 @@ export interface Artifact {
   type: ArtifactType
   title: string
   body: string
+  revisionId?: string
   createdAt: string
 }
 
@@ -137,10 +162,25 @@ export interface ApprovalGate {
   actorType: ApprovalActorType
   assignedAgent?: AgentKind
   requireIndependence: boolean
+  revisionId?: string
   decidedBy?: string
   decisionNote?: string
   createdAt: string
   decidedAt?: string
+}
+
+export interface WorkflowRevision {
+  id: string
+  workflowRunId: string
+  stage: WorkflowStage
+  targetStage: WorkflowStage
+  sourceGateId: string
+  status: RevisionStatus
+  requestedBy: string
+  note?: string
+  createdAt: string
+  resubmittedAt?: string
+  resolvedAt?: string
 }
 
 export interface AgentRun {
@@ -149,6 +189,11 @@ export interface AgentRun {
   stage: WorkflowStage
   agent: AgentKind
   status: WorkflowStatus
+  source?: AgentRunSource
+  externalRunId?: string
+  idempotencyKey?: string
+  statusMessage?: string
+  revisionId?: string
   inputArtifactIds: string[]
   outputArtifactIds: string[]
   startedAt?: string
@@ -156,6 +201,8 @@ export interface AgentRun {
 }
 
 export interface WorkflowRun {
+  schemaVersion: number
+  version: number
   id: string
   projectName: string
   repository: string
@@ -174,6 +221,9 @@ export interface WorkflowRun {
   artifacts: Artifact[]
   approvalGates: ApprovalGate[]
   agentRuns: AgentRun[]
+  revisions: WorkflowRevision[]
+  eventLogStatus: EventLogStatus
+  eventLogWarning?: string
   createdAt: string
   updatedAt: string
 }

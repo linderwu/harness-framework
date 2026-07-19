@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server"
-import { readState, upsertWorkflowRun } from "@/lib/store"
+import { readState, StateConflictError, upsertWorkflowRun } from "@/lib/store"
 import { decideApprovalGate } from "@/lib/workflow"
 
 export async function POST(
@@ -25,9 +25,23 @@ export async function POST(
     return NextResponse.json({ error: "Approval gate not found" }, { status: 404 })
   }
 
-  const nextRun = await upsertWorkflowRun(
-    decideApprovalGate(run, id, body.decision, body.note)
-  )
+  try {
+    const nextRun = await upsertWorkflowRun(
+      decideApprovalGate(run, id, body.decision, body.note),
+      { expectedVersion: run.version }
+    )
+    return NextResponse.json(nextRun)
+  } catch (error) {
+    if (error instanceof StateConflictError) {
+      return NextResponse.json(
+        {
+          error: error.message,
+          latestRun: error.latestRun
+        },
+        { status: 409 }
+      )
+    }
 
-  return NextResponse.json(nextRun)
+    throw error
+  }
 }

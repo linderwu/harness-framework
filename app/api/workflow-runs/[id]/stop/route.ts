@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server"
 import { stopConfiguredAgentRun } from "@/lib/agent-bridge"
-import { getWorkflowRun, upsertWorkflowRun } from "@/lib/store"
+import { getWorkflowRun, StateConflictError, upsertWorkflowRun } from "@/lib/store"
 import { stopWorkflowStage } from "@/lib/workflow"
 
 export async function POST(
@@ -14,8 +14,23 @@ export async function POST(
     return NextResponse.json({ error: "Workflow run not found" }, { status: 404 })
   }
 
-  const nextRun = await upsertWorkflowRun(stopWorkflowStage(run))
-  await stopConfiguredAgentRun(run)
+  try {
+    const nextRun = await upsertWorkflowRun(stopWorkflowStage(run), {
+      expectedVersion: run.version
+    })
+    await stopConfiguredAgentRun(run)
+    return NextResponse.json(nextRun)
+  } catch (error) {
+    if (error instanceof StateConflictError) {
+      return NextResponse.json(
+        {
+          error: error.message,
+          latestRun: error.latestRun
+        },
+        { status: 409 }
+      )
+    }
 
-  return NextResponse.json(nextRun)
+    throw error
+  }
 }

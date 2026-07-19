@@ -786,6 +786,18 @@ textarea:focus {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+.formError {
+  background: var(--red-soft);
+  border: 1px solid #fecaca;
+  border-radius: 7px;
+  color: var(--red);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.45;
+  margin: 0;
+  padding: 10px 12px;
+}
+
 .stopButton {
   background: var(--amber);
   border-radius: 7px;

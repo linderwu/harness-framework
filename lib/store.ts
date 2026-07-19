@@ -2,9 +2,20 @@ import { promises as fs } from "fs"
 import path from "path"
 import type { HarnessState, WorkflowRun } from "@/lib/types"
 import { normalizeAgentKind } from "@/lib/agents"
-import { createDefaultEventSkills } from "@/lib/workflow"
+import { createDefaultEventSkills, getDefaultSkillExecutor } from "@/lib/workflow"
 
 const statePath = path.join(process.cwd(), "data", "harness-state.json")
+let stateWriteQueue = Promise.resolve()
+
+export class StateConflictError extends Error {
+  latestRun?: WorkflowRun
+
+  constructor(message: string, latestRun?: WorkflowRun) {
+    super(message)
+    this.name = "StateConflictError"
+    this.latestRun = latestRun
+  }
+}
 
 async function ensureStateFile() {
   await fs.mkdir(path.dirname(statePath), { recursive: true })
@@ -43,30 +54,63 @@ export async function getWorkflowRun(id: string) {
   return state.workflowRuns.find((run) => run.id === id)
 }
 
-export async function upsertWorkflowRun(nextRun: WorkflowRun) {
-  const state = await readState()
-  const index = state.workflowRuns.findIndex((run) => run.id === nextRun.id)
+export async function upsertWorkflowRun(
+  nextRun: WorkflowRun,
+  options: { expectedVersion?: number } = {}
+) {
+  return withStateWrite(async () => {
+    const state = await readState()
+    const index = state.workflowRuns.findIndex((run) => run.id === nextRun.id)
 
-  if (index >= 0) {
-    state.workflowRuns[index] = nextRun
-  } else {
-    state.workflowRuns.push(nextRun)
-  }
+    if (index >= 0) {
+      const latestRun = normalizeWorkflowRun(state.workflowRuns[index])
 
-  await writeState(state)
-  return nextRun
+      if (
+        options.expectedVersion !== undefined &&
+        latestRun.version !== options.expectedVersion
+      ) {
+        throw new StateConflictError(
+          "Workflow run changed while this request was in progress.",
+          latestRun
+        )
+      }
+
+      state.workflowRuns[index] = normalizeWorkflowRun({
+        ...nextRun,
+        version: latestRun.version + 1
+      })
+    } else {
+      if (options.expectedVersion !== undefined) {
+        throw new StateConflictError(
+          "Workflow run was deleted while this request was in progress."
+        )
+      }
+
+      state.workflowRuns.push(
+        normalizeWorkflowRun({
+          ...nextRun,
+          version: nextRun.version ?? 1
+        })
+      )
+    }
+
+    await writeState(state)
+    return state.workflowRuns.find((run) => run.id === nextRun.id) ?? nextRun
+  })
 }
 
 export async function deleteWorkflowRun(id: string) {
-  const state = await readState()
-  const nextRuns = state.workflowRuns.filter((run) => run.id !== id)
+  return withStateWrite(async () => {
+    const state = await readState()
+    const nextRuns = state.workflowRuns.filter((run) => run.id !== id)
 
-  if (nextRuns.length === state.workflowRuns.length) {
-    return false
-  }
+    if (nextRuns.length === state.workflowRuns.length) {
+      return false
+    }
 
-  await writeState({ workflowRuns: nextRuns })
-  return true
+    await writeState({ workflowRuns: nextRuns })
+    return true
+  })
 }
 
 function normalizeWorkflowRun(run: WorkflowRun): WorkflowRun {
@@ -75,12 +119,17 @@ function normalizeWorkflowRun(run: WorkflowRun): WorkflowRun {
   const skillAssignments = Object.fromEntries(
     eventSkills.map((skill) => [
       skill.id,
-      normalizeAgentKind(run.skillAssignments?.[skill.id] ?? selectedAgent)
+      normalizeAgentKind(
+        run.skillAssignments?.[skill.id] ??
+          getDefaultSkillExecutor(skill.id, selectedAgent)
+      )
     ])
   )
 
-  return {
+  const normalizedRun: WorkflowRun = {
     ...run,
+    schemaVersion: run.schemaVersion ?? 2,
+    version: run.version ?? 1,
     selectedAgent,
     eventSkills,
     skillAssignments,
@@ -98,6 +147,53 @@ function normalizeWorkflowRun(run: WorkflowRun): WorkflowRun {
       ...agentRun,
       agent: normalizeAgentKind(agentRun.agent)
     })),
-    events: run.events ?? []
+    artifacts: run.artifacts ?? [],
+    events: run.events ?? [],
+    revisions: run.revisions ?? [],
+    eventLogStatus: run.eventLogStatus ?? "consistent"
   }
+
+  return refreshEventLogStatus(normalizedRun)
+}
+
+function refreshEventLogStatus(run: WorkflowRun): WorkflowRun {
+  const artifactIds = new Set(run.artifacts.map((artifact) => artifact.id))
+  const missingOutputIds = run.events
+    .flatMap((event) => event.outputArtifactIds)
+    .filter((artifactId) => !artifactIds.has(artifactId))
+  const wrongRunEvents = run.events.filter(
+    (event) => event.workflowRunId !== run.id
+  )
+
+  if (missingOutputIds.length > 0 || wrongRunEvents.length > 0) {
+    return {
+      ...run,
+      eventLogStatus: "drift_detected",
+      eventLogWarning: [
+        missingOutputIds.length > 0
+          ? `${missingOutputIds.length} event output reference(s) point at missing artifacts`
+          : undefined,
+        wrongRunEvents.length > 0
+          ? `${wrongRunEvents.length} event(s) belong to a different workflow run`
+          : undefined
+      ]
+        .filter(Boolean)
+        .join("; ")
+    }
+  }
+
+  return {
+    ...run,
+    eventLogStatus: "consistent",
+    eventLogWarning: undefined
+  }
+}
+
+function withStateWrite<T>(operation: () => Promise<T>) {
+  const nextOperation = stateWriteQueue.then(operation, operation)
+  stateWriteQueue = nextOperation.then(
+    () => undefined,
+    () => undefined
+  )
+  return nextOperation
 }
