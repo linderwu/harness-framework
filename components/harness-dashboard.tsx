@@ -1,8 +1,10 @@
 "use client"
 
+import Image from "next/image"
 import {
   Bot,
   Check,
+  ChevronDown,
   ChevronRight,
   CircleDot,
   ClipboardList,
@@ -21,7 +23,12 @@ import {
 } from "lucide-react"
 import { ChangeEvent, FormEvent, useMemo, useState } from "react"
 import type { CSSProperties } from "react"
-import { agentProfiles, defaultAgentKind, getAgentLabel } from "@/lib/agents"
+import {
+  agentProfiles,
+  defaultAgentKind,
+  getAgentLabel,
+  type AgentProfile
+} from "@/lib/agents"
 import type {
   AgentKind,
   ApprovalActorType,
@@ -573,6 +580,7 @@ export function HarnessDashboard({
                                 <div className="executorCell">
                                   <AgentSelect
                                     value={executor}
+                                    menuPlacement="up"
                                     onChange={(agent) =>
                                       updateSkillAssignment(skill.id, agent)
                                     }
@@ -993,12 +1001,17 @@ function getSkillPolicyLabel(stage: WorkflowStage) {
 }
 
 function AgentSelect({
+  menuPlacement = "down",
   value,
   onChange
 }: {
+  menuPlacement?: "down" | "up"
   value: AgentKind
   onChange: (value: AgentKind) => void
 }) {
+  const [isOpen, setIsOpen] = useState(false)
+  const selectedAgent =
+    agentProfiles.find((agent) => agent.id === value) ?? agentProfiles[0]
   const agentGroups = [
     {
       label: "Codex",
@@ -1015,25 +1028,111 @@ function AgentSelect({
   ].filter((group) => group.agents.length > 0)
 
   return (
-    <span className="agentSelectWrap">
-      <select
+    <span
+      className={
+        menuPlacement === "up"
+          ? "agentSelectWrap menuUp"
+          : "agentSelectWrap"
+      }
+      onBlur={(event) => {
+        const nextTarget = event.relatedTarget as Node | null
+
+        if (!nextTarget || !event.currentTarget.contains(nextTarget)) {
+          setIsOpen(false)
+        }
+      }}
+    >
+      <button
         aria-label="Agent executor"
+        aria-expanded={isOpen}
+        aria-haspopup="listbox"
         className="agentSelect"
-        value={value}
-        onChange={(event) => onChange(event.target.value as AgentKind)}
+        onClick={() => setIsOpen((current) => !current)}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") {
+            setIsOpen(false)
+          }
+        }}
+        type="button"
       >
-        {agentGroups.map((group) => (
-          <optgroup key={group.label} label={group.label}>
-            {group.agents.map((agent) => (
-              <option key={agent.id} value={agent.id}>
-                {agent.label}
-              </option>
-            ))}
-          </optgroup>
-        ))}
-      </select>
+        <AgentOptionLabel agent={selectedAgent} />
+        <ChevronDown size={16} />
+      </button>
+
+      {isOpen ? (
+        <div className="agentSelectMenu" role="listbox">
+          {agentGroups.map((group) => (
+            <div className="agentSelectGroup" key={group.label}>
+              <div className="agentSelectGroupLabel">{group.label}</div>
+              {group.agents.map((agent) => (
+                <button
+                  aria-selected={agent.id === value}
+                  className={
+                    agent.id === value
+                      ? "agentSelectOption selected"
+                      : "agentSelectOption"
+                  }
+                  key={agent.id}
+                  onClick={() => {
+                    onChange(agent.id)
+                    setIsOpen(false)
+                  }}
+                  role="option"
+                  type="button"
+                >
+                  <AgentOptionLabel agent={agent} />
+                  {agent.id === value ? <Check size={14} /> : null}
+                </button>
+              ))}
+            </div>
+          ))}
+        </div>
+      ) : null}
     </span>
   )
+}
+
+function AgentOptionLabel({ agent }: { agent: AgentProfile }) {
+  return (
+    <span className="agentOptionLabel">
+      <AgentIcon agent={agent} />
+      <span>{agent.label}</span>
+    </span>
+  )
+}
+
+function AgentIcon({ agent }: { agent: AgentProfile }) {
+  if (agent.id === "openclaw.rowlet") {
+    return (
+      <span className="agentMark" aria-hidden="true">
+        🦉
+      </span>
+    )
+  }
+
+  if (agent.id === "openclaw.roaringmoon") {
+    return (
+      <span className="agentMark" aria-hidden="true">
+        🌙
+      </span>
+    )
+  }
+
+  if (agent.id === "openclaw.charizard") {
+    return (
+      <span className="agentSpriteMark" aria-hidden="true">
+        <Image
+          alt=""
+          height={24}
+          src="/agents/charizard.webp"
+          unoptimized
+          width={30}
+        />
+      </span>
+    )
+  }
+
+  return null
 }
 
 function ActorSelect({
