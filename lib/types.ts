@@ -117,6 +117,17 @@ export interface Artifact {
   createdAt: string
 }
 
+export interface ProjectContextFile {
+  id: string
+  name: string
+  path: string
+  type: string
+  size: number
+  encoding: "text" | "base64"
+  content: string
+  importedAt: string
+}
+
 export interface ApprovalGate {
   id: string
   workflowRunId: string
@@ -149,6 +160,7 @@ export interface WorkflowRun {
   projectName: string
   repository: string
   requirement: string
+  contextFiles: ProjectContextFile[]
   source: "dashboard" | "github_issue" | "github_pr"
   sourceRef?: string
   currentStage: WorkflowStage

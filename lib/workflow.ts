@@ -5,6 +5,7 @@ import type {
   ApprovalPolicy,
   Artifact,
   ExecutionMode,
+  ProjectContextFile,
   WorkflowEvent,
   WorkflowEventSkill,
   WorkflowEventType,
@@ -252,6 +253,7 @@ export function createWorkflowRun(input: {
   projectName: string
   repository: string
   requirement: string
+  contextFiles?: ProjectContextFile[]
   selectedAgent: AgentKind
   skillAssignments?: Record<string, AgentKind>
   designApprovalActor: ApprovalActorType
@@ -307,6 +309,7 @@ export function createWorkflowRun(input: {
     projectName: input.projectName,
     repository: input.repository,
     requirement: input.requirement,
+    contextFiles: input.contextFiles ?? [],
     source: "dashboard",
     currentStage: "intake",
     status: "pending",
@@ -718,6 +721,7 @@ async function addAgentArtifact(
 function ensureEventSkillState(run: WorkflowRun) {
   run.eventSkills = run.eventSkills ?? createDefaultEventSkills()
   run.events = run.events ?? []
+  run.contextFiles = run.contextFiles ?? []
   run.skillAssignments =
     run.skillAssignments ??
     (Object.fromEntries(

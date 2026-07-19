@@ -51,6 +51,7 @@ export async function invokeConfiguredAgent(
         projectName: input.run.projectName,
         repository: input.run.repository,
         requirement: input.run.requirement,
+        contextFiles: input.run.contextFiles ?? [],
         stage: input.stage,
         artifactType: input.artifactType,
         title: input.title,

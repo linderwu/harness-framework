@@ -221,7 +221,9 @@ legend {
 .requirementActions {
   align-items: center;
   display: inline-flex;
+  flex-wrap: wrap;
   gap: 8px;
+  justify-content: flex-end;
   min-width: 0;
 }
 
@@ -230,6 +232,55 @@ legend {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.contextFileList {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.contextFileChip {
+  align-items: center;
+  background:
+    linear-gradient(135deg, rgba(219, 234, 254, 0.86), rgba(236, 253, 245, 0.72));
+  border: 1px solid var(--panel-border);
+  border-radius: 7px;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  min-height: 42px;
+  padding: 7px 8px;
+}
+
+.contextFileChip span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.contextFileChip strong,
+.contextFileChip small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.contextFileChip strong {
+  color: var(--text);
+  font-size: 12px;
+}
+
+.contextFileChip button {
+  align-items: center;
+  background: rgba(255, 255, 255, 0.68);
+  border: 1px solid var(--panel-border);
+  border-radius: 6px;
+  color: var(--muted);
+  display: inline-flex;
+  height: 26px;
+  justify-content: center;
+  width: 26px;
 }
 
 input,
@@ -303,19 +354,11 @@ textarea:focus {
   box-shadow: 0 18px 38px rgba(15, 23, 42, 0.18);
   display: grid;
   gap: 4px;
-  left: 0;
   max-height: 268px;
   overflow: auto;
   padding: 6px;
-  position: absolute;
-  right: 0;
-  top: calc(100% + 5px);
-  z-index: 50;
-}
-
-.agentSelectWrap.menuUp .agentSelectMenu {
-  bottom: calc(100% + 5px);
-  top: auto;
+  position: fixed;
+  z-index: 80;
 }
 
 .agentSelectGroup {

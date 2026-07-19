@@ -54,7 +54,16 @@ const server = http.createServer(async (request, response) => {
     const payload = await readJson(request)
     const id = randomUUID()
     const startedAt = new Date().toISOString()
-    const result = await runCodex(buildPrompt(payload), id, payload.workflowRunId)
+    const contextDir = await materializeContextFiles(payload.contextFiles, id)
+    const result = await runCodex(
+      buildPrompt(payload, contextDir),
+      id,
+      payload.workflowRunId
+    ).finally(async () => {
+      if (contextDir) {
+        await fs.rm(contextDir, { recursive: true, force: true }).catch(() => {})
+      }
+    })
 
     sendJson(response, 200, {
       id,
@@ -161,9 +170,46 @@ function stopAgentRun(agentRunId) {
   return true
 }
 
-function buildPrompt(payload) {
+async function materializeContextFiles(contextFiles, id) {
+  if (!Array.isArray(contextFiles) || contextFiles.length === 0) {
+    return undefined
+  }
+
+  const contextDir = path.join(os.tmpdir(), `codex-bridge-context-${id}`)
+
+  await fs.mkdir(contextDir, { recursive: true })
+
+  for (const file of contextFiles) {
+    const relativePath =
+      sanitizeRelativePath(file.path || file.name || "file") || "file"
+    const targetPath = path.join(contextDir, relativePath)
+
+    await fs.mkdir(path.dirname(targetPath), { recursive: true })
+
+    if (file.encoding === "base64") {
+      await fs.writeFile(targetPath, Buffer.from(file.content ?? "", "base64"))
+    } else {
+      await fs.writeFile(targetPath, file.content ?? "", "utf8")
+    }
+  }
+
+  return contextDir
+}
+
+function sanitizeRelativePath(value) {
+  return value
+    .replaceAll("\\", "/")
+    .split("/")
+    .filter((part) => part && part !== "." && part !== "..")
+    .join("/")
+}
+
+function buildPrompt(payload, contextDir) {
   const skill = payload.skill ?? {}
   const artifacts = Array.isArray(payload.artifacts) ? payload.artifacts : []
+  const contextFiles = Array.isArray(payload.contextFiles)
+    ? payload.contextFiles
+    : []
   const artifactSummary = artifacts
     .map(
       (artifact) =>
@@ -172,9 +218,17 @@ function buildPrompt(payload) {
         }`
     )
     .join("\n\n")
+  const contextSummary = contextFiles
+    .map(
+      (file) =>
+        `- ${file.path ?? file.name ?? "file"} (${formatBytes(
+          file.size ?? 0
+        )}, ${file.encoding ?? "unknown"})`
+    )
+    .join("\n")
 
   return [
-    "You are the local Codex executor for a Harness Framework workflow event.",
+    "You are the local Codex executor for a Jormungandr workflow event.",
     "Handle only the event described below and respect its constraints.",
     "",
     `Project: ${payload.projectName ?? "unknown"}`,
@@ -198,11 +252,35 @@ function buildPrompt(payload) {
     "Original requirement:",
     payload.requirement ?? "",
     "",
+    "Shared project files:",
+    contextSummary || "No imported project files.",
+    contextDir ? `Materialized file directory: ${contextDir}` : "",
+    contextDir
+      ? "All agents for this workflow run receive this same shared file set."
+      : "",
+    "",
     "Existing artifacts:",
     artifactSummary || "No prior artifacts.",
     "",
     "Return a concise final message that the harness can store as this event artifact."
   ].join("\n")
+}
+
+function formatBytes(value) {
+  if (!Number.isFinite(value) || value <= 0) {
+    return "0 B"
+  }
+
+  const units = ["B", "KB", "MB", "GB"]
+  let size = value
+  let unitIndex = 0
+
+  while (size >= 1024 && unitIndex < units.length - 1) {
+    size /= 1024
+    unitIndex += 1
+  }
+
+  return `${size.toFixed(size >= 10 || unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`
 }
 
 function asList(values) {
@@ -216,7 +294,7 @@ async function readJson(request) {
 
   for await (const chunk of request) {
     raw += chunk.toString()
-    if (raw.length > 2_000_000) {
+    if (raw.length > 50_000_000) {
       throw new Error("request body too large")
     }
   }

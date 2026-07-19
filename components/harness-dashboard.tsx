@@ -1,6 +1,7 @@
 "use client"
 
 import Image from "next/image"
+import { createPortal } from "react-dom"
 import {
   Bot,
   Check,
@@ -9,6 +10,7 @@ import {
   CircleDot,
   ClipboardList,
   FileUp,
+  FolderUp,
   GitBranch,
   Play,
   RefreshCw,
@@ -21,7 +23,14 @@ import {
   UserCheck,
   X
 } from "lucide-react"
-import { ChangeEvent, FormEvent, useMemo, useState } from "react"
+import {
+  ChangeEvent,
+  FormEvent,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState
+} from "react"
 import type { CSSProperties } from "react"
 import {
   agentProfiles,
@@ -33,6 +42,7 @@ import type {
   AgentKind,
   ApprovalActorType,
   ApprovalGate,
+  ProjectContextFile,
   WorkflowRun,
   WorkflowStage
 } from "@/lib/types"
@@ -51,6 +61,11 @@ const orderedStages: WorkflowStage[] = [
   "verification",
   "completed"
 ]
+const agentMenuMaxHeight = 268
+const folderPickerAttributes = {
+  directory: "",
+  webkitdirectory: ""
+} as Record<string, string>
 
 const defaultEventSkills = createDefaultEventSkills()
 const defaultSkillAssignments = Object.fromEntries(
@@ -71,7 +86,6 @@ export function HarnessDashboard({
   )
   const [isLoading, setIsLoading] = useState(false)
   const [isMutating, setIsMutating] = useState(false)
-  const [importedRequirementName, setImportedRequirementName] = useState("")
   const [openComposeSection, setOpenComposeSection] = useState<
     "requirement" | "automation" | undefined
   >()
@@ -83,6 +97,7 @@ export function HarnessDashboard({
     projectName: "Jormungandr MVP",
     repository: "owner/repository",
     requirement: sampleRequirement,
+    contextFiles: [] as ProjectContextFile[],
     selectedAgent: defaultAgentKind,
     skillAssignments: defaultSkillAssignments,
     designApprovalActor: "independent_agent" as ApprovalActorType,
@@ -258,22 +273,29 @@ export function HarnessDashboard({
     }))
   }
 
-  async function importRequirementFile(
+  async function importContextFiles(
     event: ChangeEvent<HTMLInputElement>
   ) {
-    const file = event.target.files?.[0]
+    const files = Array.from(event.target.files ?? [])
 
-    if (!file) {
+    if (files.length === 0) {
       return
     }
 
-    const text = await file.text()
+    const contextFiles = await Promise.all(files.map(readProjectContextFile))
+
     setForm((currentForm) => ({
       ...currentForm,
-      requirement: text
+      contextFiles: mergeContextFiles(currentForm.contextFiles, contextFiles)
     }))
-    setImportedRequirementName(file.name)
     event.target.value = ""
+  }
+
+  function removeContextFile(fileId: string) {
+    setForm((currentForm) => ({
+      ...currentForm,
+      contextFiles: currentForm.contextFiles.filter((file) => file.id !== fileId)
+    }))
   }
 
   return (
@@ -411,20 +433,36 @@ export function HarnessDashboard({
                       <span className="requirementHeader">
                         <span>Requirement</span>
                         <span className="requirementActions">
-                          {importedRequirementName ? (
-                            <small>{importedRequirementName}</small>
+                          {form.contextFiles.length > 0 ? (
+                            <small>
+                              {form.contextFiles.length} files attached
+                            </small>
                           ) : null}
                           <span
                             className="iconTextButton importButton"
                             tabIndex={0}
                           >
                             <FileUp size={15} />
-                            Import .md
+                            Import File
                             <input
-                              accept=".md,.markdown,text/markdown,text/plain"
                               className="fileImportInput"
-                              onChange={importRequirementFile}
+                              multiple
+                              onChange={importContextFiles}
                               type="file"
+                            />
+                          </span>
+                          <span
+                            className="iconTextButton importButton"
+                            tabIndex={0}
+                          >
+                            <FolderUp size={15} />
+                            Import Folder
+                            <input
+                              className="fileImportInput"
+                              multiple
+                              onChange={importContextFiles}
+                              type="file"
+                              {...folderPickerAttributes}
                             />
                           </span>
                         </span>
@@ -435,6 +473,26 @@ export function HarnessDashboard({
                           setForm({ ...form, requirement: event.target.value })
                         }
                       />
+                      {form.contextFiles.length > 0 ? (
+                        <div className="contextFileList">
+                          {form.contextFiles.map((file) => (
+                            <span className="contextFileChip" key={file.id}>
+                              <FileUp size={13} />
+                              <span>
+                                <strong>{file.path}</strong>
+                                <small>{formatFileSize(file.size)}</small>
+                              </span>
+                              <button
+                                aria-label={`Remove ${file.path}`}
+                                onClick={() => removeContextFile(file.id)}
+                                type="button"
+                              >
+                                <X size={13} />
+                              </button>
+                            </span>
+                          ))}
+                        </div>
+                      ) : null}
                     </label>
                   </div>
                 ) : (
@@ -1000,6 +1058,101 @@ function getSkillPolicyLabel(stage: WorkflowStage) {
   return "No gate"
 }
 
+const textFileExtensions = new Set([
+  "css",
+  "csv",
+  "html",
+  "js",
+  "json",
+  "jsx",
+  "log",
+  "md",
+  "markdown",
+  "mdx",
+  "sql",
+  "svg",
+  "toml",
+  "ts",
+  "tsx",
+  "txt",
+  "xml",
+  "yaml",
+  "yml"
+])
+
+async function readProjectContextFile(file: File): Promise<ProjectContextFile> {
+  const path = getContextFilePath(file)
+  const isText = isTextContextFile(file)
+
+  return {
+    id: crypto.randomUUID(),
+    name: file.name,
+    path,
+    type: file.type || "application/octet-stream",
+    size: file.size,
+    encoding: isText ? "text" : "base64",
+    content: isText ? await file.text() : await readFileAsBase64(file),
+    importedAt: new Date().toISOString()
+  }
+}
+
+function getContextFilePath(file: File) {
+  const relativePath = (file as File & { webkitRelativePath?: string })
+    .webkitRelativePath
+
+  return relativePath || file.name
+}
+
+function isTextContextFile(file: File) {
+  const extension = file.name.split(".").pop()?.toLowerCase() ?? ""
+
+  return file.type.startsWith("text/") || textFileExtensions.has(extension)
+}
+
+function readFileAsBase64(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader()
+
+    reader.onerror = () => reject(reader.error)
+    reader.onload = () => {
+      const dataUrl = String(reader.result ?? "")
+      const [, base64 = ""] = dataUrl.split(",", 2)
+      resolve(base64)
+    }
+    reader.readAsDataURL(file)
+  })
+}
+
+function mergeContextFiles(
+  existingFiles: ProjectContextFile[],
+  incomingFiles: ProjectContextFile[]
+) {
+  const filesByPath = new Map(
+    existingFiles.map((file) => [file.path, file] as const)
+  )
+
+  incomingFiles.forEach((file) => filesByPath.set(file.path, file))
+
+  return Array.from(filesByPath.values())
+}
+
+function formatFileSize(bytes: number) {
+  if (bytes <= 0) {
+    return "0 B"
+  }
+
+  const units = ["B", "KB", "MB", "GB"]
+  let size = bytes
+  let unitIndex = 0
+
+  while (size >= 1024 && unitIndex < units.length - 1) {
+    size /= 1024
+    unitIndex += 1
+  }
+
+  return `${size.toFixed(size >= 10 || unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`
+}
+
 function AgentSelect({
   menuPlacement = "down",
   value,
@@ -1010,6 +1163,10 @@ function AgentSelect({
   onChange: (value: AgentKind) => void
 }) {
   const [isOpen, setIsOpen] = useState(false)
+  const [menuStyle, setMenuStyle] = useState<CSSProperties>({})
+  const buttonRef = useRef<HTMLButtonElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
+  const wrapRef = useRef<HTMLSpanElement>(null)
   const selectedAgent =
     agentProfiles.find((agent) => agent.id === value) ?? agentProfiles[0]
   const agentGroups = [
@@ -1027,6 +1184,105 @@ function AgentSelect({
     }
   ].filter((group) => group.agents.length > 0)
 
+  useLayoutEffect(() => {
+    if (!isOpen || !buttonRef.current) {
+      return
+    }
+
+    function updateMenuPosition() {
+      const button = buttonRef.current
+
+      if (!button) {
+        return
+      }
+
+      const gap = 5
+      const viewportPadding = 8
+      const rect = button.getBoundingClientRect()
+      const spaceAbove = rect.top - gap - viewportPadding
+      const spaceBelow = window.innerHeight - rect.bottom - gap - viewportPadding
+      const shouldOpenUp =
+        menuPlacement === "up" && spaceAbove > Math.min(spaceBelow, 120)
+      const maxHeight = Math.max(
+        120,
+        Math.min(
+          agentMenuMaxHeight,
+          shouldOpenUp ? spaceAbove : Math.max(spaceBelow, spaceAbove)
+        )
+      )
+
+      setMenuStyle({
+        bottom: shouldOpenUp
+          ? window.innerHeight - rect.top + gap
+          : "auto",
+        left: rect.left,
+        maxHeight,
+        position: "fixed",
+        right: "auto",
+        top: shouldOpenUp ? "auto" : rect.bottom + gap,
+        width: rect.width
+      })
+    }
+
+    updateMenuPosition()
+    window.addEventListener("resize", updateMenuPosition)
+    window.addEventListener("scroll", updateMenuPosition, true)
+
+    return () => {
+      window.removeEventListener("resize", updateMenuPosition)
+      window.removeEventListener("scroll", updateMenuPosition, true)
+    }
+  }, [isOpen, menuPlacement])
+
+  function keepOpenForTarget(target: Node | null) {
+    return Boolean(
+      target &&
+        (wrapRef.current?.contains(target) || menuRef.current?.contains(target))
+    )
+  }
+
+  const menu = (
+    <div
+      className="agentSelectMenu"
+      onBlur={(event) => {
+        const nextTarget = event.relatedTarget as Node | null
+
+        if (!keepOpenForTarget(nextTarget)) {
+          setIsOpen(false)
+        }
+      }}
+      ref={menuRef}
+      role="listbox"
+      style={menuStyle}
+    >
+      {agentGroups.map((group) => (
+        <div className="agentSelectGroup" key={group.label}>
+          <div className="agentSelectGroupLabel">{group.label}</div>
+          {group.agents.map((agent) => (
+            <button
+              aria-selected={agent.id === value}
+              className={
+                agent.id === value
+                  ? "agentSelectOption selected"
+                  : "agentSelectOption"
+              }
+              key={agent.id}
+              onClick={() => {
+                onChange(agent.id)
+                setIsOpen(false)
+              }}
+              role="option"
+              type="button"
+            >
+              <AgentOptionLabel agent={agent} />
+              {agent.id === value ? <Check size={14} /> : null}
+            </button>
+          ))}
+        </div>
+      ))}
+    </div>
+  )
+
   return (
     <span
       className={
@@ -1037,10 +1293,11 @@ function AgentSelect({
       onBlur={(event) => {
         const nextTarget = event.relatedTarget as Node | null
 
-        if (!nextTarget || !event.currentTarget.contains(nextTarget)) {
+        if (!keepOpenForTarget(nextTarget)) {
           setIsOpen(false)
         }
       }}
+      ref={wrapRef}
     >
       <button
         aria-label="Agent executor"
@@ -1053,41 +1310,16 @@ function AgentSelect({
             setIsOpen(false)
           }
         }}
+        ref={buttonRef}
         type="button"
       >
         <AgentOptionLabel agent={selectedAgent} />
         <ChevronDown size={16} />
       </button>
 
-      {isOpen ? (
-        <div className="agentSelectMenu" role="listbox">
-          {agentGroups.map((group) => (
-            <div className="agentSelectGroup" key={group.label}>
-              <div className="agentSelectGroupLabel">{group.label}</div>
-              {group.agents.map((agent) => (
-                <button
-                  aria-selected={agent.id === value}
-                  className={
-                    agent.id === value
-                      ? "agentSelectOption selected"
-                      : "agentSelectOption"
-                  }
-                  key={agent.id}
-                  onClick={() => {
-                    onChange(agent.id)
-                    setIsOpen(false)
-                  }}
-                  role="option"
-                  type="button"
-                >
-                  <AgentOptionLabel agent={agent} />
-                  {agent.id === value ? <Check size={14} /> : null}
-                </button>
-              ))}
-            </div>
-          ))}
-        </div>
-      ) : null}
+      {isOpen && typeof document !== "undefined"
+        ? createPortal(menu, document.body)
+        : null}
     </span>
   )
 }
