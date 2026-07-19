@@ -563,7 +563,7 @@ export function HarnessDashboard({
                                 key={skill.id}
                                 role="row"
                               >
-                                <span className="stageBadge">
+                                <span className={`stageBadge ${skill.stage}`}>
                                   {stageLabels[skill.stage]}
                                 </span>
                                 <div className="skillCell">
@@ -585,7 +585,7 @@ export function HarnessDashboard({
                                         )}`}
                                   </small>
                                 </div>
-                                <span className="policyBadge">
+                                <span className={`policyBadge ${skill.stage}`}>
                                   {getSkillPolicyLabel(skill.stage)}
                                 </span>
                               </div>
@@ -746,7 +746,7 @@ function RunDetail({
                   : "stage"
 
             return (
-              <div className={stageClass} key={stage}>
+              <div className={`${stageClass} ${stage}`} key={stage}>
                 <span
                   className="stageRing"
                   style={
