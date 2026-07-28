@@ -1,4 +1,5 @@
 import { spawn } from "child_process"
+import { ouroborosAgentContract } from "@/lib/ouroboros-agent-contract"
 
 interface GitHubRepositoryRef {
   owner?: string
@@ -103,7 +104,9 @@ async function ensureRepositoryWithApi(
       ? await createUserRepository(repo.name, token)
       : await createOrganizationRepository(owner, repo.name, token)
 
-  return formatRepositoryFullName(created)
+  const fullName = formatRepositoryFullName(created)
+  await seedRepositoryAgentContract(fullName, token)
+  return fullName
 }
 
 async function fetchGitHubViewer(token: string) {
@@ -179,7 +182,7 @@ function createRepositoryPayload(name: string) {
   return {
     name,
     private: process.env.GITHUB_REPOSITORY_VISIBILITY !== "public",
-    auto_init: false
+    auto_init: true
   }
 }
 
@@ -239,8 +242,71 @@ async function ensureRepositoryWithCli(repo: GitHubRepositoryRef) {
 
   const visibility =
     process.env.GITHUB_REPOSITORY_VISIBILITY === "public" ? "--public" : "--private"
-  await runGh(["repo", "create", fullName, visibility])
+  await runGh(["repo", "create", fullName, visibility, "--add-readme"])
+  await seedRepositoryAgentContractWithCli(fullName)
   return fullName
+}
+
+async function seedRepositoryAgentContract(fullName: string, token: string) {
+  const existing = await githubFetch(
+    `https://api.github.com/repos/${fullName}/contents/AGENTS.md`,
+    token
+  )
+
+  if (existing.ok) {
+    return
+  }
+
+  if (existing.status !== 404) {
+    throw new GitHubRepositoryError(
+      `Could not check AGENTS.md in ${fullName}: HTTP ${existing.status}.`,
+      existing.status
+    )
+  }
+
+  const response = await githubFetch(
+    `https://api.github.com/repos/${fullName}/contents/AGENTS.md`,
+    token,
+    {
+      method: "PUT",
+      body: JSON.stringify({
+        message: "Add Ouroboros agent contract",
+        content: Buffer.from(ouroborosAgentContract, "utf8").toString("base64")
+      })
+    }
+  )
+
+  if (!response.ok) {
+    const details = await response.text().catch(() => "")
+    throw new GitHubRepositoryError(
+      `Could not seed AGENTS.md in ${fullName}: HTTP ${response.status}${details ? ` ${details}` : ""}`,
+      response.status
+    )
+  }
+}
+
+async function seedRepositoryAgentContractWithCli(fullName: string) {
+  const existing = await runCommand("gh", [
+    "api",
+    `repos/${fullName}/contents/AGENTS.md`,
+    "--silent"
+  ])
+
+  if (existing.exitCode === 0) {
+    return
+  }
+
+  const content = Buffer.from(ouroborosAgentContract, "utf8").toString("base64")
+  await runGh([
+    "api",
+    "-X",
+    "PUT",
+    `repos/${fullName}/contents/AGENTS.md`,
+    "-f",
+    "message=Add Ouroboros agent contract",
+    "-f",
+    `content=${content}`
+  ])
 }
 
 async function runGh(args: string[]) {

@@ -14,6 +14,16 @@ const repoRoot = path.resolve(
 const activeAgentRuns = new Map()
 const activeWorkflowRuns = new Map()
 const activeIdempotencyKeys = new Map()
+const ouroborosAgentContract = `Ouroboros Knowledge Protocol:
+- Before substantial work, count important source files and choose an operating level.
+- S (<5 important source files): do not activate full Ouroboros; read code directly.
+- M (5-20 files): use lightweight Ouroboros; preserve evidence in raw/, update focused spec/ contracts, and use graphify only on hub modules.
+- L (>20 files): use full Ouroboros; maintain raw/, graphify/, wiki/, and spec/.
+- Route evidence and original inputs to raw/ as append-only files.
+- Route dependency impact and call graph questions to graphify/ when enabled.
+- Route durable design rationale, decisions, runtime patterns, and comparisons to wiki/.
+- Route code-derived API/module contracts and data flow to spec/.
+- Never put code in raw/, never rewrite raw/ evidence, never create wiki/raw/, and never treat generated wiki decisions as active without review.`
 
 const server = http.createServer(async (request, response) => {
   try {
@@ -286,6 +296,8 @@ function buildPrompt(payload, contextDir) {
   return [
     "You are the local Codex executor for a Jormungandr workflow event.",
     "Handle only the event described below and respect its constraints.",
+    "",
+    ouroborosAgentContract,
     "",
     `Project: ${payload.projectName ?? "unknown"}`,
     `Repository reference: ${payload.repository ?? "unknown"}`,

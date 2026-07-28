@@ -1,4 +1,4 @@
-import type { AgentKind, OpenClawMainAgent } from "@/lib/types"
+import type { AgentKind, OpenClawMainAgent } from "./types"
 
 export type AgentFamily = "codex" | "openclaw" | "manual"
 

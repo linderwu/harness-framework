@@ -8,7 +8,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "node -e \"require('fs').rmSync('.tmp-tests',{recursive:true,force:true})\" && tsc tests/workspace-model.test.ts lib/project-templates.ts lib/workspace.ts --outDir .tmp-tests --module commonjs --target es2022 --moduleResolution node --baseUrl . --esModuleInterop --skipLibCheck && node --test .tmp-tests/tests/workspace-model.test.js"
   },
   "dependencies": {
     "lucide-react": "^0.468.0",

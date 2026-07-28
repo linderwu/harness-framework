@@ -28,6 +28,23 @@ silently creating simulated artifacts. Set `HARNESS_ALLOW_SIMULATED_AGENTS=1`
 only when you intentionally want local demo artifacts instead of a real agent
 run.
 
+## Ouroboros-Aware Repositories
+
+Jormungandr-created GitHub repositories are seeded with an `AGENTS.md` contract
+that asks future agents to run an Ouroboros preflight before substantial work.
+The contract uses a size gate:
+
+- `<5` important source files: skip full Ouroboros and read the code directly.
+- `5-20` files: use lightweight Ouroboros, with `raw/`, focused `spec/`, and
+  graphify only for hub modules.
+- `>20` files: use full `raw/`, `graphify/`, `wiki/`, and `spec/`.
+
+The same contract is also injected into local Codex bridge prompts so workflow
+agents see the rule even before the generated repo has been cloned locally.
+The contract keeps `raw/` append-only, routes durable design rationale to
+reviewed `wiki/` pages, routes code-derived interfaces to `spec/`, and forbids
+parallel evidence layers such as `wiki/raw/`.
+
 OpenClaw profiles use ids such as `openclaw.rowlet`, `openclaw.roaringmoon`, and `openclaw.charizard`. When one is assigned, the Next.js API calls `OPENCLAW_BRIDGE_URL` and includes `mainAgent` in the payload.
 
 ## OpenClaw A2A Command

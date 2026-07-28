@@ -42,10 +42,18 @@ import type {
   AgentKind,
   ApprovalActorType,
   ApprovalGate,
+  HarnessState,
+  Project,
   ProjectContextFile,
+  ProjectOverview,
+  ProjectType,
   WorkflowRun,
   WorkflowStage
 } from "@/lib/types"
+import {
+  getProjectTemplate,
+  projectTypeOptions
+} from "@/lib/project-templates"
 import {
   actorLabels,
   createDefaultEventSkills,
@@ -78,13 +86,19 @@ const sampleRequirement =
   "Build a Jormungandr dashboard that can select Codex/OpenClaw agents and control design/verification with approval gates."
 
 export function HarnessDashboard({
-  initialRuns
+  initialState
 }: {
-  initialRuns: WorkflowRun[]
+  initialState: HarnessState
 }) {
-  const [runs, setRuns] = useState<WorkflowRun[]>(initialRuns)
+  const [projects, setProjects] = useState<Project[]>(initialState.projects)
+  const [runs, setRuns] = useState<WorkflowRun[]>(initialState.workflowRuns)
+  const [selectedProjectId, setSelectedProjectId] = useState<
+    string | undefined
+  >(initialState.projects[0]?.id)
   const [selectedRunId, setSelectedRunId] = useState<string | undefined>(
-    initialRuns[0]?.id
+    initialState.workflowRuns.find(
+      (run) => run.projectId === initialState.projects[0]?.id
+    )?.id
   )
   const [isLoading, setIsLoading] = useState(false)
   const [isMutating, setIsMutating] = useState(false)
@@ -98,6 +112,7 @@ export function HarnessDashboard({
   const [bulkAgent, setBulkAgent] = useState<AgentKind>(defaultAgentKind)
   const [form, setForm] = useState({
     projectName: "Jormungandr MVP",
+    projectType: "development" as ProjectType,
     repository: "",
     requirement: sampleRequirement,
     contextFiles: [] as ProjectContextFile[],
@@ -107,9 +122,31 @@ export function HarnessDashboard({
     verificationApprovalActor: "verification_subagent" as ApprovalActorType
   })
 
+  const selectedProject = useMemo(
+    () =>
+      projects.find((project) => project.id === selectedProjectId) ??
+      projects[0],
+    [projects, selectedProjectId]
+  )
+  const selectedProjectRuns = useMemo(
+    () =>
+      selectedProject
+        ? runs.filter((run) => run.projectId === selectedProject.id)
+        : [],
+    [runs, selectedProject]
+  )
   const selectedRun = useMemo(
-    () => runs.find((run) => run.id === selectedRunId) ?? runs[0],
-    [runs, selectedRunId]
+    () =>
+      selectedProjectRuns.find((run) => run.id === selectedRunId) ??
+      selectedProjectRuns[0],
+    [selectedProjectRuns, selectedRunId]
+  )
+  const selectedOverview = useMemo(
+    () =>
+      selectedProject
+        ? buildProjectOverview(selectedProject, selectedProjectRuns)
+        : undefined,
+    [selectedProject, selectedProjectRuns]
   )
   const overrideCount = useMemo(
     () =>
@@ -141,29 +178,75 @@ export function HarnessDashboard({
     skillSearch
   ])
 
-  async function refreshRuns() {
-    const response = await fetch("/api/workflow-runs", { cache: "no-store" })
-    const data = (await response.json()) as WorkflowRun[]
-    setRuns(data)
+  async function refreshWorkspace() {
+    const [projectsResponse, runsResponse] = await Promise.all([
+      fetch("/api/projects", { cache: "no-store" }),
+      fetch("/api/workflow-runs", { cache: "no-store" })
+    ])
+    const nextProjects = (await projectsResponse.json()) as Project[]
+    const nextRuns = (await runsResponse.json()) as WorkflowRun[]
+
+    setProjects(nextProjects)
+    setRuns(nextRuns)
+    setSelectedProjectId((current) =>
+      nextProjects.some((project) => project.id === current)
+        ? current
+        : nextProjects[0]?.id
+    )
     setSelectedRunId((current) =>
-      data.some((run) => run.id === current) ? current : data[0]?.id
+      nextRuns.some((run) => run.id === current)
+        ? current
+        : nextRuns.find((run) => run.projectId === selectedProjectId)?.id
     )
     setIsLoading(false)
   }
 
-  async function createRun(event: FormEvent<HTMLFormElement>) {
+  async function createProject(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setIsMutating(true)
     setMutationError(undefined)
 
     try {
-      const response = await fetch("/api/workflow-runs", {
+      const response = await fetch("/api/projects", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(form)
+        body: JSON.stringify({
+          name: form.projectName,
+          type: form.projectType,
+          goal: form.requirement,
+          repository: form.repository,
+          contextFiles: form.contextFiles
+        })
+      })
+      const project = await readProjectMutationResponse(response)
+      await refreshWorkspace()
+      setSelectedProjectId(project.id)
+      setSelectedRunId(undefined)
+    } catch (error) {
+      setMutationError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setIsMutating(false)
+    }
+  }
+
+  async function startProjectRun(project: Project) {
+    setIsMutating(true)
+    setMutationError(undefined)
+
+    try {
+      const response = await fetch(`/api/projects/${project.id}/workflow-runs`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          selectedAgent: form.selectedAgent,
+          skillAssignments: form.skillAssignments,
+          designApprovalActor: form.designApprovalActor,
+          verificationApprovalActor: form.verificationApprovalActor
+        })
       })
       const run = await readRunMutationResponse(response)
-      await refreshRuns()
+      await refreshWorkspace()
+      setSelectedProjectId(project.id)
       setSelectedRunId(run.id)
     } catch (error) {
       setMutationError(error instanceof Error ? error.message : String(error))
@@ -178,7 +261,7 @@ export function HarnessDashboard({
       method: "POST"
     })
     const run = await readRunMutationResponse(response)
-    await refreshRuns()
+    await refreshWorkspace()
     setSelectedRunId(run.id)
     setIsMutating(false)
   }
@@ -189,7 +272,7 @@ export function HarnessDashboard({
       method: "POST"
     })
     const run = await readRunMutationResponse(response)
-    await refreshRuns()
+    await refreshWorkspace()
     setSelectedRunId(run.id)
     setIsMutating(false)
   }
@@ -207,7 +290,7 @@ export function HarnessDashboard({
     await fetch(`/api/workflow-runs/${run.id}/cancel`, {
       method: "POST"
     })
-    await refreshRuns()
+    await refreshWorkspace()
     setIsMutating(false)
   }
 
@@ -222,7 +305,7 @@ export function HarnessDashboard({
       body: JSON.stringify({ decision })
     })
     const run = await readRunMutationResponse(response)
-    await refreshRuns()
+    await refreshWorkspace()
     setSelectedRunId(run.id)
     setIsMutating(false)
   }
@@ -337,23 +420,33 @@ export function HarnessDashboard({
     throw new Error(("error" in data && data.error) || "Workflow mutation failed")
   }
 
+  async function readProjectMutationResponse(response: Response) {
+    const data = (await response.json()) as Project | { error?: string }
+
+    if (response.ok) {
+      return data as Project
+    }
+
+    throw new Error(("error" in data && data.error) || "Project mutation failed")
+  }
+
   return (
     <main className="shell">
       <header className="topbar">
         <div>
-          <p className="eyebrow">Agentic Delivery System</p>
+          <p className="eyebrow">Personal Project Command Center</p>
           <h1>Jormungandr</h1>
         </div>
-        <button className="iconButton" onClick={refreshRuns} title="Refresh">
+        <button className="iconButton" onClick={refreshWorkspace} title="Refresh">
           <RefreshCw size={18} />
         </button>
       </header>
 
       <section className="layoutGrid">
-        <form className="panel composePanel" onSubmit={createRun}>
+        <form className="panel composePanel" onSubmit={createProject}>
           <div className="panelHeader">
             <CircleDot size={18} />
-            <h2>New Workflow Run</h2>
+            <h2>New Project</h2>
           </div>
 
           <button
@@ -392,7 +485,7 @@ export function HarnessDashboard({
               disabled={isMutating}
             >
               <Play size={17} />
-              Create Run
+              Create Project
             </button>
             <button
               className="stopButton"
@@ -454,6 +547,28 @@ export function HarnessDashboard({
 
                 {openComposeSection === "requirement" ? (
                   <div className="composeSheetBody">
+                    <label>
+                      <span>Project Type</span>
+                      <select
+                        className="plainSelect"
+                        value={form.projectType}
+                        onChange={(event) => {
+                          const projectType = event.target.value as ProjectType
+                          const template = getProjectTemplate(projectType)
+
+                          setForm({ ...form, projectType })
+                          setBulkStage("all")
+                          setMutationError(template.warning)
+                        }}
+                      >
+                        {projectTypeOptions.map((option) => (
+                          <option key={option.type} value={option.type}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+
                     <label>
                       <span>Project</span>
                       <input
@@ -749,25 +864,33 @@ export function HarnessDashboard({
           <div className="panel runsPanel">
             <div className="panelHeader">
               <GitBranch size={18} />
-              <h2>Workflow Runs</h2>
+              <h2>Projects</h2>
             </div>
             {isLoading ? (
               <p className="muted">Loading</p>
-            ) : runs.length === 0 ? (
-              <p className="muted">No runs yet</p>
+            ) : projects.length === 0 ? (
+              <p className="muted">No projects yet</p>
             ) : (
               <div className="runList">
-                {runs.map((run) => (
+                {projects.map((project) => (
                   <button
-                    key={run.id}
+                    key={project.id}
                     className={
-                      run.id === selectedRun?.id ? "runRow active" : "runRow"
+                      project.id === selectedProject?.id
+                        ? "runRow active"
+                        : "runRow"
                     }
-                    onClick={() => setSelectedRunId(run.id)}
+                    onClick={() => {
+                      setSelectedProjectId(project.id)
+                      setSelectedRunId(
+                        runs.find((run) => run.projectId === project.id)?.id
+                      )
+                    }}
                   >
-                    <span>{run.projectName}</span>
+                    <span>{project.name}</span>
                     <small>
-                      {stageLabels[run.currentStage]} - {run.status}
+                      {getProjectTemplate(project.type).label} -{" "}
+                      {project.status}
                     </small>
                   </button>
                 ))}
@@ -775,22 +898,247 @@ export function HarnessDashboard({
             )}
           </div>
 
-          {selectedRun ? (
-            <RunDetail
-              run={selectedRun}
+          {selectedProject && selectedOverview ? (
+            <ProjectDetail
+              overview={selectedOverview}
+              selectedRun={selectedRun}
               isMutating={isMutating}
+              onStartRun={startProjectRun}
               onAdvance={advanceRun}
               onDecideGate={decideGate}
             />
           ) : (
             <div className="panel emptyState">
               <Bot size={22} />
-              <p>Create a workflow run to start.</p>
+              <p>Create a project to start.</p>
             </div>
           )}
         </section>
       </section>
     </main>
+  )
+}
+
+function buildProjectOverview(
+  project: Project,
+  workflowRuns: WorkflowRun[]
+): ProjectOverview {
+  const template = getProjectTemplate(project.type)
+  const sortedRuns = [...workflowRuns].sort((a, b) =>
+    b.updatedAt.localeCompare(a.updatedAt)
+  )
+
+  return {
+    project,
+    phaseLabels: template.phases,
+    artifacts: sortedRuns.flatMap((run) => run.artifacts),
+    pendingGates: sortedRuns.flatMap((run) =>
+      run.approvalGates.filter((gate) => gate.status === "pending")
+    ),
+    agentRuns: sortedRuns.flatMap((run) => run.agentRuns),
+    workflowEvents: sortedRuns.flatMap((run) => run.events),
+    contextFiles: project.contextFiles,
+    latestRun: sortedRuns[0],
+    warning: template.warning
+  }
+}
+
+function ProjectPhaseTimeline({ overview }: { overview: ProjectOverview }) {
+  const currentIndex = Math.max(
+    0,
+    overview.phaseLabels.indexOf(overview.project.currentPhase)
+  )
+
+  return (
+    <section className="panel timelinePanel">
+      <div className="stageTrack">
+        {overview.phaseLabels.map((phase, index) => {
+          const progress =
+            index < currentIndex
+              ? 100
+              : index === currentIndex
+                ? phase === "Completed"
+                  ? 100
+                  : 68
+                : 0
+          const stageClass =
+            index < currentIndex || phase === "Completed"
+              ? "stage done"
+              : index === currentIndex
+                ? "stage current"
+                : "stage"
+
+          return (
+            <div className={`${stageClass} projectPhase`} key={phase}>
+              <span
+                className="stageRing"
+                style={
+                  {
+                    "--stage-progress": `${progress}%`
+                  } as CSSProperties
+                }
+              >
+                {progress}%
+              </span>
+              <small>{phase}</small>
+            </div>
+          )
+        })}
+      </div>
+    </section>
+  )
+}
+
+function ProjectDetail({
+  overview,
+  selectedRun,
+  isMutating,
+  onStartRun,
+  onAdvance,
+  onDecideGate
+}: {
+  overview: ProjectOverview
+  selectedRun?: WorkflowRun
+  isMutating: boolean
+  onStartRun: (project: Project) => void
+  onAdvance: (runId: string) => void
+  onDecideGate: (
+    gate: ApprovalGate,
+    decision: "approved" | "rejected" | "changes_requested"
+  ) => void
+}) {
+  const { project } = overview
+
+  return (
+    <div className="detailStack projectDetailStack">
+      <section className="panel heroPanel">
+        <div>
+          <p className="eyebrow">
+            {getProjectTemplate(project.type).label} -{" "}
+            {project.repository || "No repository"}
+          </p>
+          <h2>{project.name}</h2>
+          <p className="requirement">{project.goal}</p>
+          <p className="muted">
+            {project.currentPhase} - {project.status} - {project.nextAction}
+          </p>
+          {overview.warning ? <p className="muted">{overview.warning}</p> : null}
+        </div>
+        <div className="projectActionStack">
+          <button
+            className="primaryButton"
+            disabled={isMutating}
+            onClick={() => onStartRun(project)}
+            title="Start project run"
+          >
+            <Play size={18} />
+            Start Run
+          </button>
+          {selectedRun ? (
+            <button
+              className="iconTextButton"
+              disabled={
+                isMutating ||
+                selectedRun.status === "waiting_for_approval" ||
+                isTerminalStatus(selectedRun.status)
+              }
+              onClick={() => onAdvance(selectedRun.id)}
+              title="Advance selected project run"
+            >
+              <ChevronRight size={18} />
+              Advance
+            </button>
+          ) : null}
+        </div>
+      </section>
+
+      <ProjectPhaseTimeline overview={overview} />
+
+      <section className="splitGrid">
+        <div className="panel">
+          <div className="panelHeader">
+            <ShieldCheck size={18} />
+            <h2>Command Queue</h2>
+          </div>
+          {overview.pendingGates.length === 0 ? (
+            <p className="muted">No pending gates</p>
+          ) : (
+            <div className="gateList">
+              {overview.pendingGates.map((gate) => (
+                <div className="gateRow" key={gate.id}>
+                  <div>
+                    <strong>{stageLabels[gate.stage]}</strong>
+                    <small>
+                      {actorLabels[gate.actorType]}
+                      {gate.requireIndependence ? " - independent" : ""}
+                    </small>
+                  </div>
+                  <div className="gateActions compact">
+                    <button
+                      className="iconTextButton approve"
+                      onClick={() => onDecideGate(gate, "approved")}
+                    >
+                      <Check size={16} />
+                      Approve
+                    </button>
+                    <button
+                      className="iconTextButton request"
+                      onClick={() => onDecideGate(gate, "changes_requested")}
+                    >
+                      <RefreshCw size={16} />
+                      Changes
+                    </button>
+                    <button
+                      className="iconTextButton reject"
+                      onClick={() => onDecideGate(gate, "rejected")}
+                    >
+                      <X size={16} />
+                      Reject
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="panel">
+          <div className="panelHeader">
+            <UserCheck size={18} />
+            <h2>Context</h2>
+          </div>
+          {overview.contextFiles.length === 0 ? (
+            <p className="muted">No context files attached</p>
+          ) : (
+            <div className="contextFileList">
+              {overview.contextFiles.map((file) => (
+                <span className="contextFileChip" key={file.id}>
+                  <FileUp size={13} />
+                  <span>
+                    <strong>{file.path}</strong>
+                    <small>{formatFileSize(file.size)}</small>
+                  </span>
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      </section>
+
+      {selectedRun ? (
+        <RunDetail
+          run={selectedRun}
+          isMutating={isMutating}
+          onAdvance={onAdvance}
+          onDecideGate={onDecideGate}
+        />
+      ) : (
+        <section className="panel emptyState">
+          <Bot size={22} />
+          <p>Start a run to generate artifacts and execution history.</p>
+        </section>
+      )}
+    </div>
   )
 }
 
