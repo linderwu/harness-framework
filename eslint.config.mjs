@@ -6,6 +6,7 @@ const eslintConfig = [
     ignores: [
       "node_modules/**",
       ".next/**",
+      ".tmp-tests/**",
       ".agents/**",
       "data/harness-state.json"
     ]

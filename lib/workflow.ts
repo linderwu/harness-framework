@@ -12,9 +12,8 @@ import type {
   WorkflowEventType,
   WorkflowRun,
   WorkflowStage
-} from "@/lib/types"
-import type { AgentInvocationInput } from "@/lib/agent-bridge"
-import { getAgentLabel, normalizeAgentKind, openClawAgentKinds } from "@/lib/agents"
+} from "./types"
+import { getAgentLabel, normalizeAgentKind, openClawAgentKinds } from "./agents"
 
 const stages: WorkflowStage[] = [
   "intake",
@@ -65,6 +64,16 @@ export interface AgentArtifactResult {
   statusMessage?: string
   artifacts?: Array<{ type: string; title: string; body: string }>
   capabilities?: string[]
+}
+
+export interface AgentInvocationInput {
+  run: WorkflowRun
+  skill: WorkflowEventSkill
+  executor: AgentKind
+  stage: WorkflowStage
+  artifactType: Artifact["type"]
+  title: string
+  fallbackBody: string
 }
 
 export type AgentInvoker = (
@@ -341,6 +350,7 @@ export function getDefaultSkillExecutor(
 }
 
 export function createWorkflowRun(input: {
+  projectId: string
   projectName: string
   repository: string
   requirement: string
@@ -395,6 +405,7 @@ export function createWorkflowRun(input: {
     schemaVersion: 2,
     version: 1,
     id,
+    projectId: input.projectId,
     projectName: input.projectName,
     repository: input.repository,
     requirement: input.requirement,

@@ -17,6 +17,22 @@ export type WorkflowStage =
 
 export type ExecutionMode = "manual" | "agent" | "hybrid"
 
+export type ProjectType =
+  | "research"
+  | "development"
+  | "testing"
+  | "documentation"
+  | "diagnosis"
+  | "decision"
+
+export type ProjectStatus =
+  | "active"
+  | "waiting_for_approval"
+  | "stopped"
+  | "failed"
+  | "cancelled"
+  | "completed"
+
 export type OpenClawMainAgent = "rowlet" | "roaringmoon" | "charizard"
 
 export type AgentKind =
@@ -153,6 +169,58 @@ export interface ProjectContextFile {
   importedAt: string
 }
 
+export interface Project {
+  id: string
+  name: string
+  type: ProjectType
+  goal: string
+  status: ProjectStatus
+  currentPhase: string
+  nextAction: string
+  repository: string
+  source: "dashboard" | "github_issue" | "github_pr"
+  sourceRef?: string
+  contextFiles: ProjectContextFile[]
+  artifactIds: string[]
+  workflowRunIds: string[]
+  createdAt: string
+  updatedAt: string
+}
+
+export interface ProjectTemplate {
+  type: ProjectType
+  label: string
+  phases: string[]
+  defaultArtifacts: ArtifactType[]
+  creationPrompts: string[]
+  defaultNextAction: string
+  warning?: string
+}
+
+export interface ProjectOverview {
+  project: Project
+  phaseLabels: string[]
+  artifacts: Artifact[]
+  pendingGates: ApprovalGate[]
+  agentRuns: AgentRun[]
+  workflowEvents: WorkflowEvent[]
+  contextFiles: ProjectContextFile[]
+  latestRun?: WorkflowRun
+  warning?: string
+}
+
+export interface WorkspaceWarning {
+  code:
+    | "legacy_project_created"
+    | "unknown_project_type"
+    | "missing_project_for_run"
+    | "missing_project_artifact_reference"
+  message: string
+  projectId?: string
+  workflowRunId?: string
+  artifactId?: string
+}
+
 export interface ApprovalGate {
   id: string
   workflowRunId: string
@@ -204,6 +272,7 @@ export interface WorkflowRun {
   schemaVersion: number
   version: number
   id: string
+  projectId: string
   projectName: string
   repository: string
   requirement: string
@@ -229,5 +298,8 @@ export interface WorkflowRun {
 }
 
 export interface HarnessState {
+  schemaVersion: number
+  projects: Project[]
   workflowRuns: WorkflowRun[]
+  warnings?: WorkspaceWarning[]
 }

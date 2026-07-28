@@ -1,8 +1,9 @@
 import { promises as fs } from "fs"
 import path from "path"
-import type { HarnessState, WorkflowRun } from "@/lib/types"
+import type { HarnessState, Project, WorkflowRun } from "@/lib/types"
 import { normalizeAgentKind } from "@/lib/agents"
 import { createDefaultEventSkills, getDefaultSkillExecutor } from "@/lib/workflow"
+import { normalizeWorkspace, refreshProjectAfterRun } from "@/lib/workspace"
 
 const statePath = path.join(process.cwd(), "data", "harness-state.json")
 let stateWriteQueue = Promise.resolve()
@@ -25,7 +26,11 @@ async function ensureStateFile() {
   } catch {
     await fs.writeFile(
       statePath,
-      JSON.stringify({ workflowRuns: [] } satisfies HarnessState, null, 2)
+      JSON.stringify(
+        { schemaVersion: 3, projects: [], workflowRuns: [] } satisfies HarnessState,
+        null,
+        2
+      )
     )
   }
 }
@@ -33,15 +38,43 @@ async function ensureStateFile() {
 export async function readState(): Promise<HarnessState> {
   await ensureStateFile()
   const raw = await fs.readFile(statePath, "utf8")
-  const state = JSON.parse(raw) as HarnessState
-  return {
-    workflowRuns: state.workflowRuns.map(normalizeWorkflowRun)
-  }
+  const state = JSON.parse(raw) as Partial<HarnessState>
+  return normalizeWorkspace({
+    ...state,
+    workflowRuns: (state.workflowRuns ?? []).map(normalizeWorkflowRun)
+  })
 }
 
 export async function writeState(state: HarnessState) {
   await ensureStateFile()
   await fs.writeFile(statePath, JSON.stringify(state, null, 2))
+}
+
+export async function listProjects() {
+  const state = await readState()
+  return state.projects
+}
+
+export async function getProject(id: string) {
+  const state = await readState()
+  return state.projects.find((project) => project.id === id)
+}
+
+export async function upsertProject(nextProject: Project) {
+  return withStateWrite(async () => {
+    const state = await readState()
+    const index = state.projects.findIndex((project) => project.id === nextProject.id)
+
+    if (index >= 0) {
+      state.projects[index] = nextProject
+    } else {
+      state.projects.push(nextProject)
+    }
+
+    const normalized = normalizeWorkspace(state)
+    await writeState(normalized)
+    return normalized.projects.find((project) => project.id === nextProject.id) ?? nextProject
+  })
 }
 
 export async function listWorkflowRuns() {
@@ -94,8 +127,21 @@ export async function upsertWorkflowRun(
       )
     }
 
-    await writeState(state)
-    return state.workflowRuns.find((run) => run.id === nextRun.id) ?? nextRun
+    const linkedRun = state.workflowRuns.find((run) => run.id === nextRun.id)
+    const linkedProjectIndex = linkedRun
+      ? state.projects.findIndex((project) => project.id === linkedRun.projectId)
+      : -1
+
+    if (linkedRun && linkedProjectIndex >= 0) {
+      state.projects[linkedProjectIndex] = refreshProjectAfterRun(
+        state.projects[linkedProjectIndex],
+        state.workflowRuns
+      )
+    }
+
+    const normalizedState = normalizeWorkspace(state)
+    await writeState(normalizedState)
+    return normalizedState.workflowRuns.find((run) => run.id === nextRun.id) ?? nextRun
   })
 }
 
@@ -108,7 +154,7 @@ export async function deleteWorkflowRun(id: string) {
       return false
     }
 
-    await writeState({ workflowRuns: nextRuns })
+    await writeState(normalizeWorkspace({ ...state, workflowRuns: nextRuns }))
     return true
   })
 }

@@ -1044,6 +1044,27 @@ small,
   grid-template-rows: auto auto 150px auto;
 }
 
+.projectDetailStack {
+  grid-template-rows: auto auto minmax(150px, auto) auto;
+}
+
+.projectActionStack {
+  align-items: flex-end;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.gateActions.compact {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  margin-top: 0;
+}
+
+.stage.projectPhase {
+  min-width: 92px;
+}
+
 .timelinePanel {
   background:
     linear-gradient(135deg, rgba(15, 23, 42, 0.96), rgba(24, 49, 75, 0.94)),

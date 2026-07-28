@@ -6,6 +6,7 @@ data/harness-state.json
 .secrets/
 npm-debug.log*
 tsconfig.tsbuildinfo
+.tmp-tests/
 .agents/
 skills-lock.json
 .superpowers/

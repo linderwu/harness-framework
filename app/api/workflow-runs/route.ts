@@ -2,7 +2,8 @@ import { NextResponse } from "next/server"
 import { invokeConfiguredAgent } from "@/lib/agent-bridge"
 import { defaultAgentKind, normalizeAgentKind } from "@/lib/agents"
 import { advanceWorkflow, createWorkflowRun } from "@/lib/workflow"
-import { listWorkflowRuns, upsertWorkflowRun } from "@/lib/store"
+import { createProject } from "@/lib/workspace"
+import { listWorkflowRuns, upsertProject, upsertWorkflowRun } from "@/lib/store"
 import type {
   AgentKind,
   ApprovalActorType,
@@ -54,7 +55,19 @@ export async function POST(request: Request) {
     )
   }
 
+  const project = await upsertProject(
+    createProject({
+      name: body.projectName,
+      type: "development",
+      goal: body.requirement,
+      repository: body.repository ?? "",
+      source: "dashboard",
+      contextFiles
+    })
+  )
+
   const run = createWorkflowRun({
+    projectId: project.id,
     projectName: body.projectName,
     repository: body.repository ?? "",
     requirement: body.requirement,

@@ -1,10 +1,10 @@
 import { HarnessDashboard } from "@/components/harness-dashboard"
-import { listWorkflowRuns } from "@/lib/store"
+import { readState } from "@/lib/store"
 
 export const dynamic = "force-dynamic"
 
 export default async function Home() {
-  const initialRuns = await listWorkflowRuns()
+  const initialState = await readState()
 
-  return <HarnessDashboard initialRuns={initialRuns} />
+  return <HarnessDashboard initialState={initialState} />
 }
