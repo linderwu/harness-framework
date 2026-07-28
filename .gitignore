@@ -8,3 +8,4 @@ npm-debug.log*
 tsconfig.tsbuildinfo
 .agents/
 skills-lock.json
+.superpowers/
