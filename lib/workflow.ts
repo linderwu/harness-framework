@@ -474,27 +474,7 @@ export async function advanceWorkflow(
     case "plan":
       if (hasApprovedGate(nextRun, "plan")) {
         nextRun.currentStage = "design"
-        nextRun.status = "running"
-        const designResult = await addAgentArtifact(
-          nextRun,
-          "design.openspec",
-          "design",
-          "openspec",
-          "OpenSpec Change Draft",
-          [
-            "Change: introduce agentic development harness workflow.",
-            "Stages: plan, design, implementation, verification.",
-            "Approval policies: human, verification subagent, or independent agent.",
-            "Adapter boundary: Codex and OpenClaw run behind a shared interface."
-          ].join("\n"),
-          options.invokeAgent
-        )
-        if (designResult.status === "failed") {
-          break
-        }
-        nextRun.currentStage = "implementation"
-        openApprovalGate(nextRun, "design")
-        maybeAutoApproveGate(nextRun, "design")
+        nextRun.status = "pending"
         break
       }
 
@@ -504,9 +484,11 @@ export async function advanceWorkflow(
         "plan_review_report",
         "plan"
       )
+      const activePlanRevision = getActiveRevision(nextRun, "plan")
 
       if (
         !latestPlan ||
+        activePlanRevision?.status === "requested" ||
         (isArtifactAfter(nextRun, latestPlanReview, latestPlan) &&
           hasBlockingFindings(latestPlanReview?.body ?? ""))
       ) {
@@ -568,7 +550,6 @@ export async function advanceWorkflow(
           nextRun.status = "pending"
           break
         }
-        resolveActiveRevisions(nextRun, "plan", "accepted")
         openApprovalGate(nextRun, "plan")
         break
       }
@@ -577,6 +558,41 @@ export async function advanceWorkflow(
       openApprovalGate(nextRun, "plan")
       break
     case "design":
+      if (hasApprovedGate(nextRun, "design")) {
+        nextRun.currentStage = "implementation"
+        nextRun.status = "pending"
+        break
+      }
+
+      const latestDesign = getLatestArtifact(nextRun, "openspec", "design")
+      const activeDesignRevision = getActiveRevision(nextRun, "design")
+
+      if (!latestDesign || activeDesignRevision?.status === "requested") {
+        nextRun.status = "running"
+        const designResult = await addAgentArtifact(
+          nextRun,
+          "design.openspec",
+          "design",
+          "openspec",
+          "OpenSpec Change Draft",
+          [
+            "Change: introduce agentic development harness workflow.",
+            "Stages: plan, design, implementation, verification.",
+            "Approval policies: human, verification subagent, or independent agent.",
+            "Adapter boundary: Codex and OpenClaw run behind a shared interface."
+          ].join("\n"),
+          options.invokeAgent
+        )
+        if (designResult.status === "failed") {
+          break
+        }
+        markActiveRevisionResubmitted(nextRun, "design")
+        openApprovalGate(nextRun, "design")
+        break
+      }
+
+      nextRun.status = "running"
+      openApprovalGate(nextRun, "design")
       break
     case "implementation":
       const latestPatch = getLatestArtifact(nextRun, "patch", "implementation")
@@ -585,9 +601,14 @@ export async function advanceWorkflow(
         "code_review_report",
         "implementation"
       )
+      const activeImplementationRevision = getActiveRevision(
+        nextRun,
+        "implementation"
+      )
 
       if (
         !latestPatch ||
+        activeImplementationRevision?.status === "requested" ||
         (isArtifactAfter(nextRun, latestCodeReview, latestPatch) &&
           hasBlockingFindings(latestCodeReview?.body ?? ""))
       ) {
@@ -735,7 +756,6 @@ export async function advanceWorkflow(
         isArtifactAfter(nextRun, latestTestReport, latestImplementationReview)
       ) {
         openApprovalGate(nextRun, "verification")
-        maybeAutoApproveGate(nextRun, "verification")
         break
       }
 
@@ -759,7 +779,6 @@ export async function advanceWorkflow(
         break
       }
       openApprovalGate(nextRun, "verification")
-      maybeAutoApproveGate(nextRun, "verification")
       break
     case "completed":
       break
@@ -794,7 +813,15 @@ export function decideApprovalGate(
   gate.decisionNote = note
 
   if (decision === "approved") {
-    nextRun.status = "running"
+    if (gate.stage === "plan") {
+      nextRun.currentStage = "design"
+      nextRun.status = "pending"
+    } else if (gate.stage === "design") {
+      nextRun.currentStage = "implementation"
+      nextRun.status = "pending"
+    } else {
+      nextRun.status = "running"
+    }
     resolveRevision(nextRun, gate.revisionId, "accepted")
     completeApprovalEvent(nextRun, gate.stage, "completed", gate.decidedBy)
   } else if (decision === "changes_requested") {
@@ -1099,30 +1126,6 @@ function resolveRevision(
 
   revision.status = status
   revision.resolvedAt = new Date().toISOString()
-}
-
-function maybeAutoApproveGate(run: WorkflowRun, stage: WorkflowStage) {
-  const gate = [...run.approvalGates]
-    .reverse()
-    .find((item) => item.stage === stage && item.status === "pending")
-
-  if (!gate || gate.actorType === "human") {
-    return
-  }
-
-  gate.status = "approved"
-  gate.decidedAt = new Date().toISOString()
-  gate.decidedBy =
-    gate.actorType === "independent_agent"
-      ? "independent-reviewer"
-      : "verification-subagent"
-  gate.decisionNote =
-    gate.actorType === "independent_agent"
-      ? "Approved by an independent reviewer agent."
-      : "Approved by the configured verification subagent."
-  run.status = "running"
-  resolveRevision(run, gate.revisionId, "accepted")
-  completeApprovalEvent(run, stage, "completed", gate.decidedBy)
 }
 
 function openApprovalGate(run: WorkflowRun, stage: WorkflowStage) {
