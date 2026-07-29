@@ -342,7 +342,7 @@ export function HarnessDashboard({
       <header className="topbar">
         <div>
           <p className="eyebrow">Agentic Delivery System</p>
-          <h1>Jormungandr</h1>
+          <h1>{"Linder's Project Command Center"}</h1>
         </div>
         <button className="iconButton" onClick={refreshRuns} title="Refresh">
           <RefreshCw size={18} />
