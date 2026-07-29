@@ -858,8 +858,9 @@ textarea:focus {
 
 .runsPanel {
   background:
-    linear-gradient(110deg, rgba(219, 234, 254, 0.86), rgba(236, 253, 245, 0.58)),
-    var(--panel-cool);
+    linear-gradient(110deg, rgba(219, 234, 254, 0.58), rgba(236, 253, 245, 0.34)),
+    rgba(232, 244, 255, 0.46);
+  backdrop-filter: blur(12px);
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   overflow: hidden;
@@ -1444,6 +1445,10 @@ pre {
 
 .emptyState {
   align-items: center;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.58), rgba(244, 248, 252, 0.5)),
+    rgba(251, 253, 255, 0.48);
+  backdrop-filter: blur(12px);
   color: var(--muted);
   display: flex;
   gap: 10px;
