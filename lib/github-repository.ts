@@ -30,7 +30,7 @@ export async function ensureGitHubRepository(repository: string) {
     return ""
   }
 
-  const token = process.env.GITHUB_TOKEN ?? process.env.GH_TOKEN
+  const token = getGitHubToken()
 
   if (token) {
     return ensureRepositoryWithApi(repo, token)
@@ -86,6 +86,15 @@ function assertValidRepositorySegment(value: string, label: string) {
   }
 }
 
+function getGitHubToken() {
+  return (
+    process.env.HARNESS_GITHUB_TOKEN?.trim() ||
+    process.env.GITHUB_TOKEN?.trim() ||
+    process.env.GH_TOKEN?.trim() ||
+    ""
+  )
+}
+
 async function ensureRepositoryWithApi(
   repo: GitHubRepositoryRef,
   token: string
@@ -111,7 +120,7 @@ async function fetchGitHubViewer(token: string) {
 
   if (!response.ok) {
     throw new GitHubRepositoryError(
-      `GitHub authentication failed with HTTP ${response.status}. Set GITHUB_TOKEN or GH_TOKEN for the account that should create repositories.`,
+      `GitHub authentication failed with HTTP ${response.status}. Set HARNESS_GITHUB_TOKEN, GITHUB_TOKEN, or GH_TOKEN for the account that should create repositories.`,
       response.status === 401 || response.status === 403 ? 401 : 502
     )
   }
@@ -251,7 +260,7 @@ async function runGh(args: string[]) {
   }
 
   throw new GitHubRepositoryError(
-    `GitHub CLI failed: ${result.stderr.trim() || result.stdout.trim() || `gh ${args.join(" ")}`}. Authenticate with gh auth login or set GITHUB_TOKEN/GH_TOKEN.`,
+    `GitHub CLI failed: ${result.stderr.trim() || result.stdout.trim() || `gh ${args.join(" ")}`}. Authenticate with gh auth login or set HARNESS_GITHUB_TOKEN/GITHUB_TOKEN/GH_TOKEN.`,
     502
   )
 }
@@ -275,7 +284,7 @@ function runCommand(command: string, args: string[]) {
       child.on("error", (error) => {
         reject(
           new GitHubRepositoryError(
-            `${command} is not available. Install GitHub CLI or set GITHUB_TOKEN/GH_TOKEN: ${error.message}`,
+            `${command} is not available. Install GitHub CLI or set HARNESS_GITHUB_TOKEN/GITHUB_TOKEN/GH_TOKEN: ${error.message}`,
             502
           )
         )
