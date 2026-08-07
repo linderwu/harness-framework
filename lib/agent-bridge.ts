@@ -224,7 +224,7 @@ function getConfiguredBridgeProtocol(agent: AgentKind) {
   }
 
   if (profile.family === "codex") {
-    return process.env.CODEX_BRIDGE_PROTOCOL_VERSION ?? bridgeProtocolV2
+    return process.env.CODEX_BRIDGE_PROTOCOL_VERSION ?? bridgeProtocolV3
   }
 
   return bridgeProtocolV2
