@@ -323,12 +323,14 @@ async function installRuntimeSkillBundles(runtimeSkillBundles) {
 }
 
 async function installRuntimeSkillBundle(bundle) {
-  const archiveDir = path.join(runtimeSkillCacheRoot, bundle.id, bundle.version)
+  const safeBundleId = sanitizePathSegment(bundle.id)
+  const safeBundleVersion = sanitizePathSegment(bundle.version)
+  const archiveDir = path.join(runtimeSkillCacheRoot, safeBundleId, safeBundleVersion)
   const archivePath = path.join(
     archiveDir,
-    `${bundle.id}-${bundle.version}.tgz`
+    `${safeBundleId}-${safeBundleVersion}.tgz`
   )
-  const installPath = path.join(runtimeSkillRoot, bundle.id, bundle.version)
+  const installPath = path.join(runtimeSkillRoot, safeBundleId, safeBundleVersion)
 
   try {
     await fs.mkdir(archiveDir, { recursive: true })
@@ -344,6 +346,7 @@ async function installRuntimeSkillBundle(bundle) {
     const actualChecksum = await sha256File(archivePath)
 
     if (actualChecksum !== bundle.checksum?.value) {
+      await fs.rm(archivePath, { force: true }).catch(() => {})
       return runtimeSkillFailure(
         bundle,
         cacheStatus,
@@ -461,6 +464,17 @@ async function fileExists(filePath) {
 
 function isUnauthorizedDownload(error) {
   return formatError(error).includes("401") || formatError(error).includes("403")
+}
+
+function sanitizePathSegment(value) {
+  const sanitized = String(value ?? "")
+    .replaceAll("\\", "/")
+    .split("/")
+    .filter((part) => part && part !== "." && part !== "..")
+    .join("-")
+    .replaceAll(/[^A-Za-z0-9._-]/g, "-")
+
+  return sanitized || "bundle"
 }
 
 function buildPrompt(payload, contextDir, runtimeSkillBundleResults = []) {
