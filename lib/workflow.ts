@@ -1206,12 +1206,8 @@ async function addAgentArtifact(
   const skill = run.eventSkills.find((item) => item.id === skillId)
   const revision = getActiveRevision(run, stage)
   const runtimeSkillResolution =
-    skill && skill.runtimeSkillBundles?.length
-      ? resolveRuntimeSkillBundles?.(skill) ?? {
-          status: "failed" as const,
-          errorCode: "resolution_failed" as const,
-          errorMessage: "No runtime skill resolver was configured."
-        }
+    skill && skill.runtimeSkillBundles?.length && resolveRuntimeSkillBundles
+      ? resolveRuntimeSkillBundles(skill)
       : undefined
   const agentResult =
     skill && invokeAgent && runtimeSkillResolution?.status !== "failed"

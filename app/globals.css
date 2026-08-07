@@ -38,8 +38,8 @@
 
 html,
 body {
-  height: 100%;
-  overflow: hidden;
+  min-height: 100%;
+  overflow: auto;
 }
 
 body {
@@ -85,9 +85,8 @@ button {
   display: grid;
   gap: 14px;
   grid-template-rows: auto minmax(0, 1fr);
-  height: 100vh;
-  min-height: 0;
-  overflow: hidden;
+  min-height: 100vh;
+  overflow: visible;
   padding: 20px 28px;
   position: relative;
   z-index: 0;
@@ -140,11 +139,10 @@ h2 {
   display: grid;
   gap: 18px;
   grid-template-columns: minmax(320px, 390px) minmax(0, 1fr);
-  height: 100%;
   margin: 0 auto;
   max-width: 1440px;
   min-height: 0;
-  overflow: hidden;
+  overflow: visible;
   width: 100%;
 }
 
@@ -153,7 +151,7 @@ h2 {
   display: grid;
   gap: 18px;
   min-height: 0;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .workspace {
