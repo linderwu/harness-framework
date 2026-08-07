@@ -1,7 +1,10 @@
+import { existsSync, readFileSync } from "fs"
+import path from "path"
 import type {
   RuntimeSkillBundleDescriptor,
   RuntimeSkillChecksum,
-  RuntimeSkillResolution
+  RuntimeSkillResolution,
+  WorkflowEventSkill
 } from "./types"
 
 export interface RuntimeSkillRegistryVersion {
@@ -85,6 +88,35 @@ export function resolveRuntimeSkillBundles(input: {
   return {
     status: "completed",
     bundles: descriptors
+  }
+}
+
+export function createRuntimeSkillResolver(rootDir = process.cwd()) {
+  return (skill: WorkflowEventSkill): RuntimeSkillResolution => {
+    const registryPath = path.join(rootDir, ".harness", "skill-registry.json")
+    const lockfilePath = path.join(rootDir, ".harness", "skill.lock.json")
+
+    if (!existsSync(registryPath)) {
+      return {
+        status: "failed",
+        errorCode: "registry_not_found",
+        errorMessage: "Runtime skill registry was not found at .harness/skill-registry.json."
+      }
+    }
+
+    if (!existsSync(lockfilePath)) {
+      return {
+        status: "failed",
+        errorCode: "lockfile_not_found",
+        errorMessage: "Runtime skill lockfile was not found at .harness/skill.lock.json."
+      }
+    }
+
+    return resolveRuntimeSkillBundles({
+      requestedBundleIds: skill.runtimeSkillBundles ?? [],
+      registry: JSON.parse(readFileSync(registryPath, "utf8")) as RuntimeSkillRegistry,
+      lockfile: JSON.parse(readFileSync(lockfilePath, "utf8")) as RuntimeSkillLockfile
+    })
   }
 }
 
