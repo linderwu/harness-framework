@@ -1,6 +1,8 @@
 import type {
   AgentKind,
   Artifact,
+  RuntimeSkillBundleDescriptor,
+  RuntimeSkillBundleResult,
   WorkflowEventSkill,
   WorkflowRun,
   WorkflowStage
@@ -22,6 +24,7 @@ export interface AgentInvocationInput {
   artifactType: Artifact["type"]
   title: string
   fallbackBody: string
+  runtimeSkillBundles?: RuntimeSkillBundleDescriptor[]
 }
 
 interface BridgeResponse {
@@ -34,7 +37,11 @@ interface BridgeResponse {
   idempotencyKey?: string
   artifacts?: Array<{ type: string; title: string; body: string }>
   capabilities?: string[]
+  runtimeSkillBundleResults?: RuntimeSkillBundleResult[]
 }
+
+const bridgeProtocolV2 = "harness-agent-bridge/v0.2"
+const bridgeProtocolV3 = "harness-agent-bridge/v0.3"
 
 export async function invokeConfiguredAgent(
   input: AgentInvocationInput
@@ -47,6 +54,24 @@ export async function invokeConfiguredAgent(
 
   if (profile.family === "manual") {
     return undefined
+  }
+
+  const requiredProtocol = requiredBridgeProtocol(input)
+  const configuredProtocol = getConfiguredBridgeProtocol(input.executor)
+
+  if (requiredProtocol === bridgeProtocolV3 && configuredProtocol !== bridgeProtocolV3) {
+    return {
+      status: "failed",
+      source: getBridgeSource(input.executor),
+      body: `${profile.label} bridge does not support runtime skill bundles.`,
+      statusMessage: JSON.stringify({
+        runtimeSkillResolution: {
+          status: "failed",
+          errorCode: "runtime_skill_protocol_unsupported",
+          errorMessage: `${profile.label} bridge must use ${bridgeProtocolV3} for runtime skill bundles.`
+        }
+      })
+    }
   }
 
   const idempotencyKey = createIdempotencyKey(input)
@@ -68,7 +93,7 @@ export async function invokeConfiguredAgent(
       method: "POST",
       headers: createBridgeHeaders(input.executor, idempotencyKey),
       body: JSON.stringify({
-        protocolVersion: "harness-agent-bridge/v0.2",
+        protocolVersion: requiredProtocol,
         idempotencyKey,
         workflowRunId: input.run.id,
         workflowVersion: input.run.version,
@@ -83,6 +108,7 @@ export async function invokeConfiguredAgent(
         agentFamily: profile.family,
         mainAgent: profile.mainAgent,
         skill: input.skill,
+        runtimeSkillBundles: input.runtimeSkillBundles ?? [],
         artifacts: input.run.artifacts,
         fallbackBody: input.fallbackBody
       })
@@ -111,6 +137,7 @@ export async function invokeConfiguredAgent(
       statusMessage: data.statusMessage,
       artifacts: data.artifacts,
       capabilities: data.capabilities,
+      runtimeSkillBundleResults: data.runtimeSkillBundleResults,
       body:
         data.output?.trim() ||
         data.error ||
@@ -187,6 +214,24 @@ async function sendConfiguredAgentControl(
 
 function normalizeUrl(value: string) {
   return value.endsWith("/") ? value : `${value}/`
+}
+
+function getConfiguredBridgeProtocol(agent: AgentKind) {
+  const profile = getAgentProfile(agent)
+
+  if (profile.family === "openclaw") {
+    return process.env.OPENCLAW_BRIDGE_PROTOCOL_VERSION ?? bridgeProtocolV2
+  }
+
+  if (profile.family === "codex") {
+    return process.env.CODEX_BRIDGE_PROTOCOL_VERSION ?? bridgeProtocolV2
+  }
+
+  return bridgeProtocolV2
+}
+
+function requiredBridgeProtocol(input: AgentInvocationInput) {
+  return input.runtimeSkillBundles?.length ? bridgeProtocolV3 : bridgeProtocolV2
 }
 
 async function invokeOpenClawA2A(
