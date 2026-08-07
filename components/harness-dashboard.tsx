@@ -434,8 +434,7 @@ export function HarnessDashboard({
     <main className="shell">
       <header className="topbar">
         <div>
-          <p className="eyebrow">Personal Project Command Center</p>
-          <h1>Jormungandr</h1>
+          <h1>{"Linder's Project Command Center"}</h1>
         </div>
         <button className="iconButton" onClick={refreshWorkspace} title="Refresh">
           <RefreshCw size={18} />
