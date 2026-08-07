@@ -7,6 +7,9 @@ import type {
   AgentRunSource,
   ExecutionMode,
   ProjectContextFile,
+  RuntimeSkillBundleDescriptor,
+  RuntimeSkillBundleResult,
+  RuntimeSkillResolution,
   WorkflowEvent,
   WorkflowEventSkill,
   WorkflowEventType,
@@ -66,6 +69,7 @@ export interface AgentArtifactResult {
   statusMessage?: string
   artifacts?: Array<{ type: string; title: string; body: string }>
   capabilities?: string[]
+  runtimeSkillBundleResults?: RuntimeSkillBundleResult[]
 }
 
 export interface AgentInvocationInput {
@@ -76,11 +80,16 @@ export interface AgentInvocationInput {
   artifactType: Artifact["type"]
   title: string
   fallbackBody: string
+  runtimeSkillBundles?: RuntimeSkillBundleDescriptor[]
 }
 
 export type AgentInvoker = (
   input: AgentInvocationInput
 ) => Promise<AgentArtifactResult | undefined>
+
+export type RuntimeSkillResolver = (
+  skill: WorkflowEventSkill
+) => RuntimeSkillResolution
 
 export function createDefaultEventSkills(): WorkflowEventSkill[] {
   return [
@@ -441,7 +450,10 @@ export function createWorkflowRun(input: {
 
 export async function advanceWorkflow(
   run: WorkflowRun,
-  options: { invokeAgent?: AgentInvoker } = {}
+  options: {
+    invokeAgent?: AgentInvoker
+    resolveRuntimeSkillBundles?: RuntimeSkillResolver
+  } = {}
 ): Promise<WorkflowRun> {
   if (isTerminalStatus(run.status)) {
     return run
@@ -473,7 +485,8 @@ export async function advanceWorkflow(
           "Requirement:",
           nextRun.requirement
         ].join("\n"),
-        options.invokeAgent
+        options.invokeAgent,
+        options.resolveRuntimeSkillBundles
       )
       if (intakeResult.status === "failed") {
         break
@@ -497,7 +510,8 @@ export async function advanceWorkflow(
             "Approval policies: human, verification subagent, or independent agent.",
             "Adapter boundary: Codex and OpenClaw run behind a shared interface."
           ].join("\n"),
-          options.invokeAgent
+          options.invokeAgent,
+          options.resolveRuntimeSkillBundles
         )
         if (designResult.status === "failed") {
           break
@@ -535,7 +549,8 @@ export async function advanceWorkflow(
             "- Design approval must pass before implementation.",
             "- Verification approval must pass before PR-ready completion."
           ].join("\n"),
-          options.invokeAgent
+          options.invokeAgent,
+          options.resolveRuntimeSkillBundles
         )
         if (planResult.status === "failed") {
           break
@@ -562,7 +577,8 @@ export async function advanceWorkflow(
             "LOW (0)",
             "Recommendation: approve plan for human gate."
           ].join("\n"),
-          options.invokeAgent
+          options.invokeAgent,
+          options.resolveRuntimeSkillBundles
         )
         if (planReviewResult.status === "failed") {
           break
@@ -613,7 +629,8 @@ export async function advanceWorkflow(
             "Runner mode: simulated MVP adapter.",
             "Expected output: branch, commits, PR link, and implementation notes."
           ].join("\n"),
-          options.invokeAgent
+          options.invokeAgent,
+          options.resolveRuntimeSkillBundles
         )
         if (implementationResult.status === "failed") {
           break
@@ -640,7 +657,8 @@ export async function advanceWorkflow(
             "LOW (0)",
             "Recommendation: approve for implementation review."
           ].join("\n"),
-          options.invokeAgent
+          options.invokeAgent,
+          options.resolveRuntimeSkillBundles
         )
         if (codeReviewResult.status === "failed") {
           break
@@ -713,7 +731,8 @@ export async function advanceWorkflow(
             "LOW (0)",
             "Recommendation: approve for verification report."
           ].join("\n"),
-          options.invokeAgent
+          options.invokeAgent,
+          options.resolveRuntimeSkillBundles
         )
         if (implementationReviewResult.status === "failed") {
           break
@@ -763,7 +782,8 @@ export async function advanceWorkflow(
           "- Code review and implementation review completed before final approval.",
           "- Final gate waits for configured approval actor."
         ].join("\n"),
-        options.invokeAgent
+        options.invokeAgent,
+        options.resolveRuntimeSkillBundles
       )
       if (verificationResult.status === "failed") {
         break
@@ -1176,13 +1196,22 @@ async function addAgentArtifact(
   type: Artifact["type"],
   title: string,
   body: string,
-  invokeAgent?: AgentInvoker
+  invokeAgent?: AgentInvoker,
+  resolveRuntimeSkillBundles?: RuntimeSkillResolver
 ) {
   const executor = resolveSkillExecutor(run, skillId)
   const skill = run.eventSkills.find((item) => item.id === skillId)
   const revision = getActiveRevision(run, stage)
+  const runtimeSkillResolution =
+    skill && skill.runtimeSkillBundles?.length
+      ? resolveRuntimeSkillBundles?.(skill) ?? {
+          status: "failed" as const,
+          errorCode: "resolution_failed" as const,
+          errorMessage: "No runtime skill resolver was configured."
+        }
+      : undefined
   const agentResult =
-    skill && invokeAgent
+    skill && invokeAgent && runtimeSkillResolution?.status !== "failed"
       ? await invokeAgent({
           run,
           skill,
@@ -1190,13 +1219,36 @@ async function addAgentArtifact(
           stage,
           artifactType: type,
           title,
-          fallbackBody: body
+          fallbackBody: body,
+          runtimeSkillBundles:
+            runtimeSkillResolution?.status === "completed"
+              ? runtimeSkillResolution.bundles
+              : undefined
         })
       : undefined
-  const finalResult: AgentArtifactResult = agentResult ?? {
-    status: "completed",
-    source: "simulated",
-    body
+  const baseResult: AgentArtifactResult =
+    runtimeSkillResolution?.status === "failed"
+      ? {
+          status: "failed",
+          source: "simulated",
+          body: runtimeSkillResolution.errorMessage
+        }
+      : agentResult ?? {
+          status: "completed",
+          source: "simulated",
+          body
+        }
+  const finalResult: AgentArtifactResult = {
+    ...baseResult,
+    statusMessage: [
+      baseResult.statusMessage,
+      createRuntimeSkillAuditMessage({
+        runtimeSkillResolution,
+        runtimeSkillBundleResults: baseResult.runtimeSkillBundleResults
+      })
+    ]
+      .filter(Boolean)
+      .join(" ")
   }
   const inputArtifactIds = run.artifacts.map((item) => item.id)
   const artifact = createArtifact(
@@ -1261,6 +1313,20 @@ async function addAgentArtifact(
   }
 
   return finalResult
+}
+
+function createRuntimeSkillAuditMessage(input: {
+  runtimeSkillResolution?: RuntimeSkillResolution
+  runtimeSkillBundleResults?: RuntimeSkillBundleResult[]
+}) {
+  if (!input.runtimeSkillResolution && !input.runtimeSkillBundleResults?.length) {
+    return undefined
+  }
+
+  return JSON.stringify({
+    runtimeSkillResolution: input.runtimeSkillResolution,
+    runtimeSkillBundleResults: input.runtimeSkillBundleResults
+  })
 }
 
 function ensureEventSkillState(run: WorkflowRun) {
