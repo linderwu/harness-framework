@@ -54,6 +54,8 @@ export const eventTypeLabels: Record<WorkflowEventType, string> = {
   closeout: "Closeout"
 }
 
+const superpowersRuntimeBundles = ["superpowers-full"]
+
 export interface AgentArtifactResult {
   status: "completed" | "failed"
   source: AgentRunSource
@@ -121,7 +123,8 @@ export function createDefaultEventSkills(): WorkflowEventSkill[] {
       verificationRules: [
         "Plan includes acceptance criteria.",
         "Plan names verification expectations."
-      ]
+      ],
+      runtimeSkillBundles: superpowersRuntimeBundles
     },
     {
       id: "plan.review",
@@ -143,7 +146,8 @@ export function createDefaultEventSkills(): WorkflowEventSkill[] {
       verificationRules: [
         "Review report includes severity counts.",
         "Blocking findings are explicit."
-      ]
+      ],
+      runtimeSkillBundles: superpowersRuntimeBundles
     },
     {
       id: "plan.approval",
@@ -187,7 +191,8 @@ export function createDefaultEventSkills(): WorkflowEventSkill[] {
       verificationRules: [
         "OpenSpec artifact exists.",
         "Design names tasks and test strategy."
-      ]
+      ],
+      runtimeSkillBundles: superpowersRuntimeBundles
     },
     {
       id: "design.approval",
@@ -225,7 +230,8 @@ export function createDefaultEventSkills(): WorkflowEventSkill[] {
       ],
       gates: ["Implementation output must enter verification."],
       knowledgeSources: ["standard-dev-workflow", "omx_wiki/conventions"],
-      verificationRules: ["Agent run and implementation artifact are recorded."]
+      verificationRules: ["Agent run and implementation artifact are recorded."],
+      runtimeSkillBundles: superpowersRuntimeBundles
     },
     {
       id: "implementation.code_review",
@@ -247,7 +253,8 @@ export function createDefaultEventSkills(): WorkflowEventSkill[] {
       verificationRules: [
         "Review report includes file or artifact references.",
         "HIGH and CRITICAL findings are treated as blocking."
-      ]
+      ],
+      runtimeSkillBundles: superpowersRuntimeBundles
     },
     {
       id: "verification.implementation_review",
@@ -270,7 +277,8 @@ export function createDefaultEventSkills(): WorkflowEventSkill[] {
       verificationRules: [
         "Each scenario records observed behavior.",
         "Findings are grouped by severity."
-      ]
+      ],
+      runtimeSkillBundles: superpowersRuntimeBundles
     },
     {
       id: "verification.generate",
@@ -292,7 +300,8 @@ export function createDefaultEventSkills(): WorkflowEventSkill[] {
       verificationRules: [
         "Verification report maps checks to acceptance criteria.",
         "Manual checklist exists for human-sensitive behavior."
-      ]
+      ],
+      runtimeSkillBundles: superpowersRuntimeBundles
     },
     {
       id: "verification.approval",
@@ -329,7 +338,8 @@ export function createDefaultEventSkills(): WorkflowEventSkill[] {
       ],
       gates: ["Run is complete."],
       knowledgeSources: ["omx_wiki/session-log"],
-      verificationRules: ["Workflow status is completed."]
+      verificationRules: ["Workflow status is completed."],
+      runtimeSkillBundles: superpowersRuntimeBundles
     }
   ]
 }

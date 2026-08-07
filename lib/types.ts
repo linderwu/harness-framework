@@ -107,6 +107,59 @@ export type RevisionStatus =
 
 export type EventLogStatus = "consistent" | "drift_detected"
 
+export type RuntimeSkillChecksumAlgorithm = "sha256"
+
+export interface RuntimeSkillChecksum {
+  algorithm: RuntimeSkillChecksumAlgorithm
+  value: string
+}
+
+export interface RuntimeSkillBundleDescriptor {
+  id: string
+  version: string
+  sourceUrl: string
+  checksum: RuntimeSkillChecksum
+  required: boolean
+}
+
+export type RuntimeSkillCacheStatus = "hit" | "miss" | "refreshed"
+
+export interface RuntimeSkillBundleResult {
+  id: string
+  version: string
+  checksum: RuntimeSkillChecksum
+  downloadSource: "github-release" | "cache" | "unknown"
+  cacheStatus: RuntimeSkillCacheStatus
+  verified: boolean
+  installedPath?: string
+  errorCode?: string
+  errorMessage?: string
+}
+
+export type RuntimeSkillResolutionErrorCode =
+  | "resolution_failed"
+  | "registry_not_found"
+  | "lockfile_not_found"
+  | "bundle_not_in_registry"
+  | "bundle_not_locked"
+  | "lockfile_registry_mismatch"
+  | "runtime_skill_protocol_unsupported"
+
+export interface RuntimeSkillResolutionSuccess {
+  status: "completed"
+  bundles: RuntimeSkillBundleDescriptor[]
+}
+
+export interface RuntimeSkillResolutionFailure {
+  status: "failed"
+  errorCode: RuntimeSkillResolutionErrorCode
+  errorMessage: string
+}
+
+export type RuntimeSkillResolution =
+  | RuntimeSkillResolutionSuccess
+  | RuntimeSkillResolutionFailure
+
 export interface ApprovalPolicy {
   stage: WorkflowStage
   actorType: ApprovalActorType
@@ -128,6 +181,7 @@ export interface WorkflowEventSkill {
   gates: string[]
   knowledgeSources: string[]
   verificationRules: string[]
+  runtimeSkillBundles?: string[]
 }
 
 export interface WorkflowEvent {

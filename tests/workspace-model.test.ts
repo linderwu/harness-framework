@@ -213,3 +213,49 @@ test("createWorkflowRun requires and preserves the selected project id", () => {
   assert.equal(run.repository, project.repository)
   assert.equal(run.requirement, project.goal)
 })
+
+test("default workflow event skills declare Superpowers for agent-executed development events", () => {
+  const run = createWorkflowRun({
+    projectId: "project-1",
+    projectName: "Runtime Skills",
+    repository: "linderwu/harness-framework",
+    requirement: "Use Superpowers during agent execution.",
+    selectedAgent: "codex",
+    designApprovalActor: "human",
+    verificationApprovalActor: "human"
+  })
+
+  const bundleBySkill = Object.fromEntries(
+    run.eventSkills.map((skill) => [skill.id, skill.runtimeSkillBundles ?? []])
+  )
+
+  assert.deepEqual(bundleBySkill["plan.interview"], ["superpowers-full"])
+  assert.deepEqual(bundleBySkill["plan.review"], ["superpowers-full"])
+  assert.deepEqual(bundleBySkill["design.openspec"], ["superpowers-full"])
+  assert.deepEqual(bundleBySkill["implementation.dispatch"], ["superpowers-full"])
+  assert.deepEqual(bundleBySkill["implementation.code_review"], ["superpowers-full"])
+  assert.deepEqual(bundleBySkill["verification.implementation_review"], ["superpowers-full"])
+  assert.deepEqual(bundleBySkill["verification.generate"], ["superpowers-full"])
+  assert.deepEqual(bundleBySkill["closeout.archive"], ["superpowers-full"])
+})
+
+test("default workflow event skills do not declare runtime bundles for intake or approval gates", () => {
+  const run = createWorkflowRun({
+    projectId: "project-1",
+    projectName: "Runtime Skills",
+    repository: "linderwu/harness-framework",
+    requirement: "Use Superpowers during agent execution.",
+    selectedAgent: "codex",
+    designApprovalActor: "human",
+    verificationApprovalActor: "human"
+  })
+
+  const bundleBySkill = Object.fromEntries(
+    run.eventSkills.map((skill) => [skill.id, skill.runtimeSkillBundles ?? []])
+  )
+
+  assert.deepEqual(bundleBySkill["intake.requirement"], [])
+  assert.deepEqual(bundleBySkill["plan.approval"], [])
+  assert.deepEqual(bundleBySkill["design.approval"], [])
+  assert.deepEqual(bundleBySkill["verification.approval"], [])
+})
