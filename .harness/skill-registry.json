@@ -1,0 +1,23 @@
+{
+  "schemaVersion": "runtime-skills/v1",
+  "bundles": [
+    {
+      "id": "superpowers-full",
+      "versions": [
+        {
+          "version": "1.0.0",
+          "sourceUrl": "https://github.com/linderwu/harness-framework/releases/download/skills-v1.0.0/superpowers-full-1.0.0.tgz",
+          "checksum": {
+            "algorithm": "sha256",
+            "value": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+          },
+          "skills": [
+            "brainstorming",
+            "tdd",
+            "verification-before-completion"
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
 import { invokeConfiguredAgent } from "@/lib/agent-bridge"
+import { createRuntimeSkillResolver } from "@/lib/runtime-skills"
 import { getWorkflowRun, StateConflictError, upsertWorkflowRun } from "@/lib/store"
 import { advanceWorkflow } from "@/lib/workflow"
 
@@ -16,7 +17,8 @@ export async function POST(
 
   try {
     const advancedRun = await advanceWorkflow(run, {
-      invokeAgent: invokeConfiguredAgent
+      invokeAgent: invokeConfiguredAgent,
+      resolveRuntimeSkillBundles: createRuntimeSkillResolver()
     })
     const nextRun = await upsertWorkflowRun(advancedRun, {
       expectedVersion: run.version

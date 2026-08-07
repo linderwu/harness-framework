@@ -9,7 +9,7 @@ import {
   getProjectOverview,
   normalizeWorkspace
 } from "../lib/workspace"
-import { createWorkflowRun } from "../lib/workflow"
+import { advanceWorkflow, createWorkflowRun } from "../lib/workflow"
 import type { HarnessState, WorkflowRun } from "../lib/types"
 
 function legacyRun(overrides: Partial<WorkflowRun> = {}): WorkflowRun {
@@ -212,4 +212,138 @@ test("createWorkflowRun requires and preserves the selected project id", () => {
   assert.equal(run.projectName, project.name)
   assert.equal(run.repository, project.repository)
   assert.equal(run.requirement, project.goal)
+})
+
+test("default workflow event skills declare Superpowers for agent-executed development events", () => {
+  const run = createWorkflowRun({
+    projectId: "project-1",
+    projectName: "Runtime Skills",
+    repository: "linderwu/harness-framework",
+    requirement: "Use Superpowers during agent execution.",
+    selectedAgent: "codex",
+    designApprovalActor: "human",
+    verificationApprovalActor: "human"
+  })
+
+  const bundleBySkill = Object.fromEntries(
+    run.eventSkills.map((skill) => [skill.id, skill.runtimeSkillBundles ?? []])
+  )
+
+  assert.deepEqual(bundleBySkill["plan.interview"], ["superpowers-full"])
+  assert.deepEqual(bundleBySkill["plan.review"], ["superpowers-full"])
+  assert.deepEqual(bundleBySkill["design.openspec"], ["superpowers-full"])
+  assert.deepEqual(bundleBySkill["implementation.dispatch"], ["superpowers-full"])
+  assert.deepEqual(bundleBySkill["implementation.code_review"], ["superpowers-full"])
+  assert.deepEqual(bundleBySkill["verification.implementation_review"], ["superpowers-full"])
+  assert.deepEqual(bundleBySkill["verification.generate"], ["superpowers-full"])
+  assert.deepEqual(bundleBySkill["closeout.archive"], ["superpowers-full"])
+})
+
+test("default workflow event skills do not declare runtime bundles for intake or approval gates", () => {
+  const run = createWorkflowRun({
+    projectId: "project-1",
+    projectName: "Runtime Skills",
+    repository: "linderwu/harness-framework",
+    requirement: "Use Superpowers during agent execution.",
+    selectedAgent: "codex",
+    designApprovalActor: "human",
+    verificationApprovalActor: "human"
+  })
+
+  const bundleBySkill = Object.fromEntries(
+    run.eventSkills.map((skill) => [skill.id, skill.runtimeSkillBundles ?? []])
+  )
+
+  assert.deepEqual(bundleBySkill["intake.requirement"], [])
+  assert.deepEqual(bundleBySkill["plan.approval"], [])
+  assert.deepEqual(bundleBySkill["design.approval"], [])
+  assert.deepEqual(bundleBySkill["verification.approval"], [])
+})
+
+test("agent invocation receives resolved runtime skill bundle descriptors", async () => {
+  const run = createWorkflowRun({
+    projectId: "project-1",
+    projectName: "Runtime Skills",
+    repository: "linderwu/harness-framework",
+    requirement: "Use Superpowers during planning.",
+    selectedAgent: "codex",
+    designApprovalActor: "human",
+    verificationApprovalActor: "human"
+  })
+  run.currentStage = "plan"
+
+  const nextRun = await advanceWorkflow(run, {
+    resolveRuntimeSkillBundles: () => ({
+      status: "completed",
+      bundles: [
+        {
+          id: "superpowers-full",
+          version: "1.0.0",
+          sourceUrl: "https://github.com/linderwu/harness-framework/releases/download/skills-v1.0.0/superpowers-full-1.0.0.tgz",
+          checksum: {
+            algorithm: "sha256",
+            value: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+          },
+          required: true
+        }
+      ]
+    }),
+    invokeAgent: async (input) => ({
+      status: "completed",
+      source: "codex-bridge",
+      body: "Plan with Superpowers.",
+      runtimeSkillBundleResults: [
+        {
+          id: "superpowers-full",
+          version: "1.0.0",
+          checksum: {
+            algorithm: "sha256",
+            value: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+          },
+          downloadSource: "github-release",
+          cacheStatus: "hit",
+          verified: true,
+          installedPath: "/agent/.harness/runtime-skills/superpowers-full/1.0.0"
+        }
+      ],
+      statusMessage: `received ${input.runtimeSkillBundles?.length ?? 0} runtime bundle`
+    })
+  })
+
+  assert.equal(nextRun.agentRuns[0].statusMessage?.includes("runtimeSkillBundleResults"), true)
+  assert.equal(nextRun.events[0].note?.includes("runtimeSkillResolution"), true)
+})
+
+test("workflow fails before agent invocation when runtime skill resolution fails", async () => {
+  const run = createWorkflowRun({
+    projectId: "project-1",
+    projectName: "Runtime Skills",
+    repository: "linderwu/harness-framework",
+    requirement: "Use Superpowers during planning.",
+    selectedAgent: "codex",
+    designApprovalActor: "human",
+    verificationApprovalActor: "human"
+  })
+  run.currentStage = "plan"
+  let invoked = false
+
+  const nextRun = await advanceWorkflow(run, {
+    resolveRuntimeSkillBundles: () => ({
+      status: "failed",
+      errorCode: "bundle_not_locked",
+      errorMessage: "Runtime skill bundle is not locked."
+    }),
+    invokeAgent: async () => {
+      invoked = true
+      return {
+        status: "completed",
+        source: "codex-bridge",
+        body: "Should not run."
+      }
+    }
+  })
+
+  assert.equal(invoked, false)
+  assert.equal(nextRun.status, "failed")
+  assert.equal(nextRun.events[0].note?.includes("bundle_not_locked"), true)
 })

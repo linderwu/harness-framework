@@ -5,7 +5,25 @@ import {
   createWorkflowRun,
   decideApprovalGate
 } from "../lib/workflow"
+import type { RuntimeSkillResolver } from "../lib/workflow"
 import type { ApprovalGate, WorkflowRun } from "../lib/types"
+
+const runtimeSkillResolver: RuntimeSkillResolver = () => ({
+    status: "completed",
+    bundles: [
+      {
+        id: "superpowers-full",
+        version: "1.0.0",
+        sourceUrl:
+          "https://github.com/linderwu/harness-framework/releases/download/skills-v1.0.0/superpowers-full-1.0.0.tgz",
+        checksum: {
+          algorithm: "sha256",
+          value: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+        },
+        required: true
+      }
+    ]
+  })
 
 function createRun() {
   return createWorkflowRun({
@@ -20,9 +38,9 @@ function createRun() {
 }
 
 async function advanceToPlanGate(run: WorkflowRun) {
-  let nextRun = await advanceWorkflow(run)
-  nextRun = await advanceWorkflow(nextRun)
-  nextRun = await advanceWorkflow(nextRun)
+  let nextRun = await advanceRun(run)
+  nextRun = await advanceRun(nextRun)
+  nextRun = await advanceRun(nextRun)
 
   return nextRun
 }
@@ -32,7 +50,7 @@ async function advanceToDesignGate(run: WorkflowRun) {
   const planGate = getPendingGate(nextRun, "plan")
 
   nextRun = decideApprovalGate(nextRun, planGate.id, "approved")
-  return advanceWorkflow(nextRun)
+  return advanceRun(nextRun)
 }
 
 async function advanceToVerificationGate(run: WorkflowRun) {
@@ -40,10 +58,16 @@ async function advanceToVerificationGate(run: WorkflowRun) {
   const designGate = getPendingGate(nextRun, "design")
 
   nextRun = decideApprovalGate(nextRun, designGate.id, "approved")
-  nextRun = await advanceWorkflow(nextRun)
-  nextRun = await advanceWorkflow(nextRun)
-  nextRun = await advanceWorkflow(nextRun)
-  return advanceWorkflow(nextRun)
+  nextRun = await advanceRun(nextRun)
+  nextRun = await advanceRun(nextRun)
+  nextRun = await advanceRun(nextRun)
+  return advanceRun(nextRun)
+}
+
+function advanceRun(run: WorkflowRun) {
+  return advanceWorkflow(run, {
+    resolveRuntimeSkillBundles: runtimeSkillResolver
+  })
 }
 
 function getPendingGate(run: WorkflowRun, stage: ApprovalGate["stage"]) {
@@ -77,7 +101,7 @@ test("design changes requested creates a revised OpenSpec artifact and a new gat
   assert.ok(firstDesignArtifact)
 
   run = decideApprovalGate(run, firstDesignGate.id, "changes_requested", "Clarify recovery behavior.")
-  run = await advanceWorkflow(run)
+  run = await advanceRun(run)
 
   const revisedDesignGate = getPendingGate(run, "design")
   const designArtifacts = run.artifacts.filter(
@@ -101,8 +125,8 @@ test("plan changes requested creates a revised plan before reopening its gate", 
   const firstPlanGate = getPendingGate(run, "plan")
 
   run = decideApprovalGate(run, firstPlanGate.id, "changes_requested", "Add success criteria.")
-  run = await advanceWorkflow(run)
-  run = await advanceWorkflow(run)
+  run = await advanceRun(run)
+  run = await advanceRun(run)
 
   const revisedPlanGate = getPendingGate(run, "plan")
   const plans = run.artifacts.filter(
@@ -136,7 +160,7 @@ test("verification changes requested creates a revised implementation artifact",
     "changes_requested",
     "Fix the failing acceptance scenario."
   )
-  run = await advanceWorkflow(run)
+  run = await advanceRun(run)
 
   const patches = run.artifacts.filter(
     (artifact) => artifact.type === "patch" && artifact.stage === "implementation"

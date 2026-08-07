@@ -155,6 +155,25 @@ The dashboard lets the user set a default development agent, then override the e
 
 Approval policy is separate from executor assignment. For example, `design.approval` may be executed by `codex`, while the approval policy requires an independent reviewer decision.
 
+## Runtime Skill Bundle Policy
+
+Workflow event skills may declare runtime skill bundles with
+`runtimeSkillBundles`. These bundles are external agent capability packages, not
+workflow event skills.
+
+MVP runtime bundle behavior:
+
+- The curated registry is stored in `.harness/skill-registry.json`.
+- The executable version is pinned in `.harness/skill.lock.json`.
+- Agent-executed development events declare `superpowers-full`.
+- The harness resolves locked bundle descriptors before dispatch.
+- Remote agents download private GitHub Release artifacts with their own local credentials.
+- Agents verify sha256 checksums, install locally, execute, and return attestation.
+- Required bundle install or verification failure fails the workflow event.
+
+The harness must send bundle descriptors, not server-local mount paths, because
+remote agents do not share the Zeabur server filesystem.
+
 ## Approval Policy
 
 Approval gates are skills because review is work, not a boolean flag.

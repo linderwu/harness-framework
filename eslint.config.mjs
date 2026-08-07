@@ -7,6 +7,9 @@ const eslintConfig = [
       "node_modules/**",
       ".next/**",
       ".tmp-tests/**",
+      ".tmp-tests*/**",
+      ".worktrees/**",
+      "worktrees/**",
       ".agents/**",
       "data/harness-state.json"
     ]
