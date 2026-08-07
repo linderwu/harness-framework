@@ -1072,6 +1072,18 @@ small,
   gap: 8px;
 }
 
+.projectActionStack .primaryButton,
+.projectActionStack .iconTextButton {
+  min-height: 44px;
+  min-width: 96px;
+  padding: 0 15px;
+}
+
+.projectActionStack .iconTextButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
 .gateActions.compact {
   flex-wrap: wrap;
   justify-content: flex-end;
@@ -1533,6 +1545,15 @@ pre {
   .heroPanel {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .projectActionStack {
+    align-items: stretch;
+  }
+
+  .projectActionStack .primaryButton,
+  .projectActionStack .iconTextButton {
+    width: 100%;
   }
 
   h1 {

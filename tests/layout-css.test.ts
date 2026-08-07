@@ -32,3 +32,13 @@ test("desktop layout allows the page to scroll instead of clipping content", () 
   assert.match(ruleBody(/\.shell/, ".shell"), /min-height:\s*100vh;/)
   assert.doesNotMatch(ruleBody(/\.shell/, ".shell"), /\n\s*height:\s*100vh;/)
 })
+
+test("project hero action buttons keep stable visible dimensions", () => {
+  const actionRule = ruleBody(
+    /\.projectActionStack\s+\.primaryButton,\s*\n\.projectActionStack\s+\.iconTextButton/,
+    "project hero action buttons"
+  )
+
+  assert.match(actionRule, /min-height:\s*44px;/)
+  assert.match(actionRule, /min-width:\s*96px;/)
+})
