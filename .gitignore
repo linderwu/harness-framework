@@ -11,3 +11,5 @@ tsconfig.tsbuildinfo
 skills-lock.json
 .superpowers/
 .worktrees/
+.harness/cache/
+.harness/runtime-skills/
