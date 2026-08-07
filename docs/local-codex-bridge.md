@@ -104,17 +104,26 @@ npm run codex-bridge
 
 Keep the bridge bound to `127.0.0.1` and let the tunnel forward to it.
 
-## Verified Bridge Parameters
+## Verified Zeabur Bridge Parameters
 
 Last checked: 2026-08-07.
 
-Public bridge URL:
+Successful dashboard-to-bridge path:
 
 ```txt
-https://codex-bridge.jormungandcycle.com
+jormungand.zeabur.app -> https://codex-bridge.jormungandcycle.com -> local Codex bridge -> Codex executor
 ```
 
-Expected bridge health:
+Required Zeabur app environment variables:
+
+```txt
+CODEX_BRIDGE_URL=https://codex-bridge.jormungandcycle.com
+CODEX_BRIDGE_TOKEN=<same value as local HARNESS_BRIDGE_TOKEN>
+SITE_AUTH_USERNAME=<configured in Zeabur>
+SITE_AUTH_PASSWORD=<configured in Zeabur>
+```
+
+Expected public bridge health:
 
 ```txt
 protocolVersion=harness-agent-bridge/v0.3
@@ -122,40 +131,17 @@ repoRoot=C:\Users\linder\Documents\harness框架
 capabilities=cancel, stop, active-run-status, idempotency-key, text-output, runtime-skill-bundles
 ```
 
-Local bridge parameters:
+Successful end-to-end workflow smoke test:
 
 ```txt
-CODEX_BRIDGE_HOST=127.0.0.1
-CODEX_BRIDGE_PORT=4177
-HARNESS_BRIDGE_TOKEN=<same value as Zeabur CODEX_BRIDGE_TOKEN>
-```
-
-Zeabur app authentication parameters:
-
-```txt
-SITE_AUTH_USERNAME=<configured in Zeabur>
-SITE_AUTH_PASSWORD=<configured in Zeabur>
+workflowRunId=0e9ef9b3-5df5-4e30-802b-72be1e92b420
+planSource=codex-bridge
+planStatus=completed
+externalRunId=fddef477-e199-4013-bc1b-53de43080050
+runtimeSkillResolution=completed
+requiredRuntimeBundle=superpowers-full@1.0.0
 ```
 
 Do not commit `CODEX_BRIDGE_TOKEN`, `HARNESS_BRIDGE_TOKEN`, or
 `SITE_AUTH_PASSWORD` values. Store them only in the local shell, Zeabur
 environment variables, or the secret manager used by the deployment.
-
-Successful bridge-only check:
-
-```txt
-POST https://codex-bridge.jormungandcycle.com/agent-runs
-Authorization: Bearer <HARNESS_BRIDGE_TOKEN>
-runtimeSkillBundles: accepted
-expected output: RUNTIME_BUNDLE_BRIDGE_OK
-```
-
-Zeabur dashboard end-to-end status:
-
-```txt
-GET/POST https://jormungand.zeabur.app/api/workflow-runs requires Basic Auth.
-The latest checked deployment reached source=codex-bridge, but still failed
-before /agent-runs with "Codex bridge does not support runtime skill bundles."
-Deploy the v0.3 bridge/client changes, then rerun the workflow test before
-recording the dashboard path as successful.
-```
