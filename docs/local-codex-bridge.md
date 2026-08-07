@@ -107,7 +107,7 @@ or streaming when long-running jobs need progress updates.
 Zeabur cannot reach `127.0.0.1` on your computer directly. Expose the bridge with a tunnel such as Cloudflare Tunnel or ngrok, then set these Zeabur environment variables:
 
 ```txt
-CODEX_BRIDGE_URL=https://your-tunnel-url
+CODEX_BRIDGE_URL=https://codex-bridge.jormungandcycle.com
 CODEX_BRIDGE_TOKEN=<same-secret-as-local>
 ```
 
@@ -120,3 +120,45 @@ npm run codex-bridge
 ```
 
 Keep the bridge bound to `127.0.0.1` and let the tunnel forward to it.
+
+## Verified Zeabur Bridge Parameters
+
+Last checked: 2026-08-07.
+
+Successful dashboard-to-bridge path:
+
+```txt
+jormungand.zeabur.app -> https://codex-bridge.jormungandcycle.com -> local Codex bridge -> Codex executor
+```
+
+Required Zeabur app environment variables:
+
+```txt
+CODEX_BRIDGE_URL=https://codex-bridge.jormungandcycle.com
+CODEX_BRIDGE_TOKEN=<same value as local HARNESS_BRIDGE_TOKEN>
+SITE_AUTH_USERNAME=<configured in Zeabur>
+SITE_AUTH_PASSWORD=<configured in Zeabur>
+```
+
+Expected public bridge health:
+
+```txt
+protocolVersion=harness-agent-bridge/v0.3
+repoRoot=C:\Users\linder\Documents\harness框架
+capabilities=cancel, stop, active-run-status, idempotency-key, text-output, runtime-skill-bundles
+```
+
+Successful end-to-end workflow smoke test:
+
+```txt
+workflowRunId=0e9ef9b3-5df5-4e30-802b-72be1e92b420
+planSource=codex-bridge
+planStatus=completed
+externalRunId=fddef477-e199-4013-bc1b-53de43080050
+runtimeSkillResolution=completed
+requiredRuntimeBundle=superpowers-full@1.0.0
+```
+
+Do not commit `CODEX_BRIDGE_TOKEN`, `HARNESS_BRIDGE_TOKEN`, or
+`SITE_AUTH_PASSWORD` values. Store them only in the local shell, Zeabur
+environment variables, or the secret manager used by the deployment.
