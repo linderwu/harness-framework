@@ -11,6 +11,7 @@ const token = process.env.HARNESS_BRIDGE_TOKEN
 const repoRoot = path.resolve(
   process.env.CODEX_BRIDGE_REPO_ROOT ?? process.cwd()
 )
+const protocolVersion = "harness-agent-bridge/v0.3"
 const activeAgentRuns = new Map()
 const activeWorkflowRuns = new Map()
 const activeIdempotencyKeys = new Map()
@@ -26,7 +27,7 @@ const server = http.createServer(async (request, response) => {
       sendJson(response, 200, {
         ok: true,
         repoRoot,
-        protocolVersion: "harness-agent-bridge/v0.2",
+        protocolVersion,
         capabilities: bridgeCapabilities()
       })
       return
@@ -266,6 +267,9 @@ function buildPrompt(payload, contextDir) {
   const contextFiles = Array.isArray(payload.contextFiles)
     ? payload.contextFiles
     : []
+  const runtimeSkillBundles = Array.isArray(payload.runtimeSkillBundles)
+    ? payload.runtimeSkillBundles
+    : []
   const artifactSummary = artifacts
     .map(
       (artifact) =>
@@ -281,6 +285,14 @@ function buildPrompt(payload, contextDir) {
           file.size ?? 0
         )}, ${file.encoding ?? "unknown"})`
     )
+    .join("\n")
+  const runtimeSkillBundleSummary = runtimeSkillBundles
+    .map((bundle) => {
+      const checksum = bundle.checksum
+        ? `${bundle.checksum.algorithm ?? "checksum"}:${bundle.checksum.value ?? ""}`
+        : "no checksum"
+      return `- ${bundle.id ?? "unknown"}@${bundle.version ?? "unknown"} (${bundle.required ? "required" : "optional"}, ${checksum})`
+    })
     .join("\n")
 
   return [
@@ -307,6 +319,12 @@ function buildPrompt(payload, contextDir) {
     "Expected outputs:",
     ...asList(skill.outputs),
     "",
+    "Runtime skill bundles:",
+    runtimeSkillBundleSummary ||
+      "No runtime skill bundles supplied by the harness.",
+    "",
+    ...superpowersPlanGuidance(skill),
+    "",
     "Original requirement:",
     payload.requirement ?? "",
     "",
@@ -322,6 +340,26 @@ function buildPrompt(payload, contextDir) {
     "",
     "Return a concise final message that the harness can store as this event artifact."
   ].join("\n")
+}
+
+function superpowersPlanGuidance(skill) {
+  if (skill.id !== "plan.interview") {
+    return []
+  }
+
+  return [
+    "Superpowers plan requirement:",
+    "- If `superpowers:writing-plans` is available in your environment, use it for this event.",
+    "- If it is not available, follow this fallback contract exactly:",
+    "  - Start with `# <Feature Name> Implementation Plan`.",
+    "  - Include `Goal`, `Architecture`, and `Tech Stack` sections.",
+    "  - Include a file map naming exact files to create or modify.",
+    "  - Break work into bite-sized tasks with checkbox steps.",
+    "  - Each task must include exact commands and expected verification output.",
+    "  - Include concrete code or command snippets where implementation detail is needed.",
+    "  - Do not use TBD, TODO, `implement later`, or placeholder steps.",
+    "  - End with a self-review covering spec coverage, placeholder scan, and type/name consistency."
+  ]
 }
 
 function formatBytes(value) {
@@ -368,7 +406,14 @@ function sendJson(response, statusCode, body) {
 }
 
 function bridgeCapabilities() {
-  return ["cancel", "stop", "active-run-status", "idempotency-key", "text-output"]
+  return [
+    "cancel",
+    "stop",
+    "active-run-status",
+    "idempotency-key",
+    "text-output",
+    "runtime-skill-bundles"
+  ]
 }
 
 function tail(value, maxLength) {

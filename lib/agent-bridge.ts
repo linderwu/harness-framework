@@ -68,7 +68,7 @@ export async function invokeConfiguredAgent(
       method: "POST",
       headers: createBridgeHeaders(input.executor, idempotencyKey),
       body: JSON.stringify({
-        protocolVersion: "harness-agent-bridge/v0.2",
+        protocolVersion: "harness-agent-bridge/v0.3",
         idempotencyKey,
         workflowRunId: input.run.id,
         workflowVersion: input.run.version,

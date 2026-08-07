@@ -90,7 +90,7 @@ or streaming when long-running jobs need progress updates.
 Zeabur cannot reach `127.0.0.1` on your computer directly. Expose the bridge with a tunnel such as Cloudflare Tunnel or ngrok, then set these Zeabur environment variables:
 
 ```txt
-CODEX_BRIDGE_URL=https://your-tunnel-url
+CODEX_BRIDGE_URL=https://codex-bridge.jormungandcycle.com
 CODEX_BRIDGE_TOKEN=<same-secret-as-local>
 ```
 
@@ -103,3 +103,59 @@ npm run codex-bridge
 ```
 
 Keep the bridge bound to `127.0.0.1` and let the tunnel forward to it.
+
+## Verified Bridge Parameters
+
+Last checked: 2026-08-07.
+
+Public bridge URL:
+
+```txt
+https://codex-bridge.jormungandcycle.com
+```
+
+Expected bridge health:
+
+```txt
+protocolVersion=harness-agent-bridge/v0.3
+repoRoot=C:\Users\linder\Documents\harness框架
+capabilities=cancel, stop, active-run-status, idempotency-key, text-output, runtime-skill-bundles
+```
+
+Local bridge parameters:
+
+```txt
+CODEX_BRIDGE_HOST=127.0.0.1
+CODEX_BRIDGE_PORT=4177
+HARNESS_BRIDGE_TOKEN=<same value as Zeabur CODEX_BRIDGE_TOKEN>
+```
+
+Zeabur app authentication parameters:
+
+```txt
+SITE_AUTH_USERNAME=<configured in Zeabur>
+SITE_AUTH_PASSWORD=<configured in Zeabur>
+```
+
+Do not commit `CODEX_BRIDGE_TOKEN`, `HARNESS_BRIDGE_TOKEN`, or
+`SITE_AUTH_PASSWORD` values. Store them only in the local shell, Zeabur
+environment variables, or the secret manager used by the deployment.
+
+Successful bridge-only check:
+
+```txt
+POST https://codex-bridge.jormungandcycle.com/agent-runs
+Authorization: Bearer <HARNESS_BRIDGE_TOKEN>
+runtimeSkillBundles: accepted
+expected output: RUNTIME_BUNDLE_BRIDGE_OK
+```
+
+Zeabur dashboard end-to-end status:
+
+```txt
+GET/POST https://jormungand.zeabur.app/api/workflow-runs requires Basic Auth.
+The latest checked deployment reached source=codex-bridge, but still failed
+before /agent-runs with "Codex bridge does not support runtime skill bundles."
+Deploy the v0.3 bridge/client changes, then rerun the workflow test before
+recording the dashboard path as successful.
+```
