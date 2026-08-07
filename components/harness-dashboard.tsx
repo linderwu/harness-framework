@@ -1127,8 +1127,6 @@ function ProjectDetail({
       {selectedRun ? (
         <RunDetail
           run={selectedRun}
-          isMutating={isMutating}
-          onAdvance={onAdvance}
           onDecideGate={onDecideGate}
         />
       ) : (
@@ -1143,13 +1141,9 @@ function ProjectDetail({
 
 function RunDetail({
   run,
-  isMutating,
-  onAdvance,
   onDecideGate
 }: {
   run: WorkflowRun
-  isMutating: boolean
-  onAdvance: (runId: string) => void
   onDecideGate: (
     gate: ApprovalGate,
     decision: "approved" | "rejected" | "changes_requested"
@@ -1162,76 +1156,6 @@ function RunDetail({
 
   return (
     <div className="detailStack">
-      <section className="panel heroPanel">
-        <div>
-          <p className="eyebrow">{run.repository || "No repository"}</p>
-          <h2>{run.projectName}</h2>
-          <p className="requirement">{run.requirement}</p>
-          <p className="muted">
-            v{run.version} - event log {run.eventLogStatus}
-            {run.revisions.length > 0
-              ? ` - ${run.revisions.length} revision cycle(s)`
-              : ""}
-          </p>
-          {run.eventLogWarning ? (
-            <p className="muted">{run.eventLogWarning}</p>
-          ) : null}
-        </div>
-        <button
-          className="primaryButton"
-          disabled={
-            isMutating ||
-            run.status === "waiting_for_approval" ||
-            isTerminalStatus(run.status)
-          }
-          onClick={() => onAdvance(run.id)}
-          title="Advance workflow"
-        >
-          <ChevronRight size={18} />
-          Advance
-        </button>
-      </section>
-
-      <section className="panel timelinePanel">
-        <div className="stageTrack">
-          {orderedStages.map((stage) => {
-            const stageIndex = orderedStages.indexOf(stage)
-            const currentIndex = orderedStages.indexOf(run.currentStage)
-            const progress =
-              stageIndex < currentIndex
-                ? 100
-                : stageIndex === currentIndex
-                  ? run.currentStage === "completed"
-                    ? 100
-                    : 68
-                  : 0
-            const stageClass =
-              stageIndex < currentIndex ||
-              (stage === "completed" && run.currentStage === "completed")
-                ? "stage done"
-                : stageIndex === currentIndex
-                  ? "stage current"
-                  : "stage"
-
-            return (
-              <div className={`${stageClass} ${stage}`} key={stage}>
-                <span
-                  className="stageRing"
-                  style={
-                    {
-                      "--stage-progress": `${progress}%`
-                    } as CSSProperties
-                  }
-                >
-                  {progress}%
-                </span>
-                <small>{stageLabels[stage]}</small>
-              </div>
-            )
-          })}
-        </div>
-      </section>
-
       <section className="splitGrid">
         <div className="panel">
           <div className="panelHeader">
