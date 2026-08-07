@@ -3,13 +3,25 @@ import os from "node:os"
 import path from "node:path"
 import { promises as fs } from "node:fs"
 import { spawn } from "node:child_process"
-import { randomUUID } from "node:crypto"
+import { createHash, randomUUID } from "node:crypto"
 
 const host = process.env.CODEX_BRIDGE_HOST ?? "127.0.0.1"
 const port = Number(process.env.CODEX_BRIDGE_PORT ?? 4177)
 const token = process.env.HARNESS_BRIDGE_TOKEN
 const repoRoot = path.resolve(
   process.env.CODEX_BRIDGE_REPO_ROOT ?? process.cwd()
+)
+const protocolVersion =
+  process.env.CODEX_BRIDGE_RUNTIME_SKILLS === "1"
+    ? "harness-agent-bridge/v0.3"
+    : "harness-agent-bridge/v0.2"
+const runtimeSkillRoot = path.resolve(
+  process.env.CODEX_BRIDGE_RUNTIME_SKILL_ROOT ??
+    path.join(repoRoot, ".harness", "runtime-skills")
+)
+const runtimeSkillCacheRoot = path.resolve(
+  process.env.CODEX_BRIDGE_RUNTIME_SKILL_CACHE ??
+    path.join(repoRoot, ".harness", "cache", "skills")
 )
 const activeAgentRuns = new Map()
 const activeWorkflowRuns = new Map()
@@ -36,7 +48,7 @@ const server = http.createServer(async (request, response) => {
       sendJson(response, 200, {
         ok: true,
         repoRoot,
-        protocolVersion: "harness-agent-bridge/v0.2",
+        protocolVersion,
         capabilities: bridgeCapabilities()
       })
       return
@@ -105,11 +117,36 @@ const server = http.createServer(async (request, response) => {
     const id = randomUUID()
     const startedAt = new Date().toISOString()
     const contextDir = await materializeContextFiles(payload.contextFiles, id)
+    const runtimeSkillBundleResults = await installRuntimeSkillBundles(
+      payload.runtimeSkillBundles
+    )
+    const failedRuntimeBundle = runtimeSkillBundleResults.find(
+      (result) => result.verified === false
+    )
+
+    if (failedRuntimeBundle) {
+      if (contextDir) {
+        await fs.rm(contextDir, { recursive: true, force: true }).catch(() => {})
+      }
+      sendJson(response, 200, {
+        id,
+        idempotencyKey,
+        startedAt,
+        finishedAt: new Date().toISOString(),
+        status: "failed",
+        output: failedRuntimeBundle.errorMessage,
+        statusMessage: `Runtime skill installation failed: ${failedRuntimeBundle.errorCode}.`,
+        capabilities: bridgeCapabilities(),
+        runtimeSkillBundleResults
+      })
+      return
+    }
+
     if (idempotencyKey) {
       activeIdempotencyKeys.set(idempotencyKey, id)
     }
     const result = await runCodex(
-      buildPrompt(payload, contextDir),
+      buildPrompt(payload, contextDir, runtimeSkillBundleResults),
       id,
       payload.workflowRunId
     ).finally(async () => {
@@ -127,6 +164,7 @@ const server = http.createServer(async (request, response) => {
       startedAt,
       finishedAt: new Date().toISOString(),
       capabilities: bridgeCapabilities(),
+      runtimeSkillBundleResults,
       ...result
     })
   } catch (error) {
@@ -270,7 +308,162 @@ function sanitizeRelativePath(value) {
     .join("/")
 }
 
-function buildPrompt(payload, contextDir) {
+async function installRuntimeSkillBundles(runtimeSkillBundles) {
+  if (!Array.isArray(runtimeSkillBundles) || runtimeSkillBundles.length === 0) {
+    return []
+  }
+
+  const results = []
+
+  for (const bundle of runtimeSkillBundles) {
+    results.push(await installRuntimeSkillBundle(bundle))
+  }
+
+  return results
+}
+
+async function installRuntimeSkillBundle(bundle) {
+  const archiveDir = path.join(runtimeSkillCacheRoot, bundle.id, bundle.version)
+  const archivePath = path.join(
+    archiveDir,
+    `${bundle.id}-${bundle.version}.tgz`
+  )
+  const installPath = path.join(runtimeSkillRoot, bundle.id, bundle.version)
+
+  try {
+    await fs.mkdir(archiveDir, { recursive: true })
+    await fs.mkdir(installPath, { recursive: true })
+
+    let cacheStatus = "hit"
+
+    if (!(await fileExists(archivePath))) {
+      cacheStatus = "miss"
+      await downloadFile(bundle.sourceUrl, archivePath)
+    }
+
+    const actualChecksum = await sha256File(archivePath)
+
+    if (actualChecksum !== bundle.checksum?.value) {
+      return runtimeSkillFailure(
+        bundle,
+        cacheStatus,
+        "checksum_mismatch",
+        "Downloaded bundle sha256 did not match descriptor."
+      )
+    }
+
+    await fs.rm(installPath, { recursive: true, force: true })
+    await fs.mkdir(installPath, { recursive: true })
+    await extractTgz(archivePath, installPath)
+
+    return {
+      id: bundle.id,
+      version: bundle.version,
+      checksum: bundle.checksum,
+      downloadSource: "github-release",
+      cacheStatus,
+      verified: true,
+      installedPath: installPath
+    }
+  } catch (error) {
+    return runtimeSkillFailure(
+      bundle,
+      "miss",
+      isUnauthorizedDownload(error) ? "download_unauthorized" : "installation_failed",
+      formatError(error)
+    )
+  }
+}
+
+function runtimeSkillFailure(bundle, cacheStatus, errorCode, errorMessage) {
+  return {
+    id: bundle.id,
+    version: bundle.version,
+    checksum: bundle.checksum,
+    downloadSource: "github-release",
+    cacheStatus,
+    verified: false,
+    errorCode,
+    errorMessage
+  }
+}
+
+async function downloadFile(sourceUrl, targetPath) {
+  const headers = {}
+  const token =
+    process.env.JORMUNGAND_SKILL_DOWNLOAD_TOKEN ?? process.env.GITHUB_TOKEN
+
+  if (token && new URL(sourceUrl).hostname === "github.com") {
+    headers.Authorization = `Bearer ${token}`
+    headers.Accept = "application/octet-stream"
+  }
+
+  const response = await fetch(sourceUrl, { headers })
+
+  if (response.status === 401 || response.status === 403) {
+    throw new Error(`download unauthorized with HTTP ${response.status}`)
+  }
+
+  if (!response.ok) {
+    throw new Error(`download failed with HTTP ${response.status}`)
+  }
+
+  const bytes = Buffer.from(await response.arrayBuffer())
+  await fs.writeFile(targetPath, bytes)
+}
+
+async function sha256File(filePath) {
+  const hash = createHash("sha256")
+  const file = await fs.open(filePath, "r")
+
+  try {
+    for await (const chunk of file.createReadStream()) {
+      hash.update(chunk)
+    }
+  } finally {
+    await file.close()
+  }
+
+  return hash.digest("hex")
+}
+
+async function extractTgz(archivePath, installPath) {
+  await runProcess("tar", ["-xzf", archivePath, "-C", installPath])
+}
+
+async function runProcess(command, args) {
+  const child = spawn(command, args, {
+    shell: process.platform === "win32",
+    stdio: ["ignore", "pipe", "pipe"]
+  })
+  let stderr = ""
+
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk.toString()
+  })
+
+  const exitCode = await new Promise((resolve, reject) => {
+    child.on("error", reject)
+    child.on("close", (code) => resolve(code ?? 1))
+  })
+
+  if (exitCode !== 0) {
+    throw new Error(stderr.trim() || `${command} exited with ${exitCode}`)
+  }
+}
+
+async function fileExists(filePath) {
+  return fs.access(filePath).then(
+    () => true,
+    () => false
+  )
+}
+
+function isUnauthorizedDownload(error) {
+  return formatError(error).includes("401") || formatError(error).includes("403")
+}
+
+function buildPrompt(payload, contextDir, runtimeSkillBundleResults = []) {
   const skill = payload.skill ?? {}
   const artifacts = Array.isArray(payload.artifacts) ? payload.artifacts : []
   const contextFiles = Array.isArray(payload.contextFiles)
@@ -291,6 +484,10 @@ function buildPrompt(payload, contextDir) {
           file.size ?? 0
         )}, ${file.encoding ?? "unknown"})`
     )
+    .join("\n")
+  const runtimeSkillSummary = runtimeSkillBundleResults
+    .filter((result) => result.verified)
+    .map((result) => `- ${result.id}@${result.version}: ${result.installedPath}`)
     .join("\n")
 
   return [
@@ -331,6 +528,9 @@ function buildPrompt(payload, contextDir) {
     "",
     "Existing artifacts:",
     artifactSummary || "No prior artifacts.",
+    "",
+    "Runtime skill bundles:",
+    runtimeSkillSummary || "No runtime skill bundles installed.",
     "",
     "Return a concise final message that the harness can store as this event artifact."
   ].join("\n")
@@ -380,7 +580,19 @@ function sendJson(response, statusCode, body) {
 }
 
 function bridgeCapabilities() {
-  return ["cancel", "stop", "active-run-status", "idempotency-key", "text-output"]
+  const capabilities = [
+    "cancel",
+    "stop",
+    "active-run-status",
+    "idempotency-key",
+    "text-output"
+  ]
+
+  if (protocolVersion === "harness-agent-bridge/v0.3") {
+    capabilities.push("runtime-skill-bundles")
+  }
+
+  return capabilities
 }
 
 function tail(value, maxLength) {
