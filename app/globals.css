@@ -1084,6 +1084,11 @@ small,
   opacity: 0.45;
 }
 
+.iconTextButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
 .gateActions.compact {
   flex-wrap: wrap;
   justify-content: flex-end;
@@ -1402,6 +1407,11 @@ pre {
   padding: 14px;
 }
 
+.pendingGateSkill {
+  border-color: #f6d87a;
+  box-shadow: 0 0 0 2px rgba(246, 216, 122, 0.26);
+}
+
 .skillCardHeader {
   align-items: start;
   display: flex;
@@ -1409,10 +1419,28 @@ pre {
   justify-content: space-between;
 }
 
-.skillCardHeader div {
+.skillCardTitle {
   display: grid;
   gap: 4px;
   min-width: 0;
+}
+
+.skillCardStatusColumn {
+  align-items: flex-end;
+  display: grid;
+  gap: 8px;
+  justify-items: end;
+  min-width: min(100%, 320px);
+}
+
+.skillGateActions {
+  justify-content: flex-end;
+  margin-top: 0;
+}
+
+.skillGateActions .iconTextButton {
+  min-height: 34px;
+  padding: 0 10px;
 }
 
 .skillCard p {
@@ -1602,6 +1630,24 @@ pre {
   .assignmentTableRow {
     align-items: stretch;
     grid-template-columns: 1fr;
+  }
+
+  .skillCardHeader,
+  .skillCardStatusColumn {
+    align-items: stretch;
+  }
+
+  .skillCardHeader {
+    flex-direction: column;
+  }
+
+  .skillCardStatusColumn {
+    justify-items: stretch;
+    min-width: 0;
+  }
+
+  .skillGateActions {
+    justify-content: flex-start;
   }
 
   .policyBadge {

@@ -81,6 +81,7 @@ const defaultSkillAssignments = Object.fromEntries(
 ) as Record<string, AgentKind>
 const maxContextFileBytes = 2 * 1024 * 1024
 const maxContextTotalBytes = 5 * 1024 * 1024
+type ApprovalDecision = "approved" | "rejected" | "changes_requested"
 
 const sampleRequirement =
   "Build a Jormungandr dashboard that can select Codex/OpenClaw agents and control design/verification with approval gates."
@@ -1001,10 +1002,7 @@ function ProjectDetail({
   isMutating: boolean
   onStartRun: (project: Project) => void
   onAdvance: (runId: string) => void
-  onDecideGate: (
-    gate: ApprovalGate,
-    decision: "approved" | "rejected" | "changes_requested"
-  ) => void
+  onDecideGate: (gate: ApprovalGate, decision: ApprovalDecision) => void
 }) {
   const { project } = overview
 
@@ -1072,29 +1070,12 @@ function ProjectDetail({
                       {gate.requireIndependence ? " - independent" : ""}
                     </small>
                   </div>
-                  <div className="gateActions compact">
-                    <button
-                      className="iconTextButton approve"
-                      onClick={() => onDecideGate(gate, "approved")}
-                    >
-                      <Check size={16} />
-                      Approve
-                    </button>
-                    <button
-                      className="iconTextButton request"
-                      onClick={() => onDecideGate(gate, "changes_requested")}
-                    >
-                      <RefreshCw size={16} />
-                      Changes
-                    </button>
-                    <button
-                      className="iconTextButton reject"
-                      onClick={() => onDecideGate(gate, "rejected")}
-                    >
-                      <X size={16} />
-                      Reject
-                    </button>
-                  </div>
+                  <GateDecisionButtons
+                    className="compact"
+                    gate={gate}
+                    isMutating={isMutating}
+                    onDecideGate={onDecideGate}
+                  />
                 </div>
               ))}
             </div>
@@ -1126,6 +1107,7 @@ function ProjectDetail({
 
       {selectedRun ? (
         <RunDetail
+          isMutating={isMutating}
           run={selectedRun}
           onDecideGate={onDecideGate}
         />
@@ -1140,16 +1122,18 @@ function ProjectDetail({
 }
 
 function RunDetail({
+  isMutating,
   run,
   onDecideGate
 }: {
+  isMutating: boolean
   run: WorkflowRun
-  onDecideGate: (
-    gate: ApprovalGate,
-    decision: "approved" | "rejected" | "changes_requested"
-  ) => void
+  onDecideGate: (gate: ApprovalGate, decision: ApprovalDecision) => void
 }) {
   const pendingGate = run.approvalGates.find((gate) => gate.status === "pending")
+  const pendingApprovalSkillId = pendingGate
+    ? `${pendingGate.stage}.approval`
+    : undefined
   const [openDetailSection, setOpenDetailSection] = useState<
     "skills" | "artifacts" | undefined
   >()
@@ -1182,29 +1166,11 @@ function RunDetail({
           </div>
 
           {pendingGate ? (
-            <div className="gateActions">
-              <button
-                className="iconTextButton approve"
-                onClick={() => onDecideGate(pendingGate, "approved")}
-              >
-                <Check size={16} />
-                Approve
-              </button>
-              <button
-                className="iconTextButton request"
-                onClick={() => onDecideGate(pendingGate, "changes_requested")}
-              >
-                <RefreshCw size={16} />
-                Changes
-              </button>
-              <button
-                className="iconTextButton reject"
-                onClick={() => onDecideGate(pendingGate, "rejected")}
-              >
-                <X size={16} />
-                Reject
-              </button>
-            </div>
+            <GateDecisionButtons
+              gate={pendingGate}
+              isMutating={isMutating}
+              onDecideGate={onDecideGate}
+            />
           ) : null}
         </div>
 
@@ -1295,20 +1261,39 @@ function RunDetail({
                     const latestEvent = matchingEvents[matchingEvents.length - 1]
                     const executor =
                       run.skillAssignments[skill.id] ?? run.selectedAgent
+                    const isPendingApprovalSkill =
+                      Boolean(pendingGate) && skill.id === pendingApprovalSkillId
 
                     return (
-                      <article className="skillCard" key={skill.id}>
+                      <article
+                        className={
+                          isPendingApprovalSkill
+                            ? "skillCard pendingGateSkill"
+                            : "skillCard"
+                        }
+                        key={skill.id}
+                      >
                         <div className="skillCardHeader">
-                          <div>
+                          <div className="skillCardTitle">
                             <strong>{skill.name}</strong>
                             <small>
                               {eventTypeLabels[skill.eventType]} -{" "}
                               {stageLabels[skill.stage]}
                             </small>
                           </div>
-                          <StatusPill
-                            status={latestEvent?.status ?? "pending"}
-                          />
+                          <div className="skillCardStatusColumn">
+                            <StatusPill
+                              status={latestEvent?.status ?? "pending"}
+                            />
+                            {isPendingApprovalSkill && pendingGate ? (
+                              <GateDecisionButtons
+                                className="skillGateActions"
+                                gate={pendingGate}
+                                isMutating={isMutating}
+                                onDecideGate={onDecideGate}
+                              />
+                            ) : null}
+                          </div>
                         </div>
                         <p>{skill.purpose}</p>
                         <div className="skillMetaGrid">
@@ -1747,6 +1732,52 @@ function SkillMeta({ title, values }: { title: string; values: string[] }) {
           <li key={value}>{value}</li>
         ))}
       </ul>
+    </div>
+  )
+}
+
+function GateDecisionButtons({
+  className,
+  gate,
+  isMutating,
+  onDecideGate
+}: {
+  className?: string
+  gate: ApprovalGate
+  isMutating: boolean
+  onDecideGate: (gate: ApprovalGate, decision: ApprovalDecision) => void
+}) {
+  const classes = ["gateActions", className].filter(Boolean).join(" ")
+
+  return (
+    <div className={classes}>
+      <button
+        className="iconTextButton approve"
+        disabled={isMutating}
+        onClick={() => onDecideGate(gate, "approved")}
+        type="button"
+      >
+        <Check size={16} />
+        Approve
+      </button>
+      <button
+        className="iconTextButton request"
+        disabled={isMutating}
+        onClick={() => onDecideGate(gate, "changes_requested")}
+        type="button"
+      >
+        <RefreshCw size={16} />
+        Changes
+      </button>
+      <button
+        className="iconTextButton reject"
+        disabled={isMutating}
+        onClick={() => onDecideGate(gate, "rejected")}
+        type="button"
+      >
+        <X size={16} />
+        Reject
+      </button>
     </div>
   )
 }
