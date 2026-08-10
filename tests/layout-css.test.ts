@@ -59,3 +59,18 @@ test("project selector keeps the workspace header stable and overlays its popove
   assert.match(popoverRule, /position:\s*absolute;/)
   assert.match(popoverRule, /z-index:\s*10;/)
 })
+
+test("bridge status panel is fixed on desktop and collapses on mobile", () => {
+  const panelRule = ruleBody(/\.bridgeStatusPanel/, ".bridgeStatusPanel")
+  const cardStackRule = ruleBody(/\.bridgeStatusCards/, ".bridgeStatusCards")
+  const mobileRule = css.match(
+    /@media \(max-width: 640px\) \{([\s\S]*?)\n\}/
+  )
+
+  assert.match(panelRule, /position:\s*fixed;/)
+  assert.match(panelRule, /bottom:\s*18px;/)
+  assert.match(panelRule, /right:\s*18px;/)
+  assert.match(cardStackRule, /width:\s*min\(360px, calc\(100vw - 36px\)\);/)
+  assert.ok(mobileRule, "Expected mobile media query to exist")
+  assert.match(mobileRule[1], /\.bridgeStatusCards:not\(\.open\)/)
+})

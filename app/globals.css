@@ -1635,6 +1635,113 @@ pre {
   line-height: 1.35;
 }
 
+.bridgeStatusPanel {
+  bottom: 18px;
+  display: grid;
+  gap: 10px;
+  justify-items: end;
+  pointer-events: none;
+  position: fixed;
+  right: 18px;
+  z-index: 15;
+}
+
+.bridgeStatusToggle {
+  pointer-events: auto;
+}
+
+.bridgeStatusToggle {
+  align-items: center;
+  background: rgba(15, 23, 42, 0.92);
+  border: 1px solid rgba(148, 163, 184, 0.38);
+  border-radius: 8px;
+  color: #f8fbff;
+  display: none;
+  font-weight: 800;
+  gap: 8px;
+  min-height: 42px;
+  padding: 0 12px;
+}
+
+.bridgeStatusCards {
+  display: grid;
+  gap: 8px;
+  pointer-events: auto;
+  width: min(360px, calc(100vw - 36px));
+}
+
+.bridgeStatusCard {
+  background: rgba(251, 253, 255, 0.96);
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  box-shadow: 0 16px 34px rgba(15, 23, 42, 0.16);
+  display: grid;
+  gap: 8px;
+  padding: 11px;
+}
+
+.bridgeStatusCard.online {
+  border-color: rgba(15, 118, 110, 0.38);
+}
+
+.bridgeStatusCard.offline,
+.bridgeStatusCard.stale {
+  border-color: rgba(220, 38, 38, 0.38);
+}
+
+.bridgeStatusCard.checking,
+.bridgeStatusCard.not_configured {
+  border-color: rgba(202, 138, 4, 0.38);
+}
+
+.bridgeStatusCardHeader,
+.bridgeStatusCardHeader span,
+.bridgeStatusMeta,
+.bridgeAgentRow {
+  align-items: center;
+  display: flex;
+}
+
+.bridgeStatusCardHeader {
+  justify-content: space-between;
+}
+
+.bridgeStatusCardHeader span {
+  gap: 7px;
+  min-width: 0;
+}
+
+.bridgeRefreshButton {
+  height: 30px;
+  width: 30px;
+}
+
+.bridgeStatusMeta {
+  gap: 8px;
+  justify-content: space-between;
+}
+
+.bridgeStatusCard p {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+  margin: 0;
+}
+
+.bridgeAgentRows {
+  display: grid;
+  gap: 6px;
+}
+
+.bridgeAgentRow {
+  background: #f8fbff;
+  border: 1px solid #e3eaf2;
+  border-radius: 7px;
+  justify-content: space-between;
+  min-height: 34px;
+  padding: 0 8px;
+}
+
 .emptyState {
   align-items: center;
   background:
@@ -1806,5 +1913,18 @@ pre {
 
   .policyBadge {
     justify-self: start;
+  }
+
+  .bridgeStatusToggle {
+    display: inline-flex;
+  }
+
+  .bridgeStatusCards:not(.open) {
+    display: none;
+  }
+
+  .bridgeStatusCards.open {
+    max-height: min(70vh, 520px);
+    overflow: auto;
   }
 }
