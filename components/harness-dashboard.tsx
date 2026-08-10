@@ -26,6 +26,7 @@ import {
 import {
   ChangeEvent,
   FormEvent,
+  useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -54,6 +55,12 @@ import {
   getProjectTemplate,
   projectTypeOptions
 } from "@/lib/project-templates"
+import {
+  buildProjectSelectorItems,
+  filterProjectSelectorItems,
+  type ProjectSelectorFilter,
+  type ProjectSelectorItem
+} from "@/lib/project-selector"
 import {
   actorLabels,
   createDefaultEventSkills,
@@ -123,11 +130,15 @@ export function HarnessDashboard({
     verificationApprovalActor: "verification_subagent" as ApprovalActorType
   })
 
+  const projectSelectorItems = useMemo(
+    () => buildProjectSelectorItems(projects, runs),
+    [projects, runs]
+  )
   const selectedProject = useMemo(
     () =>
-      projects.find((project) => project.id === selectedProjectId) ??
-      projects[0],
-    [projects, selectedProjectId]
+      projectSelectorItems.find((item) => item.project.id === selectedProjectId)
+        ?.project ?? projectSelectorItems[0]?.project,
+    [projectSelectorItems, selectedProjectId]
   )
   const selectedProjectRuns = useMemo(
     () =>
@@ -149,6 +160,23 @@ export function HarnessDashboard({
         : undefined,
     [selectedProject, selectedProjectRuns]
   )
+  useEffect(() => {
+    if (projectSelectorItems.length === 0) {
+      setSelectedProjectId(undefined)
+      setSelectedRunId(undefined)
+      return
+    }
+
+    const selectedItem = projectSelectorItems.find(
+      (item) => item.project.id === selectedProjectId
+    )
+
+    if (!selectedItem) {
+      const fallbackItem = projectSelectorItems[0]
+      setSelectedProjectId(fallbackItem.project.id)
+      setSelectedRunId(fallbackItem.latestRun?.id)
+    }
+  }, [projectSelectorItems, selectedProjectId])
   const overrideCount = useMemo(
     () =>
       defaultEventSkills.filter(
@@ -194,11 +222,21 @@ export function HarnessDashboard({
         ? current
         : nextProjects[0]?.id
     )
-    setSelectedRunId((current) =>
-      nextRuns.some((run) => run.id === current)
-        ? current
-        : nextRuns.find((run) => run.projectId === selectedProjectId)?.id
-    )
+    setSelectedRunId((current) => {
+      if (nextRuns.some((run) => run.id === current)) {
+        return current
+      }
+
+      const activeProjectId =
+        nextProjects.some((project) => project.id === selectedProjectId)
+          ? selectedProjectId
+          : nextProjects[0]?.id
+      const latestRun = nextRuns
+        .filter((run) => run.projectId === activeProjectId)
+        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0]
+
+      return latestRun?.id
+    })
     setIsLoading(false)
   }
 
@@ -861,42 +899,15 @@ export function HarnessDashboard({
         </form>
 
         <section className="workspace">
-          <div className="panel runsPanel">
-            <div className="panelHeader">
-              <GitBranch size={18} />
-              <h2>Projects</h2>
-            </div>
-            {isLoading ? (
-              <p className="muted">Loading</p>
-            ) : projects.length === 0 ? (
-              <p className="muted">No projects yet</p>
-            ) : (
-              <div className="runList">
-                {projects.map((project) => (
-                  <button
-                    key={project.id}
-                    className={
-                      project.id === selectedProject?.id
-                        ? "runRow active"
-                        : "runRow"
-                    }
-                    onClick={() => {
-                      setSelectedProjectId(project.id)
-                      setSelectedRunId(
-                        runs.find((run) => run.projectId === project.id)?.id
-                      )
-                    }}
-                  >
-                    <span>{project.name}</span>
-                    <small>
-                      {getProjectTemplate(project.type).label} -{" "}
-                      {project.status}
-                    </small>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
+          <ProjectSelector
+            isLoading={isLoading}
+            items={projectSelectorItems}
+            selectedProjectId={selectedProject?.id}
+            onSelectProject={(item) => {
+              setSelectedProjectId(item.project.id)
+              setSelectedRunId(item.latestRun?.id)
+            }}
+          />
 
           {selectedProject && selectedOverview ? (
             <ProjectDetail
@@ -916,6 +927,163 @@ export function HarnessDashboard({
         </section>
       </section>
     </main>
+  )
+}
+
+function ProjectSelector({
+  isLoading,
+  items,
+  selectedProjectId,
+  onSelectProject
+}: {
+  isLoading: boolean
+  items: ProjectSelectorItem[]
+  selectedProjectId?: string
+  onSelectProject: (item: ProjectSelectorItem) => void
+}) {
+  const [isOpen, setIsOpen] = useState(false)
+  const [query, setQuery] = useState("")
+  const [filter, setFilter] = useState<ProjectSelectorFilter>("all")
+  const selectedItem =
+    items.find((item) => item.project.id === selectedProjectId) ?? items[0]
+  const visibleItems = filterProjectSelectorItems(items, query, filter)
+
+  function clearFilters() {
+    setQuery("")
+    setFilter("all")
+  }
+
+  return (
+    <div className="panel runsPanel projectSelector">
+      <button
+        aria-expanded={isOpen}
+        className="projectSelectorSummary"
+        onClick={() => items.length > 0 && setIsOpen((current) => !current)}
+        type="button"
+      >
+        <span className="projectSelectorHeader">
+          <span>
+            <GitBranch size={18} />
+            <strong>Projects</strong>
+          </span>
+          <ChevronDown size={18} />
+        </span>
+
+        {isLoading ? (
+          <span className="muted">Loading</span>
+        ) : selectedItem ? (
+          <span className="projectSelectorCurrent">
+            <span
+              className={`projectStatusDot ${selectedItem.status.dotVariant}`}
+              aria-hidden="true"
+            />
+            <span>
+              <strong title={selectedItem.project.name}>
+                {selectedItem.project.name}
+              </strong>
+              <small title={selectedItem.absoluteActivityLabel}>
+                {selectedItem.projectTypeLabel} - {selectedItem.status.label} -{" "}
+                {selectedItem.relativeActivityLabel}
+              </small>
+            </span>
+          </span>
+        ) : (
+          <span className="muted">No projects yet</span>
+        )}
+      </button>
+
+      {isOpen ? (
+        <div className="projectSelectorPopover">
+          <div className="projectSelectorControls">
+            <label className="projectSearch">
+              <Search size={16} />
+              <input
+                aria-label="Search projects"
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="Search projects..."
+                value={query}
+              />
+            </label>
+            <div className="segmented projectFilter">
+              {[
+                ["all", "All"],
+                ["active", "Active"],
+                ["needs_attention", "Needs attention"],
+                ["completed", "Completed"]
+              ].map(([value, label]) => (
+                <button
+                  className={filter === value ? "selected" : ""}
+                  key={value}
+                  onClick={() => setFilter(value as ProjectSelectorFilter)}
+                  type="button"
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {visibleItems.length === 0 ? (
+            <div className="projectSelectorEmpty">
+              <p className="muted">No projects found</p>
+              <button
+                className="iconTextButton"
+                onClick={clearFilters}
+                type="button"
+              >
+                <RotateCcw size={15} />
+                Clear filters
+              </button>
+            </div>
+          ) : (
+            <div className="projectSelectorList">
+              {visibleItems.map((item) => (
+                <ProjectOption
+                  item={item}
+                  isSelected={item.project.id === selectedProjectId}
+                  key={item.project.id}
+                  onSelect={() => {
+                    onSelectProject(item)
+                    setIsOpen(false)
+                  }}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+function ProjectOption({
+  item,
+  isSelected,
+  onSelect
+}: {
+  item: ProjectSelectorItem
+  isSelected: boolean
+  onSelect: () => void
+}) {
+  return (
+    <button
+      className={isSelected ? "projectOption selected" : "projectOption"}
+      onClick={onSelect}
+      type="button"
+    >
+      <span
+        className={`projectStatusDot ${item.status.dotVariant}`}
+        aria-hidden="true"
+      />
+      <span>
+        <strong title={item.project.name}>{item.project.name}</strong>
+        <small title={item.absoluteActivityLabel}>
+          {item.projectTypeLabel} - {item.status.label} -{" "}
+          {item.relativeActivityLabel}
+        </small>
+        <small>{item.latestRunSummary}</small>
+      </span>
+    </button>
   )
 }
 
