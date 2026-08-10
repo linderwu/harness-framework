@@ -60,17 +60,15 @@ test("project selector keeps the workspace header stable and overlays its popove
   assert.match(popoverRule, /z-index:\s*10;/)
 })
 
-test("bridge status panel is fixed on desktop and collapses on mobile", () => {
+test("bridge status panel is embedded in the compose panel", () => {
   const panelRule = ruleBody(/\.bridgeStatusPanel/, ".bridgeStatusPanel")
-  const cardStackRule = ruleBody(/\.bridgeStatusCards/, ".bridgeStatusCards")
-  const mobileRule = css.match(
-    /@media \(max-width: 640px\) \{([\s\S]*?)\n\}/
-  )
+  const cardsRule = ruleBody(/\.bridgeStatusCards/, ".bridgeStatusCards")
 
-  assert.match(panelRule, /position:\s*fixed;/)
-  assert.match(panelRule, /bottom:\s*18px;/)
-  assert.match(panelRule, /right:\s*18px;/)
-  assert.match(cardStackRule, /width:\s*min\(360px, calc\(100vw - 36px\)\);/)
-  assert.ok(mobileRule, "Expected mobile media query to exist")
-  assert.match(mobileRule[1], /\.bridgeStatusCards:not\(\.open\)/)
+  assert.doesNotMatch(panelRule, /position:\s*fixed;/)
+  assert.doesNotMatch(panelRule, /bottom:\s*18px;/)
+  assert.doesNotMatch(panelRule, /right:\s*18px;/)
+  assert.match(panelRule, /background:\s*rgba\(255, 255, 255, 0\.08\);/)
+  assert.match(cardsRule, /grid-template-columns:\s*1fr;/)
+  assert.doesNotMatch(css, /\.bridgeStatusToggle/)
+  assert.doesNotMatch(css, /\.bridgeStatusCards:not\(\.open\)/)
 })

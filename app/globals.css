@@ -1636,68 +1636,69 @@ pre {
 }
 
 .bridgeStatusPanel {
-  bottom: 18px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(203, 213, 225, 0.18);
+  border-radius: 8px;
   display: grid;
   gap: 10px;
-  justify-items: end;
-  pointer-events: none;
-  position: fixed;
-  right: 18px;
-  z-index: 15;
+  padding: 12px;
 }
 
-.bridgeStatusToggle {
-  pointer-events: auto;
-}
-
-.bridgeStatusToggle {
+.bridgeStatusPanelHeader,
+.bridgeStatusPanelHeader span,
+.bridgeStatusMeta,
+.bridgeAgentRow {
   align-items: center;
-  background: rgba(15, 23, 42, 0.92);
-  border: 1px solid rgba(148, 163, 184, 0.38);
-  border-radius: 8px;
+  display: flex;
+}
+
+.bridgeStatusPanelHeader {
+  justify-content: space-between;
+}
+
+.bridgeStatusPanelHeader span {
   color: #f8fbff;
-  display: none;
-  font-weight: 800;
-  gap: 8px;
-  min-height: 42px;
-  padding: 0 12px;
+  gap: 7px;
+  min-width: 0;
+}
+
+.bridgeStatusEmpty {
+  color: #bfd2e5;
+  font-size: 12px;
+  font-weight: 700;
+  margin: 0;
 }
 
 .bridgeStatusCards {
   display: grid;
   gap: 8px;
-  pointer-events: auto;
-  width: min(360px, calc(100vw - 36px));
+  grid-template-columns: 1fr;
 }
 
 .bridgeStatusCard {
-  background: rgba(251, 253, 255, 0.96);
-  border: 1px solid var(--panel-border);
+  background: rgba(248, 251, 255, 0.94);
+  border: 1px solid rgba(207, 219, 231, 0.82);
   border-radius: 8px;
-  box-shadow: 0 16px 34px rgba(15, 23, 42, 0.16);
   display: grid;
   gap: 8px;
-  padding: 11px;
+  padding: 10px;
 }
 
 .bridgeStatusCard.online {
-  border-color: rgba(15, 118, 110, 0.38);
+  border-color: rgba(153, 246, 228, 0.58);
 }
 
 .bridgeStatusCard.offline,
 .bridgeStatusCard.stale {
-  border-color: rgba(220, 38, 38, 0.38);
+  border-color: rgba(254, 202, 202, 0.72);
 }
 
-.bridgeStatusCard.checking,
-.bridgeStatusCard.not_configured {
-  border-color: rgba(202, 138, 4, 0.38);
+.bridgeStatusCard.checking {
+  border-color: rgba(253, 230, 138, 0.7);
 }
 
 .bridgeStatusCardHeader,
-.bridgeStatusCardHeader span,
-.bridgeStatusMeta,
-.bridgeAgentRow {
+.bridgeStatusCardHeader span {
   align-items: center;
   display: flex;
 }
@@ -1707,7 +1708,14 @@ pre {
 }
 
 .bridgeStatusCardHeader span {
+  color: var(--text);
   gap: 7px;
+  min-width: 0;
+}
+
+.bridgeStatusCardHeader span span {
+  display: grid;
+  gap: 2px;
   min-width: 0;
 }
 
@@ -1913,18 +1921,5 @@ pre {
 
   .policyBadge {
     justify-self: start;
-  }
-
-  .bridgeStatusToggle {
-    display: inline-flex;
-  }
-
-  .bridgeStatusCards:not(.open) {
-    display: none;
-  }
-
-  .bridgeStatusCards.open {
-    max-height: min(70vh, 520px);
-    overflow: auto;
   }
 }
