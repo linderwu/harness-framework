@@ -42,3 +42,20 @@ test("project hero action buttons keep stable visible dimensions", () => {
   assert.match(actionRule, /min-height:\s*44px;/)
   assert.match(actionRule, /min-width:\s*96px;/)
 })
+
+test("project selector keeps the workspace header stable and overlays its popover", () => {
+  const selectorRule = ruleBody(/\.projectSelector/, ".projectSelector")
+  const summaryRule = ruleBody(
+    /\.projectSelectorSummary/,
+    ".projectSelectorSummary"
+  )
+  const popoverRule = ruleBody(
+    /\.projectSelectorPopover/,
+    ".projectSelectorPopover"
+  )
+
+  assert.match(selectorRule, /position:\s*relative;/)
+  assert.match(summaryRule, /min-height:\s*100%;/)
+  assert.match(popoverRule, /position:\s*absolute;/)
+  assert.match(popoverRule, /z-index:\s*10;/)
+})
