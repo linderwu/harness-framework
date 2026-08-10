@@ -1682,9 +1682,11 @@ function BridgeStatusPanel({ run }: { run?: WorkflowRun }) {
   const [failureCount, setFailureCount] = useState(0)
   const [lastSuccessAt, setLastSuccessAt] = useState<string | undefined>()
   const [isOpen, setIsOpen] = useState(false)
+  const [now, setNow] = useState(() => Date.now())
 
   async function refreshBridgeHealth() {
     setIsChecking(true)
+    setNow(Date.now())
 
     try {
       const response = await fetch("/api/agent-health", { cache: "no-store" })
@@ -1709,18 +1711,23 @@ function BridgeStatusPanel({ run }: { run?: WorkflowRun }) {
   }
 
   useLayoutEffect(() => {
-    void refreshBridgeHealth()
+    const initialCheckId = window.setTimeout(refreshBridgeHealth, 0)
     const intervalId = window.setInterval(
       refreshBridgeHealth,
       bridgeHealthPollIntervalMs
     )
+    const clockId = window.setInterval(() => setNow(Date.now()), 1000)
 
-    return () => window.clearInterval(intervalId)
+    return () => {
+      window.clearTimeout(initialCheckId)
+      window.clearInterval(intervalId)
+      window.clearInterval(clockId)
+    }
   }, [])
 
   const isStale =
     lastSuccessAt &&
-    Date.now() - new Date(lastSuccessAt).getTime() > bridgeHealthStaleAfterMs
+    now - new Date(lastSuccessAt).getTime() > bridgeHealthStaleAfterMs
   const panelStatus = getAggregateBridgeStatus({
     health,
     failureCount,
@@ -1750,6 +1757,7 @@ function BridgeStatusPanel({ run }: { run?: WorkflowRun }) {
             isStale={Boolean(isStale)}
             key={bridge.id}
             lastSuccessAt={lastSuccessAt}
+            now={now}
             run={run}
             onRefresh={refreshBridgeHealth}
           />
@@ -1766,6 +1774,7 @@ function BridgeStatusCard({
   isChecking,
   isStale,
   lastSuccessAt,
+  now,
   run,
   onRefresh
 }: {
@@ -1775,6 +1784,7 @@ function BridgeStatusCard({
   isChecking: boolean
   isStale: boolean
   lastSuccessAt?: string
+  now: number
   run?: WorkflowRun
   onRefresh: () => void
 }) {
@@ -1803,7 +1813,7 @@ function BridgeStatusCard({
       </div>
       <div className="bridgeStatusMeta">
         <StatusPill status={status === "not_configured" ? "stopped" : status} />
-        <small>{formatBridgeCheckedAt(lastSuccessAt)}</small>
+        <small>{formatBridgeCheckedAt(lastSuccessAt, now)}</small>
       </div>
       {health?.message ? <p>{health.message}</p> : null}
       <div className="bridgeAgentRows">
@@ -2218,14 +2228,14 @@ function getAggregateBridgeStatus({
   return statuses[0] ?? "checking"
 }
 
-function formatBridgeCheckedAt(value?: string) {
+function formatBridgeCheckedAt(value: string | undefined, now: number) {
   if (!value) {
     return "not checked"
   }
 
   const seconds = Math.max(
     0,
-    Math.round((Date.now() - new Date(value).getTime()) / 1000)
+    Math.round((now - new Date(value).getTime()) / 1000)
   )
 
   return `${seconds}s ago`
