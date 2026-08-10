@@ -57,17 +57,35 @@ test("dashboard health endpoint only returns registered HTTP bridge URL records"
   assert.doesNotMatch(route, /not_configured/)
 })
 
-test("dashboard renders the bridge status panel with the selected run", () => {
-  assert.match(dashboard, /<BridgeStatusPanel\s+run=\{selectedRun\}/)
-  assert.match(dashboard, /function BridgeStatusPanel\(/)
+test("dashboard renders bridge status inside the compose panel action area", () => {
+  const composePanel = dashboard.slice(
+    dashboard.indexOf('<form className="panel composePanel"'),
+    dashboard.indexOf(
+      "</form>",
+      dashboard.indexOf('<form className="panel composePanel"')
+    )
+  )
+  const actionRowIndex = composePanel.indexOf('className="runActionRow"')
+  const bridgePanelIndex = composePanel.indexOf("<BridgeStatusPanel")
+  const errorIndex = composePanel.indexOf("{mutationError ?")
+
+  assert.ok(actionRowIndex > -1, "Expected action row in compose panel")
+  assert.ok(bridgePanelIndex > actionRowIndex, "Expected bridge panel after action row")
+  assert.ok(errorIndex > bridgePanelIndex, "Expected mutation error after bridge panel")
+  assert.doesNotMatch(
+    dashboard.slice(dashboard.indexOf("</section>"), dashboard.indexOf("</main>")),
+    /<BridgeStatusPanel/
+  )
 })
 
-test("bridge status panel groups agents by bridge", () => {
+test("bridge status panel renders endpoint bridges instead of fixed bridge definitions", () => {
   const panel = functionBody("BridgeStatusPanel")
 
-  assert.match(panel, /bridgeDefinitions\.map/)
-  assert.match(panel, /BridgeStatusCard/)
-  assert.doesNotMatch(panel, /agentProfiles\.map\(\(agent\) =>\s*<BridgeStatusCard/)
+  assert.match(panel, /visibleBridges\.map/)
+  assert.match(panel, /getBridgeAgents\(bridge\.id\)/)
+  assert.doesNotMatch(dashboard, /const bridgeDefinitions/)
+  assert.doesNotMatch(dashboard, /openclaw-a2a/)
+  assert.doesNotMatch(dashboard, /Manual \/ Simulated/)
 })
 
 test("bridge status polling and stale thresholds match the accepted design", () => {

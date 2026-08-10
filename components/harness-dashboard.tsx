@@ -94,19 +94,15 @@ const bridgeHealthPollIntervalMs = 10_000
 const bridgeHealthStaleAfterMs = 30_000
 const bridgeOfflineFailureThreshold = 2
 type ApprovalDecision = "approved" | "rejected" | "changes_requested"
-type BridgeHealthStatus = "online" | "offline" | "not_configured"
+type BridgeHealthStatus = "online" | "offline"
 type BridgePanelStatus = BridgeHealthStatus | "checking" | "stale"
-
-type BridgeId =
-  | "codex-bridge"
-  | "openclaw-bridge"
-  | "openclaw-a2a"
-  | "manual"
+type BridgeId = "codex-bridge" | "openclaw-bridge"
 
 interface BridgeHealth {
   id: BridgeId
   label: string
   status: BridgeHealthStatus
+  urlHost: string
   protocolVersion?: string
   capabilities?: string[]
   message?: string
@@ -116,35 +112,6 @@ interface AgentHealthResponse {
   checkedAt: string
   bridges: BridgeHealth[]
 }
-
-interface BridgeDefinition {
-  id: BridgeId
-  label: string
-  agents: AgentKind[]
-}
-
-const bridgeDefinitions: BridgeDefinition[] = [
-  {
-    id: "codex-bridge",
-    label: "Codex Bridge",
-    agents: ["codex"]
-  },
-  {
-    id: "openclaw-bridge",
-    label: "OpenClaw Bridge",
-    agents: []
-  },
-  {
-    id: "openclaw-a2a",
-    label: "OpenClaw A2A",
-    agents: ["openclaw.rowlet", "openclaw.roaringmoon", "openclaw.charizard"]
-  },
-  {
-    id: "manual",
-    label: "Manual / Simulated",
-    agents: ["manual"]
-  }
-]
 
 const sampleRequirement =
   "Build a Jormungandr dashboard that can select Codex/OpenClaw agents and control design/verification with approval gates."
@@ -596,6 +563,8 @@ export function HarnessDashboard({
             </button>
           </div>
 
+          <BridgeStatusPanel run={selectedRun} />
+
           {mutationError ? (
             <p className="formError" role="alert">
               {mutationError}
@@ -967,7 +936,6 @@ export function HarnessDashboard({
           )}
         </section>
       </section>
-      <BridgeStatusPanel run={selectedRun} />
     </main>
   )
 }
@@ -1681,7 +1649,6 @@ function BridgeStatusPanel({ run }: { run?: WorkflowRun }) {
   const [isChecking, setIsChecking] = useState(false)
   const [failureCount, setFailureCount] = useState(0)
   const [lastSuccessAt, setLastSuccessAt] = useState<string | undefined>()
-  const [isOpen, setIsOpen] = useState(false)
   const [now, setNow] = useState(() => Date.now())
 
   async function refreshBridgeHealth() {
@@ -1734,59 +1701,66 @@ function BridgeStatusPanel({ run }: { run?: WorkflowRun }) {
     isChecking,
     isStale: Boolean(isStale)
   })
+  const visibleBridges = Object.values(health)
 
   return (
     <aside className="bridgeStatusPanel" aria-label="Agent bridge status">
-      <button
-        className={`bridgeStatusToggle ${panelStatus}`}
-        onClick={() => setIsOpen((current) => !current)}
-        title="Agent bridge status"
-        type="button"
-      >
-        {panelStatus === "online" ? <Wifi size={17} /> : <WifiOff size={17} />}
-        <span>Bridges</span>
-      </button>
-
-      <div className={isOpen ? "bridgeStatusCards open" : "bridgeStatusCards"}>
-        {bridgeDefinitions.map((bridge) => (
-          <BridgeStatusCard
-            bridge={bridge}
-            failureCount={failureCount}
-            health={health[bridge.id]}
-            isChecking={isChecking}
-            isStale={Boolean(isStale)}
-            key={bridge.id}
-            lastSuccessAt={lastSuccessAt}
-            now={now}
-            run={run}
-            onRefresh={refreshBridgeHealth}
-          />
-        ))}
+      <div className="bridgeStatusPanelHeader">
+        <span>
+          {panelStatus === "online" ? <Wifi size={16} /> : <WifiOff size={16} />}
+          <strong>Bridge Connections</strong>
+        </span>
+        <button
+          className="iconButton bridgeRefreshButton"
+          onClick={refreshBridgeHealth}
+          title="Refresh bridge health"
+          type="button"
+        >
+          <RefreshCw size={14} />
+        </button>
       </div>
+
+      {visibleBridges.length === 0 ? (
+        <p className="bridgeStatusEmpty">No bridge URLs registered</p>
+      ) : (
+        <div className="bridgeStatusCards">
+          {visibleBridges.map((bridge) => (
+            <BridgeStatusCard
+              agents={getBridgeAgents(bridge.id)}
+              failureCount={failureCount}
+              health={bridge}
+              isChecking={isChecking}
+              isStale={Boolean(isStale)}
+              key={bridge.id}
+              lastSuccessAt={lastSuccessAt}
+              now={now}
+              run={run}
+            />
+          ))}
+        </div>
+      )}
     </aside>
   )
 }
 
 function BridgeStatusCard({
-  bridge,
+  agents,
   failureCount,
   health,
   isChecking,
   isStale,
   lastSuccessAt,
   now,
-  run,
-  onRefresh
+  run
 }: {
-  bridge: BridgeDefinition
+  agents: AgentKind[]
   failureCount: number
-  health?: BridgeHealth
+  health: BridgeHealth
   isChecking: boolean
   isStale: boolean
   lastSuccessAt?: string
   now: number
   run?: WorkflowRun
-  onRefresh: () => void
 }) {
   const status = getBridgePanelStatus({
     failureCount,
@@ -1800,24 +1774,19 @@ function BridgeStatusCard({
       <div className="bridgeStatusCardHeader">
         <span>
           <Server size={16} />
-          <strong>{health?.label ?? bridge.label}</strong>
+          <span>
+            <strong>{health.label}</strong>
+            <small>{health.urlHost}</small>
+          </span>
         </span>
-        <button
-          className="iconButton bridgeRefreshButton"
-          onClick={onRefresh}
-          title="Refresh bridge health"
-          type="button"
-        >
-          <RefreshCw size={14} />
-        </button>
       </div>
       <div className="bridgeStatusMeta">
-        <StatusPill status={status === "not_configured" ? "stopped" : status} />
+        <StatusPill status={status} />
         <small>{formatBridgeCheckedAt(lastSuccessAt, now)}</small>
       </div>
       {health?.message ? <p>{health.message}</p> : null}
       <div className="bridgeAgentRows">
-        {bridge.agents.map((agent) => (
+        {agents.map((agent) => (
           <AgentBridgeRow agent={agent} key={agent} run={run} />
         ))}
       </div>
@@ -1847,6 +1816,14 @@ function AgentBridgeRow({
       <small>{latestAgentRun?.status ?? "idle"}</small>
     </div>
   )
+}
+
+function getBridgeAgents(bridgeId: BridgeId): AgentKind[] {
+  if (bridgeId === "codex-bridge") {
+    return ["codex"]
+  }
+
+  return ["openclaw.rowlet", "openclaw.roaringmoon", "openclaw.charizard"]
 }
 
 function AgentSelect({
@@ -2204,10 +2181,10 @@ function getAggregateBridgeStatus({
   isChecking: boolean
   isStale: boolean
 }): BridgePanelStatus {
-  const statuses = bridgeDefinitions.map((bridge) =>
+  const statuses = Object.values(health).map((bridge) =>
     getBridgePanelStatus({
       failureCount,
-      health: health[bridge.id],
+      health: bridge,
       isChecking,
       isStale
     })
