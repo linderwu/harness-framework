@@ -54,3 +54,22 @@ test("dashboard has a bridge health endpoint contract", () => {
   assert.match(route, /openclaw-a2a/)
   assert.match(route, /not_configured/)
 })
+
+test("dashboard renders the bridge status panel with the selected run", () => {
+  assert.match(dashboard, /<BridgeStatusPanel\s+run=\{selectedRun\}/)
+  assert.match(dashboard, /function BridgeStatusPanel\(/)
+})
+
+test("bridge status panel groups agents by bridge", () => {
+  const panel = functionBody("BridgeStatusPanel")
+
+  assert.match(panel, /bridgeDefinitions\.map/)
+  assert.match(panel, /BridgeStatusCard/)
+  assert.doesNotMatch(panel, /agentProfiles\.map\(\(agent\) =>\s*<BridgeStatusCard/)
+})
+
+test("bridge status polling and stale thresholds match the accepted design", () => {
+  assert.match(dashboard, /const bridgeHealthPollIntervalMs = 10_000/)
+  assert.match(dashboard, /const bridgeHealthStaleAfterMs = 30_000/)
+  assert.match(dashboard, /const bridgeOfflineFailureThreshold = 2/)
+})
