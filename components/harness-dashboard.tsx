@@ -26,7 +26,6 @@ import {
 import {
   ChangeEvent,
   FormEvent,
-  useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -160,23 +159,6 @@ export function HarnessDashboard({
         : undefined,
     [selectedProject, selectedProjectRuns]
   )
-  useEffect(() => {
-    if (projectSelectorItems.length === 0) {
-      setSelectedProjectId(undefined)
-      setSelectedRunId(undefined)
-      return
-    }
-
-    const selectedItem = projectSelectorItems.find(
-      (item) => item.project.id === selectedProjectId
-    )
-
-    if (!selectedItem) {
-      const fallbackItem = projectSelectorItems[0]
-      setSelectedProjectId(fallbackItem.project.id)
-      setSelectedRunId(fallbackItem.latestRun?.id)
-    }
-  }, [projectSelectorItems, selectedProjectId])
   const overrideCount = useMemo(
     () =>
       defaultEventSkills.filter(
@@ -214,13 +196,15 @@ export function HarnessDashboard({
     ])
     const nextProjects = (await projectsResponse.json()) as Project[]
     const nextRuns = (await runsResponse.json()) as WorkflowRun[]
+    const nextSelectorItems = buildProjectSelectorItems(nextProjects, nextRuns)
+    const fallbackProjectId = nextSelectorItems[0]?.project.id
 
     setProjects(nextProjects)
     setRuns(nextRuns)
     setSelectedProjectId((current) =>
       nextProjects.some((project) => project.id === current)
         ? current
-        : nextProjects[0]?.id
+        : fallbackProjectId
     )
     setSelectedRunId((current) => {
       if (nextRuns.some((run) => run.id === current)) {
@@ -230,7 +214,7 @@ export function HarnessDashboard({
       const activeProjectId =
         nextProjects.some((project) => project.id === selectedProjectId)
           ? selectedProjectId
-          : nextProjects[0]?.id
+          : fallbackProjectId
       const latestRun = nextRuns
         .filter((run) => run.projectId === activeProjectId)
         .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0]
