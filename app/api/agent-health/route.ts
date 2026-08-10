@@ -1,11 +1,12 @@
 import { NextResponse } from "next/server"
 
-type BridgeHealthStatus = "online" | "offline" | "not_configured"
+type BridgeHealthStatus = "online" | "offline"
 
 interface BridgeHealth {
-  id: "codex-bridge" | "openclaw-bridge" | "openclaw-a2a" | "manual"
+  id: "codex-bridge" | "openclaw-bridge"
   label: string
   status: BridgeHealthStatus
+  urlHost: string
   protocolVersion?: string
   capabilities?: string[]
   message?: string
@@ -14,31 +15,21 @@ interface BridgeHealth {
 const healthTimeoutMs = 2500
 
 export async function GET() {
-  const bridges = await Promise.all([
-    checkHttpBridge({
+  const bridgeChecks = [
+    createHttpBridgeCheck({
       id: "codex-bridge",
       label: "Codex Bridge",
       url: process.env.CODEX_BRIDGE_URL,
       token: process.env.CODEX_BRIDGE_TOKEN
     }),
-    checkHttpBridge({
+    createHttpBridgeCheck({
       id: "openclaw-bridge",
       label: "OpenClaw Bridge",
       url: process.env.OPENCLAW_BRIDGE_URL,
       token: process.env.OPENCLAW_BRIDGE_TOKEN
-    }),
-    checkCommandBridge({
-      id: "openclaw-a2a",
-      label: "OpenClaw A2A",
-      command: process.env.OPENCLAW_A2A_COMMAND
-    }),
-    {
-      id: "manual",
-      label: "Manual / Simulated",
-      status: "online",
-      message: "Manual and simulated runs do not require a network bridge."
-    } satisfies BridgeHealth
-  ])
+    })
+  ].filter((check): check is HttpBridgeCheck => Boolean(check))
+  const bridges = await Promise.all(bridgeChecks.map(checkHttpBridge))
 
   return NextResponse.json({
     checkedAt: new Date().toISOString(),
@@ -46,21 +37,34 @@ export async function GET() {
   })
 }
 
-async function checkHttpBridge(input: {
+interface HttpBridgeCheck {
+  id: BridgeHealth["id"]
+  label: string
+  url: string
+  token?: string
+  urlHost: string
+}
+
+function createHttpBridgeCheck(input: {
   id: BridgeHealth["id"]
   label: string
   url?: string
   token?: string
-}): Promise<BridgeHealth> {
+}): HttpBridgeCheck | undefined {
   if (!input.url) {
-    return {
-      id: input.id,
-      label: input.label,
-      status: "not_configured",
-      message: "Bridge URL is not configured."
-    }
+    return undefined
   }
 
+  return {
+    id: input.id,
+    label: input.label,
+    url: input.url,
+    token: input.token,
+    urlHost: new URL(input.url).host
+  }
+}
+
+async function checkHttpBridge(input: HttpBridgeCheck): Promise<BridgeHealth> {
   try {
     const response = await fetch(new URL("health", normalizeUrl(input.url)), {
       cache: "no-store",
@@ -77,6 +81,7 @@ async function checkHttpBridge(input: {
       id: input.id,
       label: input.label,
       status: response.ok ? "online" : "offline",
+      urlHost: input.urlHost,
       protocolVersion: data.protocolVersion,
       capabilities: data.capabilities,
       message: response.ok
@@ -88,30 +93,9 @@ async function checkHttpBridge(input: {
       id: input.id,
       label: input.label,
       status: "offline",
+      urlHost: input.urlHost,
       message: error instanceof Error ? error.message : String(error)
     }
-  }
-}
-
-function checkCommandBridge(input: {
-  id: BridgeHealth["id"]
-  label: string
-  command?: string
-}): BridgeHealth {
-  if (!input.command) {
-    return {
-      id: input.id,
-      label: input.label,
-      status: "not_configured",
-      message: "A2A command is not configured."
-    }
-  }
-
-  return {
-    id: input.id,
-    label: input.label,
-    status: "online",
-    message: "A2A command is configured."
   }
 }
 

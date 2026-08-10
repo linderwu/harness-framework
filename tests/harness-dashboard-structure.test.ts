@@ -45,14 +45,16 @@ test("project selector selection uses the latest run from the selector item", ()
   assert.match(dashboardShell, /setSelectedRunId\(item\.latestRun\?\.id\)/)
 })
 
-test("dashboard has a bridge health endpoint contract", () => {
+test("dashboard health endpoint only returns registered HTTP bridge URL records", () => {
   const route = readFileSync("app/api/agent-health/route.ts", "utf8")
 
-  assert.match(route, /export async function GET\(\)/)
-  assert.match(route, /codex-bridge/)
-  assert.match(route, /openclaw-bridge/)
-  assert.match(route, /openclaw-a2a/)
-  assert.match(route, /not_configured/)
+  assert.match(route, /CODEX_BRIDGE_URL/)
+  assert.match(route, /OPENCLAW_BRIDGE_URL/)
+  assert.match(route, /urlHost/)
+  assert.doesNotMatch(route, /OPENCLAW_A2A_COMMAND/)
+  assert.doesNotMatch(route, /openclaw-a2a/)
+  assert.doesNotMatch(route, /Manual \/ Simulated/)
+  assert.doesNotMatch(route, /not_configured/)
 })
 
 test("dashboard renders the bridge status panel with the selected run", () => {
