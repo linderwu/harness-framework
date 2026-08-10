@@ -25,3 +25,22 @@ test("run detail does not repeat the project progress timeline", () => {
 
   assert.doesNotMatch(runDetail, /className="panel timelinePanel"/)
 })
+
+test("dashboard uses project selector instead of an always-expanded project list", () => {
+  assert.match(dashboard, /<ProjectSelector/)
+  assert.match(dashboard, /function ProjectSelector\(/)
+  assert.doesNotMatch(
+    dashboard,
+    /projects\.map\(\(project\) =>\s*\(\s*<button[\s\S]*className=\{[\s\S]*runRow active/
+  )
+})
+
+test("project selector selection uses the latest run from the selector item", () => {
+  const dashboardShell = dashboard.slice(
+    dashboard.indexOf("<ProjectSelector"),
+    dashboard.indexOf("</section>", dashboard.indexOf("<ProjectSelector"))
+  )
+
+  assert.match(dashboardShell, /setSelectedProjectId\(item\.project\.id\)/)
+  assert.match(dashboardShell, /setSelectedRunId\(item\.latestRun\?\.id\)/)
+})
