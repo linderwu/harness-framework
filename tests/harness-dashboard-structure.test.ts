@@ -44,3 +44,13 @@ test("project selector selection uses the latest run from the selector item", ()
   assert.match(dashboardShell, /setSelectedProjectId\(item\.project\.id\)/)
   assert.match(dashboardShell, /setSelectedRunId\(item\.latestRun\?\.id\)/)
 })
+
+test("dashboard has a bridge health endpoint contract", () => {
+  const route = readFileSync("app/api/agent-health/route.ts", "utf8")
+
+  assert.match(route, /export async function GET\(\)/)
+  assert.match(route, /codex-bridge/)
+  assert.match(route, /openclaw-bridge/)
+  assert.match(route, /openclaw-a2a/)
+  assert.match(route, /not_configured/)
+})
