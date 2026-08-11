@@ -211,6 +211,40 @@ h2 {
   color: #bfd2e5;
 }
 
+.workflowModeSwitch {
+  background: rgba(6, 18, 32, 0.34);
+  border: 1px solid rgba(203, 213, 225, 0.2);
+  border-radius: 8px;
+  display: grid;
+  gap: 4px;
+  grid-template-columns: 1fr 1fr;
+  padding: 4px;
+}
+
+.workflowModeSwitch button {
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  color: #bfd2e5;
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 800;
+  min-height: 36px;
+  padding: 0 10px;
+}
+
+.workflowModeSwitch button:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #f8fbff;
+}
+
+.workflowModeSwitch .selected {
+  background: #e8fbff;
+  color: #0f2236;
+  box-shadow: 0 8px 20px rgba(6, 18, 32, 0.18);
+}
+
 label,
 fieldset {
   border: 0;

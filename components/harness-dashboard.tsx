@@ -391,6 +391,21 @@ export function HarnessDashboard({
     }))
   }
 
+  function setWorkflowMode(mode: "agent_task" | "project_workflow") {
+    setForm((currentForm) => ({
+      ...currentForm,
+      projectType:
+        mode === "agent_task"
+          ? "agent_task"
+          : currentForm.projectType === "agent_task"
+            ? "development"
+            : currentForm.projectType,
+      repository: mode === "agent_task" ? "" : currentForm.repository
+    }))
+    setBulkStage("all")
+    setMutationError(undefined)
+  }
+
   function updateSkillAssignment(skillId: string, agent: AgentKind) {
     setForm({
       ...form,
@@ -506,6 +521,23 @@ export function HarnessDashboard({
           <div className="panelHeader">
             <CircleDot size={18} />
             <h2>New Project</h2>
+          </div>
+
+          <div className="workflowModeSwitch" aria-label="Workflow mode">
+            <button
+              className={!isAgentTask ? "selected" : ""}
+              onClick={() => setWorkflowMode("project_workflow")}
+              type="button"
+            >
+              Project Workflow
+            </button>
+            <button
+              className={isAgentTask ? "selected" : ""}
+              onClick={() => setWorkflowMode("agent_task")}
+              type="button"
+            >
+              Agent Task
+            </button>
           </div>
 
           <button
