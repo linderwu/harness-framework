@@ -6,7 +6,8 @@ export const projectTypeOptions: Array<{ type: ProjectType; label: string }> = [
   { type: "testing", label: "Testing" },
   { type: "documentation", label: "Documentation" },
   { type: "diagnosis", label: "Diagnosis" },
-  { type: "decision", label: "Decision" }
+  { type: "decision", label: "Decision" },
+  { type: "agent_task", label: "Agent Task" }
 ]
 
 export const projectTemplates: Record<ProjectType, ProjectTemplate> = {
@@ -57,6 +58,14 @@ export const projectTemplates: Record<ProjectType, ProjectTemplate> = {
     defaultArtifacts: ["requirement", "finding", "design", "log"],
     creationPrompts: ["Decision question", "Options", "Decision owner"],
     defaultNextAction: "Frame the decision question."
+  },
+  agent_task: {
+    type: "agent_task",
+    label: "Agent Task",
+    phases: ["Instruction", "Response", "Completed"],
+    defaultArtifacts: ["log"],
+    creationPrompts: ["Instruction"],
+    defaultNextAction: "Run the agent task."
   }
 }
 

@@ -25,6 +25,7 @@ export async function POST(
   const run = createWorkflowRun({
     projectId: project.id,
     projectName: project.name,
+    projectType: project.type,
     repository: project.repository,
     requirement: project.goal,
     contextFiles: project.contextFiles,

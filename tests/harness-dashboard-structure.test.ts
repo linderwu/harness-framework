@@ -93,3 +93,10 @@ test("bridge status polling and stale thresholds match the accepted design", () 
   assert.match(dashboard, /const bridgeHealthStaleAfterMs = 30_000/)
   assert.match(dashboard, /const bridgeOfflineFailureThreshold = 2/)
 })
+
+test("compose form gives agent task projects a one-step instruction flow", () => {
+  assert.match(dashboard, /const isAgentTask = form\.projectType === "agent_task"/)
+  assert.match(dashboard, /isAgentTask \? "Instruction" : "Requirement"/)
+  assert.match(dashboard, /isAgentTask \? "Run Task" : "Create Project"/)
+  assert.match(dashboard, /!\s*isAgentTask \? \(\s*<label>\s*<span>Repository<\/span>/)
+})

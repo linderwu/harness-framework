@@ -158,6 +158,12 @@ function refreshProjectLinks(project: Project, workflowRuns: WorkflowRun[], warn
 }
 
 function phaseFromRun(projectType: ProjectType, run: WorkflowRun) {
+  const template = getProjectTemplate(projectType)
+
+  if (run.currentStage === "completed") {
+    return template.phases[template.phases.length - 1]
+  }
+
   const stageIndex: Record<WorkflowRun["currentStage"], number> = {
     intake: 0,
     plan: 1,
@@ -167,7 +173,7 @@ function phaseFromRun(projectType: ProjectType, run: WorkflowRun) {
     completed: 5
   }
 
-  return getProjectTemplate(projectType).phases[stageIndex[run.currentStage]] ?? getProjectTemplate(projectType).phases[0]
+  return template.phases[stageIndex[run.currentStage]] ?? template.phases[0]
 }
 
 function projectStatusFromRun(status: WorkflowRun["status"]): ProjectStatus {

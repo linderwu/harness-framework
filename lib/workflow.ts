@@ -14,7 +14,8 @@ import type {
   WorkflowEventSkill,
   WorkflowEventType,
   WorkflowRun,
-  WorkflowStage
+  WorkflowStage,
+  ProjectType
 } from "./types"
 import { getAgentLabel, normalizeAgentKind, openClawAgentKinds } from "./agents"
 
@@ -353,6 +354,30 @@ export function createDefaultEventSkills(): WorkflowEventSkill[] {
   ]
 }
 
+export function createAgentTaskEventSkills(): WorkflowEventSkill[] {
+  return [
+    {
+      id: "agent_task.response",
+      eventType: "closeout",
+      stage: "intake",
+      name: "Agent Task Response",
+      purpose: "Run one user instruction and capture the agent response on the same page.",
+      trigger: "A dashboard agent task is started.",
+      allowedActors: ["codex", ...openClawAgentKinds],
+      inputs: ["user instruction", "optional context files"],
+      outputs: ["agent response artifact", "completed task run"],
+      constraints: [
+        "Do not require a repository.",
+        "Do not open planning, design, implementation, or verification gates.",
+        "Preserve the original instruction with the completed response."
+      ],
+      gates: ["Task is complete when the agent response is captured."],
+      knowledgeSources: ["dashboard instruction", "attached context files"],
+      verificationRules: ["Agent response artifact is non-empty."]
+    }
+  ]
+}
+
 export function getDefaultSkillExecutor(
   skillId: string,
   selectedAgent: AgentKind
@@ -371,6 +396,7 @@ export function getDefaultSkillExecutor(
 export function createWorkflowRun(input: {
   projectId: string
   projectName: string
+  projectType?: ProjectType
   repository: string
   requirement: string
   contextFiles?: ProjectContextFile[]
@@ -381,7 +407,11 @@ export function createWorkflowRun(input: {
 }): WorkflowRun {
   const now = new Date().toISOString()
   const id = crypto.randomUUID()
-  const eventSkills = createDefaultEventSkills()
+  const projectType = input.projectType ?? "development"
+  const eventSkills =
+    projectType === "agent_task"
+      ? createAgentTaskEventSkills()
+      : createDefaultEventSkills()
   const selectedAgent = normalizeAgentKind(input.selectedAgent)
   const stageModes = Object.fromEntries(
     stages.map((stage) => [stage, stage === "completed" ? "manual" : "hybrid"])
@@ -426,6 +456,7 @@ export function createWorkflowRun(input: {
     id,
     projectId: input.projectId,
     projectName: input.projectName,
+    projectType,
     repository: input.repository,
     requirement: input.requirement,
     contextFiles: input.contextFiles ?? [],
@@ -469,6 +500,10 @@ export async function advanceWorkflow(
 
   const nextRun = cloneRun(run)
   ensureEventSkillState(nextRun)
+
+  if (nextRun.projectType === "agent_task") {
+    return advanceAgentTask(nextRun, options)
+  }
 
   switch (nextRun.currentStage) {
     case "intake":
@@ -817,6 +852,39 @@ export async function advanceWorkflow(
   nextRun.updatedAt = new Date().toISOString()
   updateEventLogStatus(nextRun)
   return nextRun
+}
+
+async function advanceAgentTask(
+  run: WorkflowRun,
+  options: {
+    invokeAgent?: AgentInvoker
+    resolveRuntimeSkillBundles?: RuntimeSkillResolver
+  }
+) {
+  run.status = "running"
+  const taskResult = await addAgentArtifact(
+    run,
+    "agent_task.response",
+    "intake",
+    "log",
+    "Agent Response",
+    [
+      `Task: ${run.projectName}`,
+      "Instruction:",
+      run.requirement
+    ].join("\n"),
+    options.invokeAgent,
+    options.resolveRuntimeSkillBundles
+  )
+
+  if (taskResult.status !== "failed") {
+    run.currentStage = "completed"
+    run.status = "completed"
+  }
+
+  run.updatedAt = new Date().toISOString()
+  updateEventLogStatus(run)
+  return run
 }
 
 export function decideApprovalGate(
@@ -1331,7 +1399,11 @@ function createRuntimeSkillAuditMessage(input: {
 function ensureEventSkillState(run: WorkflowRun) {
   run.schemaVersion = run.schemaVersion ?? 2
   run.version = run.version ?? 1
-  run.eventSkills = run.eventSkills ?? createDefaultEventSkills()
+  run.eventSkills =
+    run.eventSkills ??
+    (run.projectType === "agent_task"
+      ? createAgentTaskEventSkills()
+      : createDefaultEventSkills())
   run.events = run.events ?? []
   run.contextFiles = run.contextFiles ?? []
   run.revisions = run.revisions ?? []

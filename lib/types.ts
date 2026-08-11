@@ -24,6 +24,7 @@ export type ProjectType =
   | "documentation"
   | "diagnosis"
   | "decision"
+  | "agent_task"
 
 export type ProjectStatus =
   | "active"
@@ -328,6 +329,7 @@ export interface WorkflowRun {
   id: string
   projectId: string
   projectName: string
+  projectType?: ProjectType
   repository: string
   requirement: string
   contextFiles: ProjectContextFile[]

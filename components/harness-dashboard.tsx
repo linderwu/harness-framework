@@ -180,9 +180,10 @@ export function HarnessDashboard({
     () =>
       selectedProject
         ? buildProjectOverview(selectedProject, selectedProjectRuns)
-        : undefined,
+      : undefined,
     [selectedProject, selectedProjectRuns]
   )
+  const isAgentTask = form.projectType === "agent_task"
   const overrideCount = useMemo(
     () =>
       defaultEventSkills.filter(
@@ -266,9 +267,21 @@ export function HarnessDashboard({
         })
       })
       const project = await readProjectMutationResponse(response)
+      const run = isAgentTask
+        ? await readRunMutationResponse(
+            await fetch(`/api/projects/${project.id}/workflow-runs`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                selectedAgent: form.selectedAgent
+              })
+            })
+          )
+        : undefined
+
       await refreshWorkspace()
       setSelectedProjectId(project.id)
-      setSelectedRunId(undefined)
+      setSelectedRunId(run?.id)
     } catch (error) {
       setMutationError(error instanceof Error ? error.message : String(error))
     } finally {
@@ -502,9 +515,17 @@ export function HarnessDashboard({
           >
             <ClipboardList size={18} />
             <span>
-              <strong>Project / Repository / Requirement</strong>
+              <strong>
+                {isAgentTask
+                  ? "Task / Agent Instruction"
+                  : "Project / Repository / Requirement"}
+              </strong>
               <small>
-                {form.projectName} - {form.repository || "GitHub repo not set"}
+                {isAgentTask
+                  ? form.requirement
+                  : `${form.projectName} - ${
+                      form.repository || "GitHub repo not set"
+                    }`}
               </small>
             </span>
             <ChevronRight size={18} />
@@ -517,9 +538,15 @@ export function HarnessDashboard({
           >
             <SlidersHorizontal size={18} />
             <span>
-              <strong>Agent / Skills / Approval Policies</strong>
+              <strong>
+                {isAgentTask ? "Agent" : "Agent / Skills / Approval Policies"}
+              </strong>
               <small>
-                {getAgentLabel(form.selectedAgent)} - design and verification gates
+                {isAgentTask
+                  ? getAgentLabel(form.selectedAgent)
+                  : `${getAgentLabel(
+                      form.selectedAgent
+                    )} - design and verification gates`}
               </small>
             </span>
             <ChevronRight size={18} />
@@ -531,7 +558,7 @@ export function HarnessDashboard({
               disabled={isMutating}
             >
               <Play size={17} />
-              Create Project
+              {isAgentTask ? "Run Task" : "Create Project"}
             </button>
             <button
               className="stopButton"
@@ -579,8 +606,12 @@ export function HarnessDashboard({
                     <p className="eyebrow">Workflow Setup</p>
                     <h2>
                       {openComposeSection === "requirement"
-                        ? "Project / Repository / Requirement"
-                        : "Agent / Skills / Approval Policies"}
+                        ? isAgentTask
+                          ? "Task / Agent Instruction"
+                          : "Project / Repository / Requirement"
+                        : isAgentTask
+                          ? "Agent"
+                          : "Agent / Skills / Approval Policies"}
                     </h2>
                   </div>
                   <button
@@ -604,7 +635,14 @@ export function HarnessDashboard({
                           const projectType = event.target.value as ProjectType
                           const template = getProjectTemplate(projectType)
 
-                          setForm({ ...form, projectType })
+                          setForm({
+                            ...form,
+                            projectType,
+                            repository:
+                              projectType === "agent_task"
+                                ? ""
+                                : form.repository
+                          })
                           setBulkStage("all")
                           setMutationError(template.warning)
                         }}
@@ -627,20 +665,24 @@ export function HarnessDashboard({
                       />
                     </label>
 
-                    <label>
-                      <span>Repository</span>
-                      <input
-                        placeholder="my-new-repo or owner/repository"
-                        value={form.repository}
-                        onChange={(event) =>
-                          setForm({ ...form, repository: event.target.value })
-                        }
-                      />
-                    </label>
+                    {!isAgentTask ? (
+                      <label>
+                        <span>Repository</span>
+                        <input
+                          placeholder="my-new-repo or owner/repository"
+                          value={form.repository}
+                          onChange={(event) =>
+                            setForm({ ...form, repository: event.target.value })
+                          }
+                        />
+                      </label>
+                    ) : null}
 
                     <label>
                       <span className="requirementHeader">
-                        <span>Requirement</span>
+                        <span>
+                          {isAgentTask ? "Instruction" : "Requirement"}
+                        </span>
                         <span className="requirementActions">
                           {form.contextFiles.length > 0 ? (
                             <small>
@@ -706,6 +748,17 @@ export function HarnessDashboard({
                   </div>
                 ) : (
                   <div className="composeSheetBody">
+                    {isAgentTask ? (
+                      <section className="agentTaskAgentPanel">
+                        <label>
+                          <span>Agent</span>
+                          <AgentSelect
+                            value={form.selectedAgent}
+                            onChange={updateSelectedAgent}
+                          />
+                        </label>
+                      </section>
+                    ) : (
                     <section className="assignmentWorkbench">
                       <div className="assignmentHeader">
                         <div>
@@ -891,6 +944,7 @@ export function HarnessDashboard({
                         </fieldset>
                       </div>
                     </section>
+                    )}
                   </div>
                 )}
 
@@ -1204,12 +1258,16 @@ function ProjectDetail({
             className="primaryButton"
             disabled={isMutating}
             onClick={() => onStartRun(project)}
-            title="Start project run"
+            title={
+              project.type === "agent_task"
+                ? "Run agent task"
+                : "Start project run"
+            }
           >
             <Play size={18} />
-            Start Run
+            {project.type === "agent_task" ? "Run Task" : "Start Run"}
           </button>
-          {selectedRun ? (
+          {selectedRun && project.type !== "agent_task" ? (
             <button
               className="iconTextButton"
               disabled={

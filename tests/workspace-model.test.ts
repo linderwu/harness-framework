@@ -49,10 +49,18 @@ function legacyRun(overrides: Partial<WorkflowRun> = {}): WorkflowRun {
   }
 }
 
-test("project templates expose all six project types with phase labels", () => {
+test("project templates expose project types with phase labels", () => {
   assert.deepEqual(
     projectTypeOptions.map((option) => option.type),
-    ["research", "development", "testing", "documentation", "diagnosis", "decision"]
+    [
+      "research",
+      "development",
+      "testing",
+      "documentation",
+      "diagnosis",
+      "decision",
+      "agent_task"
+    ]
   )
 
   assert.deepEqual(getProjectTemplate("research").phases, ["Brief", "Research Plan", "Evidence", "Synthesis", "Review", "Completed"])
@@ -61,6 +69,7 @@ test("project templates expose all six project types with phase labels", () => {
   assert.deepEqual(getProjectTemplate("documentation").phases, ["Brief", "Outline", "Draft", "Review", "Publish", "Completed"])
   assert.deepEqual(getProjectTemplate("diagnosis").phases, ["Report", "Reproduce", "Diagnose", "Fix Plan", "Verify", "Completed"])
   assert.deepEqual(getProjectTemplate("decision").phases, ["Question", "Options", "Evidence", "Tradeoff", "Record", "Completed"])
+  assert.deepEqual(getProjectTemplate("agent_task").phases, ["Instruction", "Response", "Completed"])
 })
 
 test("unknown project type falls back to development with a warning", () => {
@@ -212,6 +221,46 @@ test("createWorkflowRun requires and preserves the selected project id", () => {
   assert.equal(run.projectName, project.name)
   assert.equal(run.repository, project.repository)
   assert.equal(run.requirement, project.goal)
+})
+
+test("agent task workflow completes in one agent response without a repository", async () => {
+  const project = createProject({
+    name: "Summarize Notes",
+    type: "agent_task",
+    goal: "Summarize today's notes into actions.",
+    repository: "",
+    source: "dashboard",
+    contextFiles: []
+  })
+  const run = createWorkflowRun({
+    projectId: project.id,
+    projectName: project.name,
+    projectType: project.type,
+    repository: project.repository,
+    requirement: project.goal,
+    contextFiles: project.contextFiles,
+    selectedAgent: "codex",
+    designApprovalActor: "human",
+    verificationApprovalActor: "human"
+  })
+
+  const completedRun = await advanceWorkflow(run, {
+    invokeAgent: async () => ({
+      status: "completed",
+      source: "codex-bridge",
+      body: "Action 1: follow up with the team."
+    })
+  })
+
+  assert.equal(project.repository, "")
+  assert.equal(run.repository, "")
+  assert.equal(completedRun.status, "completed")
+  assert.equal(completedRun.currentStage, "completed")
+  assert.equal(completedRun.artifacts.length, 1)
+  assert.equal(completedRun.artifacts[0].type, "log")
+  assert.equal(completedRun.artifacts[0].title, "Agent Response")
+  assert.equal(completedRun.artifacts[0].body, "Action 1: follow up with the team.")
+  assert.equal(completedRun.approvalGates.length, 0)
 })
 
 test("default workflow event skills declare Superpowers for agent-executed development events", () => {
