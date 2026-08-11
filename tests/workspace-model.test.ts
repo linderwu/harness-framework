@@ -259,7 +259,22 @@ test("agent task workflow completes in one agent response without a repository",
   assert.equal(completedRun.artifacts.length, 1)
   assert.equal(completedRun.artifacts[0].type, "log")
   assert.equal(completedRun.artifacts[0].title, "Agent Response")
-  assert.equal(completedRun.artifacts[0].body, "Action 1: follow up with the team.")
+  assert.equal(
+    completedRun.artifacts[0].body,
+    [
+      "**Original Instruction**",
+      "Summarize today's notes into actions.",
+      "",
+      "**Raw Agent Response**",
+      "Action 1: follow up with the team.",
+      "",
+      "**Agent Response**",
+      "Action 1: follow up with the team.",
+      "",
+      "**Closeout Status**",
+      "complete"
+    ].join("\n")
+  )
   assert.equal(completedRun.approvalGates.length, 0)
 })
 

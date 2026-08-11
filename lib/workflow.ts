@@ -361,19 +361,23 @@ export function createAgentTaskEventSkills(): WorkflowEventSkill[] {
       eventType: "closeout",
       stage: "intake",
       name: "Agent Task Response",
-      purpose: "Run one user instruction and capture the agent response on the same page.",
+      purpose: "Run one user instruction and display the full agent response while preserving structured closeout fields.",
       trigger: "A dashboard agent task is started.",
       allowedActors: ["codex", ...openClawAgentKinds],
       inputs: ["user instruction", "optional context files"],
-      outputs: ["agent response artifact", "completed task run"],
+      outputs: ["mixed-mode agent response artifact", "completed task run"],
       constraints: [
         "Do not require a repository.",
         "Do not open planning, design, implementation, or verification gates.",
-        "Preserve the original instruction with the completed response."
+        "Preserve the original instruction with the completed response.",
+        "Display the full raw agent response and also provide structured fields for dashboard indexing."
       ],
-      gates: ["Task is complete when the agent response is captured."],
+      gates: ["Task is complete when the mixed-mode agent response is captured."],
       knowledgeSources: ["dashboard instruction", "attached context files"],
-      verificationRules: ["Agent response artifact is non-empty."]
+      verificationRules: [
+        "Agent response artifact is non-empty.",
+        "Artifact contains Original Instruction, Raw Agent Response, Agent Response, and Closeout Status sections."
+      ]
     }
   ]
 }
@@ -862,6 +866,7 @@ async function advanceAgentTask(
   }
 ) {
   run.status = "running"
+  const artifactStartIndex = run.artifacts.length
   const taskResult = await addAgentArtifact(
     run,
     "agent_task.response",
@@ -876,6 +881,15 @@ async function advanceAgentTask(
     options.invokeAgent,
     options.resolveRuntimeSkillBundles
   )
+  const responseArtifact = run.artifacts[artifactStartIndex]
+
+  if (responseArtifact) {
+    responseArtifact.body = formatAgentTaskMixedResponse({
+      instruction: run.requirement,
+      rawResponse: taskResult.body,
+      closeoutStatus: taskResult.status === "failed" ? "failed" : "complete"
+    })
+  }
 
   if (taskResult.status !== "failed") {
     run.currentStage = "completed"
@@ -885,6 +899,26 @@ async function advanceAgentTask(
   run.updatedAt = new Date().toISOString()
   updateEventLogStatus(run)
   return run
+}
+
+function formatAgentTaskMixedResponse(input: {
+  instruction: string
+  rawResponse: string
+  closeoutStatus: "complete" | "failed"
+}) {
+  return [
+    "**Original Instruction**",
+    input.instruction,
+    "",
+    "**Raw Agent Response**",
+    input.rawResponse,
+    "",
+    "**Agent Response**",
+    input.rawResponse,
+    "",
+    "**Closeout Status**",
+    input.closeoutStatus
+  ].join("\n")
 }
 
 export function decideApprovalGate(
