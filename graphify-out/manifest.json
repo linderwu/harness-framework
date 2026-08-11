@@ -1,0 +1,417 @@
+{
+  ".harness/skill-registry.json": {
+    "mtime": 1786088167.8000033,
+    "ast_hash": "716d13bc05d0a88a749c8e88cffba962",
+    "semantic_hash": ""
+  },
+  ".harness/skill.lock.json": {
+    "mtime": 1786088167.8000033,
+    "ast_hash": "2de044b1860e3f3d7d8d12df4257cd6e",
+    "semantic_hash": ""
+  },
+  ".omx/metrics.json": {
+    "mtime": 1786438684.6069703,
+    "ast_hash": "7a9aa8749e87705a983bcb77734b7649",
+    "semantic_hash": ""
+  },
+  ".omx/state/deep-interview-state.json": {
+    "mtime": 1786438684.6266184,
+    "ast_hash": "26ce4de465b19cce60ae79767c50128f",
+    "semantic_hash": ""
+  },
+  ".omx/state/hud-state.json": {
+    "mtime": 1786438684.610997,
+    "ast_hash": "aa1aa8e7173135a44ae12d4dd823f60c",
+    "semantic_hash": ""
+  },
+  ".omx/state/notify-hook-state.json": {
+    "mtime": 1786438684.5870228,
+    "ast_hash": "c010e99a7e73c5d9fd9971298d156e24",
+    "semantic_hash": ""
+  },
+  ".omx/state/session.json": {
+    "mtime": 1786438545.2496226,
+    "ast_hash": "9368f77ed6930f7137f0c40b33c48d5e",
+    "semantic_hash": ""
+  },
+  ".omx/state/sessions/019fa6be-7330-7583-9c3b-f689d230418a/deep-interview-state.json": {
+    "mtime": 1785215973.7054088,
+    "ast_hash": "e81e02e8af342d66797c2b56608e9f82",
+    "semantic_hash": ""
+  },
+  ".omx/state/sessions/019fa6be-7330-7583-9c3b-f689d230418a/prompt-routing-state.json": {
+    "mtime": 1785229025.2018783,
+    "ast_hash": "814675f0c88b2e16013f6280b5389f60",
+    "semantic_hash": ""
+  },
+  ".omx/state/sessions/019fa6be-7330-7583-9c3b-f689d230418a/questions/question-2026-07-28T03-51-26-830Z-0d704cd6.json": {
+    "mtime": 1785210686.855221,
+    "ast_hash": "62b8352c76f43ed4fb00c1cacbd49dba",
+    "semantic_hash": ""
+  },
+  ".omx/state/sessions/019fa6be-7330-7583-9c3b-f689d230418a/skill-active-state.json": {
+    "mtime": 1785215973.6917703,
+    "ast_hash": "d35cb8f442bfa04f6bdf38364271e184",
+    "semantic_hash": ""
+  },
+  ".omx/state/sessions/019fc524-09ba-7341-b607-a02733f5034c/prompt-routing-state.json": {
+    "mtime": 1785718986.8714938,
+    "ast_hash": "038d2aa47b70cff19a2c5c9a5ae53831",
+    "semantic_hash": ""
+  },
+  ".omx/state/sessions/019fdad9-cc7b-7ff1-b9ac-1b17dd7575a0/deep-interview-state.json": {
+    "mtime": 1786087669.5984259,
+    "ast_hash": "af5055395fc1dd4fa992cb8676aa4cc1",
+    "semantic_hash": ""
+  },
+  ".omx/state/sessions/019fdad9-cc7b-7ff1-b9ac-1b17dd7575a0/skill-active-state.json": {
+    "mtime": 1786087874.4892359,
+    "ast_hash": "f4dadf4e3ccde20f029d6442a6d59a91",
+    "semantic_hash": ""
+  },
+  ".omx/state/sessions/019fdaf6-3ab8-75d1-82ef-22d8e2ea603f/prompt-routing-state.json": {
+    "mtime": 1786085149.8101337,
+    "ast_hash": "9bca0ff80f0aa66ed9383a46a2b1be6f",
+    "semantic_hash": ""
+  },
+  ".omx/state/sessions/019fdb37-1630-7602-a5df-8fbd80474cf2/prompt-routing-state.json": {
+    "mtime": 1786090186.3763678,
+    "ast_hash": "88568fcfb81fb6be4d1ddb4fc0f0a834",
+    "semantic_hash": ""
+  },
+  ".omx/state/sessions/019fdb53-8fc6-7dd0-8e9f-50143454a5ed/prompt-routing-state.json": {
+    "mtime": 1786091875.855349,
+    "ast_hash": "55396128c13f6353c41a71cb909ab979",
+    "semantic_hash": ""
+  },
+  ".omx/state/sessions/019fea7c-36eb-7401-a3f4-b877584333ca/prompt-routing-state.json": {
+    "mtime": 1786349305.717044,
+    "ast_hash": "760eb6991183a2b91c468f755d1579a2",
+    "semantic_hash": ""
+  },
+  ".omx/state/sessions/019fee8c-6109-7ad3-ba7b-5745b9e0c129/skill-active-state.json": {
+    "mtime": 1786413613.967087,
+    "ast_hash": "ce3c1ec7bfe780e852e77a547dea062f",
+    "semantic_hash": ""
+  },
+  ".omx/state/sessions/019ff006-9ac0-7870-ad78-f6d08fc95500/prompt-routing-state.json": {
+    "mtime": 1786438434.2299361,
+    "ast_hash": "2fb3d1d1ed44a12784bafe871a281e44",
+    "semantic_hash": ""
+  },
+  ".omx/state/sessions/019ff008-b286-7cf1-bef6-8b4a5cf26a4f/deep-interview-state.json": {
+    "mtime": 1786438807.1460385,
+    "ast_hash": "6447ce630e9e5200ecf4e0d1b434615e",
+    "semantic_hash": ""
+  },
+  ".omx/state/sessions/019ff008-b286-7cf1-bef6-8b4a5cf26a4f/questions/question-2026-08-11T08-57-22-642Z-545bbbd8.json": {
+    "mtime": 1786438642.65705,
+    "ast_hash": "8dda1e5ff148561e1fe00c27e4cf3cb3",
+    "semantic_hash": ""
+  },
+  ".omx/state/sessions/019ff008-b286-7cf1-bef6-8b4a5cf26a4f/skill-active-state.json": {
+    "mtime": 1786438807.1334705,
+    "ast_hash": "7f38b98fe356ff76cffe4bfffa1da955",
+    "semantic_hash": ""
+  },
+  ".omx/state/skill-active-state.json": {
+    "mtime": 1786438807.1325102,
+    "ast_hash": "ee56fdcc064baa4bc6cefe9a2c5cea40",
+    "semantic_hash": ""
+  },
+  ".omx/state/team-leader-nudge.json": {
+    "mtime": 1786438489.020441,
+    "ast_hash": "34dfcf00a869fbd821fdf5112259f8aa",
+    "semantic_hash": ""
+  },
+  ".omx/state/tmux-hook-state.json": {
+    "mtime": 1786438684.6391275,
+    "ast_hash": "de898494c326c1b19b5c637a9560a25e",
+    "semantic_hash": ""
+  },
+  "app/api/agent-health/route.ts": {
+    "mtime": 1786349850.035681,
+    "ast_hash": "7d94c80cf8a59fc5f01e7ca2b4088494",
+    "semantic_hash": ""
+  },
+  "app/api/approval-gates/[id]/decide/route.ts": {
+    "mtime": 1785206100.0962527,
+    "ast_hash": "d1e540f46a123cfc143b9ada8d55755e",
+    "semantic_hash": ""
+  },
+  "app/api/projects/[id]/workflow-runs/route.ts": {
+    "mtime": 1786417204.8981223,
+    "ast_hash": "f228820ea3b0e1caf1356beac05a2e87",
+    "semantic_hash": ""
+  },
+  "app/api/projects/route.ts": {
+    "mtime": 1785218613.300328,
+    "ast_hash": "3f11f5ededf877f06fc2d7899cd6e6d6",
+    "semantic_hash": ""
+  },
+  "app/api/workflow-runs/[id]/advance/route.ts": {
+    "mtime": 1786088167.8010652,
+    "ast_hash": "8ec8aa145969675640b51ac31aca0bf0",
+    "semantic_hash": ""
+  },
+  "app/api/workflow-runs/[id]/cancel/route.ts": {
+    "mtime": 1785206100.097249,
+    "ast_hash": "65b0f22ce3451ff54bf0c59718123c6c",
+    "semantic_hash": ""
+  },
+  "app/api/workflow-runs/[id]/route.ts": {
+    "mtime": 1785206100.097249,
+    "ast_hash": "20546f4cd2808aad1896a04111f89e15",
+    "semantic_hash": ""
+  },
+  "app/api/workflow-runs/[id]/stop/route.ts": {
+    "mtime": 1785206100.0982158,
+    "ast_hash": "067aeb716f6fbfa2cce30593b3ae0e00",
+    "semantic_hash": ""
+  },
+  "app/api/workflow-runs/route.ts": {
+    "mtime": 1786088167.8010652,
+    "ast_hash": "df87e4ea1aae83e7b9d418c6d5afd1bd",
+    "semantic_hash": ""
+  },
+  "app/layout.tsx": {
+    "mtime": 1786088515.6364143,
+    "ast_hash": "45ab9215a30d3d4ce72a7d5b80af3ba7",
+    "semantic_hash": ""
+  },
+  "app/page.tsx": {
+    "mtime": 1785218613.3043175,
+    "ast_hash": "d3e5a6d8522313fee50ba5df5ddacee6",
+    "semantic_hash": ""
+  },
+  "components/harness-dashboard.tsx": {
+    "mtime": 1786426889.8244824,
+    "ast_hash": "c7c6275a8f9e037efbac72b3ac3938e8",
+    "semantic_hash": ""
+  },
+  "eslint.config.mjs": {
+    "mtime": 1786088280.916428,
+    "ast_hash": "9b6cb64b667cd041d8115b679ca105d5",
+    "semantic_hash": ""
+  },
+  "lib/a2a-protocol.ts": {
+    "mtime": 1785206100.0992475,
+    "ast_hash": "037b1685dedae886dbd9f3a598085b66",
+    "semantic_hash": ""
+  },
+  "lib/agent-bridge.ts": {
+    "mtime": 1786323015.06153,
+    "ast_hash": "e0ec6a6a8896bb7d52e31670f01fa482",
+    "semantic_hash": ""
+  },
+  "lib/agents.ts": {
+    "mtime": 1785218613.313977,
+    "ast_hash": "34b3f0621dbed2e905701a0d7034d672",
+    "semantic_hash": ""
+  },
+  "lib/github-repository.ts": {
+    "mtime": 1785218613.315972,
+    "ast_hash": "f0d0d26003eaa40cbfbb452f1b8ca5d0",
+    "semantic_hash": ""
+  },
+  "lib/ouroboros-agent-contract.ts": {
+    "mtime": 1785218613.317966,
+    "ast_hash": "b1ed6a52c2e9d8557e38a121375025ba",
+    "semantic_hash": ""
+  },
+  "lib/project-selector.ts": {
+    "mtime": 1786345050.234576,
+    "ast_hash": "704fcf8cf6b43557a12482943f617f4b",
+    "semantic_hash": ""
+  },
+  "lib/project-templates.ts": {
+    "mtime": 1786417168.1649334,
+    "ast_hash": "dabc5aaf5bdbb521d6d0b3116a643da0",
+    "semantic_hash": ""
+  },
+  "lib/runtime-skills.ts": {
+    "mtime": 1786088167.8010652,
+    "ast_hash": "a6e7d1f714609171f992dcb78e996000",
+    "semantic_hash": ""
+  },
+  "lib/store.ts": {
+    "mtime": 1785218613.3207002,
+    "ast_hash": "1126a326861cc199e1e2e12fc29328a8",
+    "semantic_hash": ""
+  },
+  "lib/types.ts": {
+    "mtime": 1786417156.5225408,
+    "ast_hash": "37de3a26af5bf7c2d38cf1224eecf408",
+    "semantic_hash": ""
+  },
+  "lib/workflow.ts": {
+    "mtime": 1786429927.4001606,
+    "ast_hash": "44ee1961825abf007bd7846b26d77250",
+    "semantic_hash": ""
+  },
+  "lib/workspace.ts": {
+    "mtime": 1786417199.5378077,
+    "ast_hash": "c3caf7c37220834543ea7165de25b6ec",
+    "semantic_hash": ""
+  },
+  "next-env.d.ts": {
+    "mtime": 1785210484.9700477,
+    "ast_hash": "b698cdd97fe8e3bd16dcd74899ad7cef",
+    "semantic_hash": ""
+  },
+  "next.config.mjs": {
+    "mtime": 1785206100.0992475,
+    "ast_hash": "11f938b820bc97e42be9ddae0f9e3ea0",
+    "semantic_hash": ""
+  },
+  "package.json": {
+    "mtime": 1786345050.2356,
+    "ast_hash": "8e095b006a389d8c69006a7ece3bf9d6",
+    "semantic_hash": ""
+  },
+  "proxy.ts": {
+    "mtime": 1786088515.9687777,
+    "ast_hash": "d62e8349e1a10546a1872ec7e5de0582",
+    "semantic_hash": ""
+  },
+  "scripts/codex-bridge.mjs": {
+    "mtime": 1786088167.8010652,
+    "ast_hash": "a4a3d5eac8e22a4dbd0b75cfc76069be",
+    "semantic_hash": ""
+  },
+  "tests/harness-dashboard-structure.test.ts": {
+    "mtime": 1786426865.553979,
+    "ast_hash": "a7f8bb1858c140075639ed4be25d51f6",
+    "semantic_hash": ""
+  },
+  "tests/layout-css.test.ts": {
+    "mtime": 1786349850.038673,
+    "ast_hash": "da047e1467303919ab1fc39f95764744",
+    "semantic_hash": ""
+  },
+  "tests/project-selector.test.ts": {
+    "mtime": 1786345050.2375662,
+    "ast_hash": "0f3e13daa8dd5b3a17bcf53094d4efed",
+    "semantic_hash": ""
+  },
+  "tests/runtime-skills.test.ts": {
+    "mtime": 1786088167.8010652,
+    "ast_hash": "563d497b4e7d24d8138a5d12c5c117ab",
+    "semantic_hash": ""
+  },
+  "tests/workflow.test.ts": {
+    "mtime": 1786088928.8711917,
+    "ast_hash": "eb15bfd835a5eb9cd9d112f3928311c4",
+    "semantic_hash": ""
+  },
+  "tests/workspace-model.test.ts": {
+    "mtime": 1786429887.2865787,
+    "ast_hash": "564c2abb840defc6bf9c8e467d4b7b41",
+    "semantic_hash": ""
+  },
+  "tsconfig.json": {
+    "mtime": 1785206100.0992475,
+    "ast_hash": "47fe7f910945f851236d69fe5534ba35",
+    "semantic_hash": ""
+  },
+  ".omx/context/ouroboros-command-center-20260728T035022Z.md": {
+    "mtime": 1785210622.972463,
+    "ast_hash": "bc0a2f99b6b0d9a80830c152ea966d26",
+    "semantic_hash": ""
+  },
+  ".omx/plans/harness-framework-plan.md": {
+    "mtime": 1785206100.0932286,
+    "ast_hash": "12e514428bd82e27e22abe1e1686f6c0",
+    "semantic_hash": ""
+  },
+  "README.md": {
+    "mtime": 1786323015.0065758,
+    "ast_hash": "fc5ccdfe92bdca64c821d63f64a7a940",
+    "semantic_hash": ""
+  },
+  "docs/local-codex-bridge.md": {
+    "mtime": 1786323015.0475216,
+    "ast_hash": "8a1593eb2a43beae5e8e4ac02b70b440",
+    "semantic_hash": ""
+  },
+  "docs/superpowers/plans/2026-07-28-personal-project-command-center.md": {
+    "mtime": 1785218613.3089912,
+    "ast_hash": "2ee73cc11fb5b973061eb2a28256aded",
+    "semantic_hash": ""
+  },
+  "docs/superpowers/plans/2026-08-07-superpowers-runtime-skill-registry.md": {
+    "mtime": 1786086832.9390678,
+    "ast_hash": "17df3f30bfd5dd49b06c8e2106261bd7",
+    "semantic_hash": ""
+  },
+  "docs/superpowers/plans/2026-08-10-bridge-agent-status-cards.md": {
+    "mtime": 1786346430.2952,
+    "ast_hash": "c11803558d6f7f5a1118e0ac6e7ca32a",
+    "semantic_hash": ""
+  },
+  "docs/superpowers/plans/2026-08-10-project-popover-selector.md": {
+    "mtime": 1786341884.362533,
+    "ast_hash": "1dd61f226a853e549acef4591a9757e4",
+    "semantic_hash": ""
+  },
+  "docs/superpowers/plans/2026-08-10-registered-bridge-cards-placement.md": {
+    "mtime": 1786349427.859516,
+    "ast_hash": "24ea9fb84e7ba42817335ca6ce7efc7c",
+    "semantic_hash": ""
+  },
+  "docs/superpowers/specs/2026-07-28-personal-project-command-center-design.md": {
+    "mtime": 1785207876.8908129,
+    "ast_hash": "4781648bc61c070968fdcb4d9949c3e0",
+    "semantic_hash": ""
+  },
+  "docs/superpowers/specs/2026-08-07-superpowers-runtime-skill-registry-design.md": {
+    "mtime": 1786086482.422467,
+    "ast_hash": "c0f4bf7be6e6f7ad8d6e945d3d1e622c",
+    "semantic_hash": ""
+  },
+  "docs/superpowers/specs/2026-08-10-bridge-agent-status-cards-design.md": {
+    "mtime": 1786346137.956416,
+    "ast_hash": "183c31a06477863b9a603d3187f05c40",
+    "semantic_hash": ""
+  },
+  "docs/superpowers/specs/2026-08-10-project-popover-selector-design.md": {
+    "mtime": 1786340881.6220908,
+    "ast_hash": "a3f3b935cc4c2a6ffd687af3bb189151",
+    "semantic_hash": ""
+  },
+  "docs/superpowers/specs/2026-08-10-registered-bridge-cards-placement-design.md": {
+    "mtime": 1786348837.5901618,
+    "ast_hash": "4165597dfbe7070697fde91f20f315de",
+    "semantic_hash": ""
+  },
+  "docs/workflow-event-skills.md": {
+    "mtime": 1786088167.8010652,
+    "ast_hash": "9e6127d5433695a5dae37bd25d8093e5",
+    "semantic_hash": ""
+  },
+  "omx_wiki/harness-event-skill-chain.md": {
+    "mtime": 1785206100.0992475,
+    "ast_hash": "932c77c90504a42e49db51e6058e15eb",
+    "semantic_hash": ""
+  },
+  "omx_wiki/index.md": {
+    "mtime": 1785206100.0992475,
+    "ast_hash": "dbb3fe7f1c751ec00ac0307471000243",
+    "semantic_hash": ""
+  },
+  "omx_wiki/log.md": {
+    "mtime": 1786323015.0755775,
+    "ast_hash": "58740575cbb2fbe53fe5980bca099f94",
+    "semantic_hash": ""
+  },
+  "public/agents/charizard.webp": {
+    "mtime": 1785206100.0992475,
+    "ast_hash": "7ae99def932bcc81217ed92b0879d57f",
+    "semantic_hash": ""
+  },
+  "public/branding/ouroboros-background.jpg": {
+    "mtime": 1786088515.9694445,
+    "ast_hash": "531e1076021a878a560893d995a6efc8",
+    "semantic_hash": ""
+  }
+}

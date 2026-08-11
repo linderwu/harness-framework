@@ -1,0 +1,66 @@
+---
+title: workspace-store-spec
+type: spec
+module: workspace
+visibility: internal
+created: 2026-08-11
+updated: 2026-08-11
+---
+
+# Workspace Store
+
+## Summary
+
+The workspace layer creates projects, normalizes legacy workflow state, links projects to workflow runs, and exposes project overview data.
+
+## Source of Truth
+
+- Workspace logic: `lib/workspace.ts`
+- Store persistence: `lib/store.ts`
+- Types: `lib/types.ts`
+- Entity: [[wiki/entities/workspace-store]]
+
+## Construction Blueprint
+
+### Core Features
+
+- Create projects from templates.
+- Normalize partial or legacy workspace state.
+- Create legacy projects for workflow runs without project links.
+- Refresh project artifact/run links.
+- Compute project overview data for dashboard display.
+
+### Inputs
+
+- `CreateProjectInput`
+- partial `HarnessState`
+- `Project`
+- `WorkflowRun[]`
+
+### Outputs
+
+- `Project`
+- normalized `HarnessState`
+- `ProjectOverview`
+
+### Side Effects
+
+`lib/workspace.ts` is pure state transformation. `lib/store.ts` owns persistence side effects.
+
+## Interface
+
+```ts
+createProject(input): Project
+normalizeWorkspace(state): HarnessState
+getProjectOverview(project, workflowRuns): ProjectOverview
+refreshProjectAfterRun(project, workflowRuns): Project
+```
+
+## Testing Notes
+
+Workspace behavior is covered by `tests/workspace-model.test.ts` and related project selector tests.
+
+## Wiki Cross-References
+
+- [[wiki/entities/workspace-store]]
+- [[wiki/c4/container]]

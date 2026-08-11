@@ -14,3 +14,4 @@ skills-lock.json
 .worktrees/
 .harness/cache/
 .harness/runtime-skills/
+graphify-out/cache/
