@@ -62,8 +62,8 @@
     <text class="node-desc" x="1356" y="452">Repository service.</text>
     <rect class="node component" x="560" y="70" width="220" height="120" rx="8" fill="#eef0ff" />
     <text class="node-title" x="576" y="98">Registry Reader</text>
-    <text class="node-desc" x="576" y="122">Loads .harness registry and</text>
-    <text class="node-desc" x="576" y="138">lockfile.</text>
+    <text class="node-desc" x="576" y="122">Loads repos/jormungand/.harness</text>
+    <text class="node-desc" x="576" y="138">registry and lockfile.</text>
     <rect class="node component" x="820" y="70" width="220" height="120" rx="8" fill="#eef0ff" />
     <text class="node-title" x="836" y="98">Bundle Matcher</text>
     <text class="node-desc" x="836" y="122">Checks requested bundles against</text>

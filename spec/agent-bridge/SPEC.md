@@ -15,9 +15,9 @@ The agent bridge adapts workflow agent invocations to Codex bridge, OpenClaw bri
 
 ## Source of Truth
 
-- Primary path: `lib/agent-bridge.ts`
-- A2A helper: `lib/a2a-protocol.ts`
-- Agent profiles: `lib/agents.ts`
+- Primary path: `repos/jormungand/lib/agent-bridge.ts`
+- A2A helper: `repos/jormungand/lib/a2a-protocol.ts`
+- Agent profiles: `repos/jormungand/lib/agents.ts`
 - Entity: [[wiki/entities/agent-bridge]]
 
 ## Construction Blueprint

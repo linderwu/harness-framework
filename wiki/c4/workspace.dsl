@@ -23,10 +23,10 @@ workspace "Jormungand Harness Framework" "C4 model for the Jormungand harness da
             }
 
             api = container "Next.js API Routes" "HTTP API for workflow runs, projects, agent health, and approval decisions." "Next.js Route Handlers" {
-                projectRoutes = component "Project Routes" "Create/list projects and project-scoped workflow runs." "app/api/projects/**"
-                workflowRoutes = component "Workflow Run Routes" "Create, read, advance, stop, and cancel workflow runs." "app/api/workflow-runs/**"
-                approvalRoutes = component "Approval Gate Routes" "Apply approval gate decisions to waiting workflow runs." "app/api/approval-gates/**"
-                agentHealthRoutes = component "Agent Health Routes" "Probe configured Codex/OpenClaw bridge health." "app/api/agent-health/route.ts"
+                projectRoutes = component "Project Routes" "Create/list projects and project-scoped workflow runs." "repos/jormungand/app/api/projects/**"
+                workflowRoutes = component "Workflow Run Routes" "Create, read, advance, stop, and cancel workflow runs." "repos/jormungand/app/api/workflow-runs/**"
+                approvalRoutes = component "Approval Gate Routes" "Apply approval gate decisions to waiting workflow runs." "repos/jormungand/app/api/approval-gates/**"
+                agentHealthRoutes = component "Agent Health Routes" "Probe configured Codex/OpenClaw bridge health." "repos/jormungand/app/api/agent-health/route.ts"
             }
 
             workflowEngine = container "Workflow Engine" "Creates and advances workflow runs, emits artifacts, and coordinates approval gates." "TypeScript" {
@@ -45,13 +45,13 @@ workspace "Jormungand Harness Framework" "C4 model for the Jormungand harness da
             }
 
             workspaceStore = container "Workspace Store" "Persists project and workflow state in local JSON-backed storage." "TypeScript" {
-                stateFile = component "State File" "Stores harness state in data/harness-state.json." "JSON"
-                stateAccess = component "State Access" "Reads, writes, lists, and upserts projects and workflow runs." "lib/store.ts"
-                stateNormalizer = component "State Normalizer" "Normalizes legacy runs, project links, warnings, and event-log consistency." "lib/workspace.ts"
+                stateFile = component "State File" "Stores harness state in repos/jormungand/data/harness-state.json." "JSON"
+                stateAccess = component "State Access" "Reads, writes, lists, and upserts projects and workflow runs." "repos/jormungand/lib/store.ts"
+                stateNormalizer = component "State Normalizer" "Normalizes legacy runs, project links, warnings, and event-log consistency." "repos/jormungand/lib/workspace.ts"
             }
 
             runtimeSkillResolver = container "Runtime Skill Resolver" "Resolves runtime skill bundles for Codex bridge protocol v0.3." "TypeScript" {
-                registryReader = component "Registry Reader" "Loads .harness/skill-registry.json and skill.lock.json." "Node fs"
+                registryReader = component "Registry Reader" "Loads repos/jormungand/.harness/skill-registry.json and skill.lock.json." "Node fs"
                 bundleMatcher = component "Bundle Matcher" "Verifies requested runtime bundles against approved registry and lockfile entries." "resolveRuntimeSkillBundles()"
                 resolutionReporter = component "Resolution Reporter" "Returns structured success or failure for runtime skill bundle resolution." "RuntimeSkillResolution"
             }

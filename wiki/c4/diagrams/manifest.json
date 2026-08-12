@@ -1,6 +1,6 @@
 {
   "schemaVersion": "ouroboros-c4-diagrams/v1",
-  "generatedAt": "2026-08-12T00:22:24.263Z",
+  "generatedAt": "2026-08-12T05:18:33.399Z",
   "source": "wiki/c4/workspace.dsl",
   "outputs": [
     {
@@ -17,7 +17,7 @@
       "key": "container",
       "title": "Container",
       "c4Type": "Container",
-      "evidence": "Evidence-backed from app/page.tsx, app/api/** routes, and lib/*.ts.",
+      "evidence": "Evidence-backed from repos/jormungand/app/page.tsx, repos/jormungand/app/api/** routes, and repos/jormungand/lib/*.ts.",
       "files": [
         "wiki/c4/diagrams/container.mmd",
         "wiki/c4/diagrams/container.svg"
@@ -87,7 +87,7 @@
       "key": "dynamic-start-workflow-run",
       "title": "Dynamic: Start Workflow Run",
       "c4Type": "Dynamic",
-      "evidence": "Evidence-backed from app/api/workflow-runs/route.ts and lib/workflow.ts.",
+      "evidence": "Evidence-backed from repos/jormungand/app/api/workflow-runs/route.ts and repos/jormungand/lib/workflow.ts.",
       "files": [
         "wiki/c4/diagrams/dynamic-start-workflow-run.mmd",
         "wiki/c4/diagrams/dynamic-start-workflow-run.svg"
@@ -107,7 +107,7 @@
       "key": "code-key-abstractions",
       "title": "Code-level Key Abstractions",
       "c4Type": "Code",
-      "evidence": "Evidence-backed from graphify report and lib/types.ts/lib/workflow.ts symbol names.",
+      "evidence": "Evidence-backed from graphify report and repos/jormungand/lib/types.ts plus repos/jormungand/lib/workflow.ts symbol names.",
       "files": [
         "wiki/c4/diagrams/code-key-abstractions.mmd",
         "wiki/c4/diagrams/code-key-abstractions.svg"

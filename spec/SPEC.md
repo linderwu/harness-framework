@@ -15,11 +15,11 @@ Jormungand is a Next.js harness framework for managing project workflow runs acr
 
 ## Source of Truth
 
-- Repository: root-local code tree; see [[wiki/concepts/root-local-code-exception]]
-- UI: `app/` and `components/`
-- Domain/runtime logic: `lib/`
-- Scripts: `scripts/`
-- Tests: `tests/`
+- Repository: `repos/jormungand/` app project; see [[repos/README]]
+- UI: `repos/jormungand/app/` and `repos/jormungand/components/`
+- Domain/runtime logic: `repos/jormungand/lib/`
+- Scripts: `repos/jormungand/scripts/`
+- Tests: `repos/jormungand/tests/`
 
 ## Architecture
 
@@ -36,15 +36,15 @@ The canonical C4 model is `wiki/c4/workspace.dsl`.
 
 ## API Surface
 
-- `app/api/workflow-runs/route.ts`: list and create workflow runs.
-- `app/api/workflow-runs/[id]/route.ts`: inspect a workflow run.
-- `app/api/workflow-runs/[id]/advance/route.ts`: advance workflow state.
-- `app/api/workflow-runs/[id]/cancel/route.ts`: cancel a workflow run.
-- `app/api/workflow-runs/[id]/stop/route.ts`: stop a workflow stage.
-- `app/api/approval-gates/[id]/decide/route.ts`: decide approval gates.
-- `app/api/projects/route.ts`: project collection access.
-- `app/api/projects/[id]/workflow-runs/route.ts`: project-scoped workflow creation.
-- `app/api/agent-health/route.ts`: configured agent health.
+- `repos/jormungand/app/api/workflow-runs/route.ts`: list and create workflow runs.
+- `repos/jormungand/app/api/workflow-runs/[id]/route.ts`: inspect a workflow run.
+- `repos/jormungand/app/api/workflow-runs/[id]/advance/route.ts`: advance workflow state.
+- `repos/jormungand/app/api/workflow-runs/[id]/cancel/route.ts`: cancel a workflow run.
+- `repos/jormungand/app/api/workflow-runs/[id]/stop/route.ts`: stop a workflow stage.
+- `repos/jormungand/app/api/approval-gates/[id]/decide/route.ts`: decide approval gates.
+- `repos/jormungand/app/api/projects/route.ts`: project collection access.
+- `repos/jormungand/app/api/projects/[id]/workflow-runs/route.ts`: project-scoped workflow creation.
+- `repos/jormungand/app/api/agent-health/route.ts`: configured agent health.
 
 ## Configuration
 

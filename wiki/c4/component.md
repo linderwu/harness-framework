@@ -44,11 +44,11 @@ resolution.
 
 ## Evidence
 
-- `components/harness-dashboard.tsx`
-- `app/api/**/route.ts`
-- `lib/workflow.ts`
-- `lib/agent-bridge.ts`
-- `lib/store.ts`
-- `lib/workspace.ts`
-- `lib/runtime-skills.ts`
+- `repos/jormungand/components/harness-dashboard.tsx`
+- `repos/jormungand/app/api/**/route.ts`
+- `repos/jormungand/lib/workflow.ts`
+- `repos/jormungand/lib/agent-bridge.ts`
+- `repos/jormungand/lib/store.ts`
+- `repos/jormungand/lib/workspace.ts`
+- `repos/jormungand/lib/runtime-skills.ts`
 - `graphify/jormungand-root/GRAPH_REPORT.md`

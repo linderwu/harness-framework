@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="1480" height="440" viewBox="0 0 1480 440" role="img" aria-labelledby="title desc">
   <title id="title">Code-level Key Abstractions</title>
-  <desc id="desc">Evidence-backed from graphify report and lib/types.ts/lib/workflow.ts symbol names.</desc>
+  <desc id="desc">Evidence-backed from graphify report and repos/jormungand/lib/types.ts plus repos/jormungand/lib/workflow.ts symbol names.</desc>
   <defs>
     <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
       <path d="M0,0 L0,6 L9,3 z" fill="#344054" />
@@ -18,7 +18,7 @@
     .edge-label { fill: #475467; font-size: 12px; paint-order: stroke; stroke: #ffffff; stroke-width: 4px; stroke-linejoin: round; }
   </style>
   <text class="diagram-title" x="32" y="36">Code-level Key Abstractions</text>
-  <text class="diagram-meta" x="32" y="58">Code - Evidence-backed from graphify report and lib/types.ts/lib/workflow.ts symbol names.</text>
+  <text class="diagram-meta" x="32" y="58">Code - Evidence-backed from graphify report and repos/jormungand/lib/types.ts plus repos/jormungand/lib/workflow.ts symbol names.</text>
   <g class="edges">
     <line class="edge" x1="320" y1="180" x2="420" y2="100" />
     <text class="edge-label" x="370" y="134">contains event skills</text>

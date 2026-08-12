@@ -20,9 +20,9 @@ The Harness Dashboard is the browser-facing Next.js UI for creating projects, st
 
 ## Source
 
-- Primary UI: `components/harness-dashboard.tsx`
-- App entry: `app/page.tsx`
-- Root-local exception: [[wiki/concepts/root-local-code-exception]]
+- Primary UI: `repos/jormungand/components/harness-dashboard.tsx`
+- App entry: `repos/jormungand/app/page.tsx`
+- Repository layer: [[repos/README]]
 - Spec: [[spec/SPEC]]
 
 ## Procedural Position

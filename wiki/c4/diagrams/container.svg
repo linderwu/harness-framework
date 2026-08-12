@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="1490" height="560" viewBox="0 0 1490 560" role="img" aria-labelledby="title desc">
   <title id="title">Container</title>
-  <desc id="desc">Evidence-backed from app/page.tsx, app/api/** routes, and lib/*.ts.</desc>
+  <desc id="desc">Evidence-backed from repos/jormungand/app/page.tsx, repos/jormungand/app/api/** routes, and repos/jormungand/lib/*.ts.</desc>
   <defs>
     <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
       <path d="M0,0 L0,6 L9,3 z" fill="#344054" />
@@ -18,7 +18,7 @@
     .edge-label { fill: #475467; font-size: 12px; paint-order: stroke; stroke: #ffffff; stroke-width: 4px; stroke-linejoin: round; }
   </style>
   <text class="diagram-title" x="32" y="36">Container</text>
-  <text class="diagram-meta" x="32" y="58">Container - Evidence-backed from app/page.tsx, app/api/** routes, and lib/*.ts.</text>
+  <text class="diagram-meta" x="32" y="58">Container - Evidence-backed from repos/jormungand/app/page.tsx, repos/jormungand/app/api/** routes, and repos/jormungand/lib/*.ts.</text>
   <g class="edges">
     <line class="edge" x1="250" y1="285" x2="300" y2="125" />
     <text class="edge-label" x="275" y="199">operates</text>

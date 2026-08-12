@@ -62,7 +62,7 @@
     <text class="node-desc" x="1356" y="452">Repository service.</text>
     <rect class="node component" x="560" y="70" width="220" height="120" rx="8" fill="#eef0ff" />
     <text class="node-title" x="576" y="98">State File</text>
-    <text class="node-desc" x="576" y="122">data/harness-state.json.</text>
+    <text class="node-desc" x="576" y="122">repos/jormungand/data/harness-state.json.</text>
     <rect class="node component" x="820" y="70" width="220" height="120" rx="8" fill="#eef0ff" />
     <text class="node-title" x="836" y="98">State Access</text>
     <text class="node-desc" x="836" y="122">Read/write/list/upsert/delete</text>

@@ -21,11 +21,11 @@ The agent bridge translates workflow-stage requests into configured Codex bridge
 
 ## Source
 
-- Primary path: `lib/agent-bridge.ts`
-- A2A protocol helper: `lib/a2a-protocol.ts`
-- Agent profiles: `lib/agents.ts`
+- Primary path: `repos/jormungand/lib/agent-bridge.ts`
+- A2A protocol helper: `repos/jormungand/lib/a2a-protocol.ts`
+- Agent profiles: `repos/jormungand/lib/agents.ts`
 - Spec: [[spec/agent-bridge/SPEC]]
-- Root-local exception: [[wiki/concepts/root-local-code-exception]]
+- Repository layer: [[repos/README]]
 
 ## Procedural Position
 

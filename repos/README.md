@@ -2,35 +2,52 @@
 title: Repository Layer
 type: repository-layer
 created: 2026-08-11
-updated: 2026-08-11
+updated: 2026-08-12
 ---
 
 # Repository Layer
 
 Ouroboros expects production code to live under `repos/<repo-name>/`.
 
-For this migration, `jormungand` keeps the existing Next.js source tree at the repository root:
+Jormungand now keeps the Next.js application project under:
 
+```text
+repos/jormungand/
+```
+
+The application project contains:
+
+- `.harness/`
 - `app/`
 - `components/`
+- `data/`
 - `lib/`
+- `public/`
 - `scripts/`
 - `tests/`
+- `package.json`
+- `tsconfig.json`
+- `next.config.mjs`
 
-This is an explicit root-local code exception, recorded in [[wiki/concepts/root-local-code-exception]].
+## Current Code Source Of Truth
 
-## Why Not Move Code Now
+- Application root: `repos/jormungand/`
+- Primary application: `repos/jormungand/app/`
+- Primary domain/runtime logic: `repos/jormungand/lib/`
+- Primary dashboard UI: `repos/jormungand/components/`
+- Tests: `repos/jormungand/tests/`
 
-Moving the source tree into `repos/jormungand/` would require coordinated updates to Next.js config, TypeScript path aliases, tests, scripts, deployment assumptions, and existing local workflows. The first Ouroboros application should establish traceability without breaking runtime paths.
+## Workspace Root
 
-## Current Code Source of Truth
+The repository root remains the Ouroboros workspace root for:
 
-- Repository root: `./`
-- Primary application: `app/`
-- Primary domain/runtime logic: `lib/`
-- Primary dashboard UI: `components/`
-- Tests: `tests/`
+- `raw/`
+- `wiki/`
+- `spec/`
+- `graphify/`
+- `graphify-out/`
 
-## Future Migration Trigger
+Run application commands from `repos/jormungand/`.
 
-Move code under `repos/jormungand/` only when the build, test, deployment, and Codex bridge scripts are updated in the same change and the move can be verified end to end.
+Run C4 diagram generation from `repos/jormungand/`; generated architecture
+artifacts are written back to the workspace root under `wiki/c4/diagrams/`.

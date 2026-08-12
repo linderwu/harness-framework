@@ -15,12 +15,12 @@ Canonical Structurizr view key: `container`
 
 ## Containers
 
-- Harness Dashboard: `components/harness-dashboard.tsx` and `app/page.tsx`.
-- Next.js API Routes: `app/api/**/route.ts`.
-- Workflow Engine: `lib/workflow.ts`.
-- Agent Bridge: `lib/agent-bridge.ts`.
-- Workspace Store: `lib/store.ts` and `lib/workspace.ts`.
-- Runtime Skill Resolver: `lib/runtime-skills.ts`.
+- Harness Dashboard: `repos/jormungand/components/harness-dashboard.tsx` and `repos/jormungand/app/page.tsx`.
+- Next.js API Routes: `repos/jormungand/app/api/**/route.ts`.
+- Workflow Engine: `repos/jormungand/lib/workflow.ts`.
+- Agent Bridge: `repos/jormungand/lib/agent-bridge.ts`.
+- Workspace Store: `repos/jormungand/lib/store.ts` and `repos/jormungand/lib/workspace.ts`.
+- Runtime Skill Resolver: `repos/jormungand/lib/runtime-skills.ts`.
 
 ## Generated Diagrams
 

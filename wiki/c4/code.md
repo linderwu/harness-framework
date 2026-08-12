@@ -27,8 +27,8 @@ invocation, artifact results, and runtime skill resolution fit together.
 
 ## Evidence
 
-- `lib/types.ts`
-- `lib/workflow.ts`
-- `lib/agent-bridge.ts`
-- `lib/runtime-skills.ts`
+- `repos/jormungand/lib/types.ts`
+- `repos/jormungand/lib/workflow.ts`
+- `repos/jormungand/lib/agent-bridge.ts`
+- `repos/jormungand/lib/runtime-skills.ts`
 - `graphify/jormungand-root/GRAPH_REPORT.md`

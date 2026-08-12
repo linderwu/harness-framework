@@ -10,7 +10,7 @@ flowchart LR
   codex["Codex Bridge<br/>External bridge."]
   openclaw["OpenClaw Runtime<br/>Optional executor."]
   github["GitHub<br/>Repository service."]
-  reader["Registry Reader<br/>Loads .harness registry and lockfile."]
+  reader["Registry Reader<br/>Loads repos/jormungand/.harness registry and lockfile."]
   matcher["Bundle Matcher<br/>Checks requested bundles against registry and lockfile."]
   reporter["Resolution Reporter<br/>Returns structured success/failure audit result."]
   engine -->|"requests skill bundles"| reader

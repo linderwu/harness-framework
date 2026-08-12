@@ -15,9 +15,9 @@ The workspace layer creates projects, normalizes legacy workflow state, links pr
 
 ## Source of Truth
 
-- Workspace logic: `lib/workspace.ts`
-- Store persistence: `lib/store.ts`
-- Types: `lib/types.ts`
+- Workspace logic: `repos/jormungand/lib/workspace.ts`
+- Store persistence: `repos/jormungand/lib/store.ts`
+- Types: `repos/jormungand/lib/types.ts`
 - Entity: [[wiki/entities/workspace-store]]
 
 ## Construction Blueprint
@@ -45,7 +45,7 @@ The workspace layer creates projects, normalizes legacy workflow state, links pr
 
 ### Side Effects
 
-`lib/workspace.ts` is pure state transformation. `lib/store.ts` owns persistence side effects.
+`repos/jormungand/lib/workspace.ts` is pure state transformation. `repos/jormungand/lib/store.ts` owns persistence side effects.
 
 ## Interface
 
@@ -58,7 +58,7 @@ refreshProjectAfterRun(project, workflowRuns): Project
 
 ## Testing Notes
 
-Workspace behavior is covered by `tests/workspace-model.test.ts` and related project selector tests.
+Workspace behavior is covered by `repos/jormungand/tests/workspace-model.test.ts` and related project selector tests.
 
 ## Wiki Cross-References
 

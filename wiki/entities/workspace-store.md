@@ -21,10 +21,10 @@ The workspace store persists projects, workflow runs, artifacts, approval gates,
 
 ## Source
 
-- Store implementation: `lib/store.ts`
-- Workspace normalization: `lib/workspace.ts`
+- Store implementation: `repos/jormungand/lib/store.ts`
+- Workspace normalization: `repos/jormungand/lib/workspace.ts`
 - Spec: [[spec/workspace/SPEC]]
-- Root-local exception: [[wiki/concepts/root-local-code-exception]]
+- Repository layer: [[repos/README]]
 
 ## Procedural Position
 

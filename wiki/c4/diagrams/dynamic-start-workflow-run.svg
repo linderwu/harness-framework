@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="1640" height="470" viewBox="0 0 1640 470" role="img" aria-labelledby="title desc">
   <title id="title">Dynamic: Start Workflow Run</title>
-  <desc id="desc">Evidence-backed from app/api/workflow-runs/route.ts and lib/workflow.ts.</desc>
+  <desc id="desc">Evidence-backed from repos/jormungand/app/api/workflow-runs/route.ts and repos/jormungand/lib/workflow.ts.</desc>
   <defs>
     <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
       <path d="M0,0 L0,6 L9,3 z" fill="#344054" />
@@ -18,7 +18,7 @@
     .edge-label { fill: #475467; font-size: 12px; paint-order: stroke; stroke: #ffffff; stroke-width: 4px; stroke-linejoin: round; }
   </style>
   <text class="diagram-title" x="32" y="36">Dynamic: Start Workflow Run</text>
-  <text class="diagram-meta" x="32" y="58">Dynamic - Evidence-backed from app/api/workflow-runs/route.ts and lib/workflow.ts.</text>
+  <text class="diagram-meta" x="32" y="58">Dynamic - Evidence-backed from repos/jormungand/app/api/workflow-runs/route.ts and repos/jormungand/lib/workflow.ts.</text>
   <g class="edges">
     <line class="edge" x1="260" y1="135" x2="300" y2="135" />
     <text class="edge-label" x="280" y="129">1. enter request</text>

@@ -21,10 +21,10 @@ The workflow engine creates workflow runs, advances stage state, records artifac
 
 ## Source
 
-- Primary path: `lib/workflow.ts`
-- Types: `lib/types.ts`
+- Primary path: `repos/jormungand/lib/workflow.ts`
+- Types: `repos/jormungand/lib/types.ts`
 - Spec: [[spec/workflow/SPEC]]
-- Root-local exception: [[wiki/concepts/root-local-code-exception]]
+- Repository layer: [[repos/README]]
 
 ## Procedural Position
 

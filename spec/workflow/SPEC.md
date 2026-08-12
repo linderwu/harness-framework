@@ -15,8 +15,8 @@ The workflow engine builds and advances workflow runs through intake, plan, desi
 
 ## Source of Truth
 
-- Primary path: `lib/workflow.ts`
-- Shared types: `lib/types.ts`
+- Primary path: `repos/jormungand/lib/workflow.ts`
+- Shared types: `repos/jormungand/lib/types.ts`
 - Entity: [[wiki/entities/workflow-engine]]
 
 ## Construction Blueprint
@@ -63,12 +63,12 @@ API route input becomes a `WorkflowRun`, then `advanceWorkflow` creates or consu
 
 ## Dependencies
 
-- Internal: `lib/types.ts`, `lib/agents.ts`, `lib/runtime-skills.ts`
+- Internal: `repos/jormungand/lib/types.ts`, `repos/jormungand/lib/agents.ts`, `repos/jormungand/lib/runtime-skills.ts`
 - External: configured agent bridge through callback injection
 
 ## Testing Notes
 
-Workflow behavior is covered by `tests/workflow.test.ts`.
+Workflow behavior is covered by `repos/jormungand/tests/workflow.test.ts`.
 
 ## Wiki Cross-References
 

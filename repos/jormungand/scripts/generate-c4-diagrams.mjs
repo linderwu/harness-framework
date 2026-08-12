@@ -1,7 +1,9 @@
 import { mkdir, writeFile } from "fs/promises"
 import path from "path"
 
-const outDir = path.join(process.cwd(), "wiki", "c4", "diagrams")
+const appRoot = process.cwd()
+const workspaceRoot = path.resolve(appRoot, "..", "..")
+const outDir = path.join(workspaceRoot, "wiki", "c4", "diagrams")
 const generatedAt = new Date().toISOString()
 
 const theme = {
@@ -38,7 +40,7 @@ const diagrams = [
     key: "container",
     title: "Container",
     c4Type: "Container",
-    evidence: "Evidence-backed from app/page.tsx, app/api/** routes, and lib/*.ts.",
+    evidence: "Evidence-backed from repos/jormungand/app/page.tsx, repos/jormungand/app/api/** routes, and repos/jormungand/lib/*.ts.",
     nodes: [
       node("operator", "Operator", "Uses browser UI.", "person", 30, 230),
       node("dashboard", "Harness Dashboard", "Project selection, workflow launch, artifacts, approval gates.", "container", 300, 70),
@@ -125,7 +127,7 @@ const diagrams = [
     edge("control", "codex", "stop/cancel")
   ]),
   componentDiagram("component-workspace-store", "Workspace Store Components", "Workspace Store", [
-    ["file", "State File", "data/harness-state.json."],
+    ["file", "State File", "repos/jormungand/data/harness-state.json."],
     ["access", "State Access", "Read/write/list/upsert/delete operations."],
     ["normalize", "State Normalizer", "Legacy migration, project links, event-log status."]
   ], [
@@ -135,7 +137,7 @@ const diagrams = [
     edge("normalize", "file", "consistent state")
   ]),
   componentDiagram("component-runtime-skill-resolver", "Runtime Skill Resolver Components", "Runtime Skill Resolver", [
-    ["reader", "Registry Reader", "Loads .harness registry and lockfile."],
+    ["reader", "Registry Reader", "Loads repos/jormungand/.harness registry and lockfile."],
     ["matcher", "Bundle Matcher", "Checks requested bundles against registry and lockfile."],
     ["reporter", "Resolution Reporter", "Returns structured success/failure audit result."]
   ], [
@@ -148,7 +150,7 @@ const diagrams = [
     key: "dynamic-start-workflow-run",
     title: "Dynamic: Start Workflow Run",
     c4Type: "Dynamic",
-    evidence: "Evidence-backed from app/api/workflow-runs/route.ts and lib/workflow.ts.",
+    evidence: "Evidence-backed from repos/jormungand/app/api/workflow-runs/route.ts and repos/jormungand/lib/workflow.ts.",
     nodes: [
       node("operator", "Operator", "Submits requirement and policy.", "person", 40, 80),
       node("dashboard", "Harness Dashboard", "Collects run request.", "container", 300, 80),
@@ -178,7 +180,7 @@ const diagrams = [
     nodes: [
       node("browser", "Operator Browser", "Runs Harness Dashboard UI.", "person", 60, 100),
       node("next", "Local Next.js Process", "Serves UI and route handlers.", "container", 360, 100),
-      node("json", "Local State File", "data/harness-state.json.", "storage", 680, 100),
+      node("json", "Local State File", "repos/jormungand/data/harness-state.json.", "storage", 680, 100),
       node("codex", "Local Codex Bridge", "Optional CODEX_BRIDGE_URL process.", "external", 1000, 40),
       node("openclaw", "OpenClaw Bridge/A2A", "Optional OPENCLAW_* process or command.", "external", 1000, 220),
       node("github", "GitHub", "Network repository service.", "external", 1280, 130)
@@ -195,7 +197,7 @@ const diagrams = [
     key: "code-key-abstractions",
     title: "Code-level Key Abstractions",
     c4Type: "Code",
-    evidence: "Evidence-backed from graphify report and lib/types.ts/lib/workflow.ts symbol names.",
+    evidence: "Evidence-backed from graphify report and repos/jormungand/lib/types.ts plus repos/jormungand/lib/workflow.ts symbol names.",
     nodes: [
       node("workflowrun", "WorkflowRun", "Run state, stages, events, artifacts, gates, revisions.", "code", 60, 120, 260, 120),
       node("workfloweventskill", "WorkflowEventSkill", "Skill contract for event-driven workflow steps.", "code", 420, 40, 260, 120),
