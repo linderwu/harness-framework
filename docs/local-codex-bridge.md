@@ -45,7 +45,14 @@ The contract keeps `raw/` append-only, routes durable design rationale to
 reviewed `wiki/` pages, routes code-derived interfaces to `spec/`, and forbids
 parallel evidence layers such as `wiki/raw/`.
 
-OpenClaw profiles use ids such as `openclaw.rowlet`, `openclaw.roaringmoon`, and `openclaw.charizard`. When one is assigned, the Next.js API calls `OPENCLAW_BRIDGE_URL` and includes `mainAgent` in the payload.
+OpenClaw profiles use ids such as `openclaw.rowlet`, `openclaw.roaringmoon`, and `openclaw.charizard`. When one is assigned, the Next.js API calls `OPENCLAW_BRIDGE_URL` and includes `mainAgent` in the payload. The reproducible HTTP adapter is `scripts/openclaw-bridge.mjs`; run it on the OpenClaw host with `npm run openclaw-bridge`. It implements bridge protocol v0.3, verifies runtime skill bundles, and copies verified bundles into the OpenClaw container before dispatch.
+
+For the configured VM, `scripts/deploy-openclaw-bridge.ps1` deploys the bridge
+with the committed runtime-skill lockfile. The bridge accepts only descriptors
+that match that local lockfile. SSH uses the existing pinned host key in
+`%USERPROFILE%\.ssh\known_hosts`; the deploy script does not accept a new host
+key automatically. Only the bridge token is copied to the executor host. Site
+Basic Auth credentials remain on the web service.
 
 ## OpenClaw A2A Command
 
@@ -96,8 +103,8 @@ openclaw agent \
 Use `OPENCLAW_BRIDGE_URL` for an HTTP request/response bridge. Use
 `OPENCLAW_A2A_COMMAND` when you want the persistent session-based A2A transport.
 
-The future production direction is a real OpenClaw A2A HTTP endpoint instead of
-the stdin command adapter. That endpoint should publish an Agent Card at
+The longer-term production direction is a native OpenClaw A2A HTTP endpoint instead of
+the included bridge or stdin command adapter. That endpoint should publish an Agent Card at
 `/.well-known/agent-card.json`, declare JSON-RPC transport, accept
 `message/send`, return `Message` or `Task` results, and later add `tasks/get`
 or streaming when long-running jobs need progress updates.
@@ -144,9 +151,11 @@ Expected public bridge health:
 
 ```txt
 protocolVersion=harness-agent-bridge/v0.3
-repoRoot=C:\Users\linder\Documents\harness框架
 capabilities=cancel, stop, active-run-status, idempotency-key, text-output, runtime-skill-bundles
 ```
+
+When a bridge token is configured, `/health` requires the same bearer token as
+`/agent-runs`. Health responses intentionally omit local workspace paths.
 
 Successful end-to-end workflow smoke test:
 

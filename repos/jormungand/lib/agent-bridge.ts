@@ -216,7 +216,7 @@ function getConfiguredBridgeProtocol(agent: AgentKind) {
   const profile = getAgentProfile(agent)
 
   if (profile.family === "openclaw") {
-    return process.env.OPENCLAW_BRIDGE_PROTOCOL_VERSION ?? bridgeProtocolV2
+    return process.env.OPENCLAW_BRIDGE_PROTOCOL_VERSION ?? bridgeProtocolV3
   }
 
   if (profile.family === "codex") {
@@ -356,7 +356,7 @@ function createBridgeHeaders(agent: AgentKind = "codex", idempotencyKey?: string
   const profile = getAgentProfile(agent)
   const token =
     profile.family === "openclaw"
-      ? process.env.OPENCLAW_BRIDGE_TOKEN
+      ? getOpenClawBridgeToken()
       : process.env.CODEX_BRIDGE_TOKEN
 
   if (token) {
@@ -368,6 +368,14 @@ function createBridgeHeaders(agent: AgentKind = "codex", idempotencyKey?: string
   }
 
   return headers
+}
+
+function getOpenClawBridgeToken() {
+  return (
+    process.env.OPENCLAW_BRIDGE_TOKEN?.trim() ||
+    process.env.OPENCLAW_GATEWAY_TOKEN?.trim() ||
+    undefined
+  )
 }
 
 function getAgentBridgeUrl(agent: AgentKind) {

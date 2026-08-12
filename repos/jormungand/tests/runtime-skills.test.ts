@@ -8,7 +8,7 @@ import {
 
 const checksum = {
   algorithm: "sha256" as const,
-  value: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+  value: "c9b1d3ece463869d22d8c560b50a3082e5dede290126b84c07461869b509ee8d"
 }
 
 const sourceUrl =

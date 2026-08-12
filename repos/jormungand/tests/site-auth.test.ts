@@ -5,14 +5,19 @@ import {
   shouldRequireSiteAuthentication
 } from "../lib/site-auth"
 
-test("site auth defaults to protecting mutating requests only", () => {
-  assert.equal(shouldRequireSiteAuthentication("GET"), false)
-  assert.equal(shouldRequireSiteAuthentication("HEAD"), false)
-  assert.equal(shouldRequireSiteAuthentication("OPTIONS"), false)
+test("site auth protects the whole site by default", () => {
+  assert.equal(shouldRequireSiteAuthentication("GET"), true)
+  assert.equal(shouldRequireSiteAuthentication("HEAD"), true)
+  assert.equal(shouldRequireSiteAuthentication("OPTIONS"), true)
   assert.equal(shouldRequireSiteAuthentication("POST"), true)
   assert.equal(shouldRequireSiteAuthentication("PUT"), true)
   assert.equal(shouldRequireSiteAuthentication("PATCH"), true)
   assert.equal(shouldRequireSiteAuthentication("DELETE"), true)
+})
+
+test("site auth can be limited to mutating requests", () => {
+  assert.equal(shouldRequireSiteAuthentication("GET", "mutations"), false)
+  assert.equal(shouldRequireSiteAuthentication("POST", "mutations"), true)
 })
 
 test("site auth can be forced across the whole site", () => {

@@ -26,7 +26,9 @@ export async function GET() {
       id: "openclaw-bridge",
       label: "OpenClaw Bridge",
       url: process.env.OPENCLAW_BRIDGE_URL,
-      token: process.env.OPENCLAW_BRIDGE_TOKEN
+      token:
+        process.env.OPENCLAW_BRIDGE_TOKEN?.trim() ||
+        process.env.OPENCLAW_GATEWAY_TOKEN?.trim()
     })
   ].filter((check): check is HttpBridgeCheck => Boolean(check))
   const bridges = await Promise.all(bridgeChecks.map(checkHttpBridge))

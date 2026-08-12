@@ -10,8 +10,9 @@ export function normalizeSiteAuthMode(value: string | undefined): SiteAuthMode {
     case "public":
       return "off"
     case "mutations":
-    default:
       return "mutations"
+    default:
+      return "all"
   }
 }
 

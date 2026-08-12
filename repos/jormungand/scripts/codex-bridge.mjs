@@ -37,6 +37,10 @@ const ouroborosAgentContract = `Ouroboros Knowledge Protocol:
 - Route code-derived API/module contracts and data flow to spec/.
 - Never put code in raw/, never rewrite raw/ evidence, never create wiki/raw/, and never treat generated wiki decisions as active without review.`
 
+if (!isLoopbackHost(host) && !token) {
+  throw new Error("HARNESS_BRIDGE_TOKEN is required for non-loopback binding")
+}
+
 const server = http.createServer(async (request, response) => {
   try {
     const requestUrl = new URL(
@@ -44,18 +48,17 @@ const server = http.createServer(async (request, response) => {
       `http://${request.headers.host ?? `${host}:${port}`}`
     )
 
-    if (request.method === "GET" && request.url === "/health") {
-      sendJson(response, 200, {
-        ok: true,
-        repoRoot,
-        protocolVersion,
-        capabilities: bridgeCapabilities()
-      })
+    if (token && request.headers.authorization !== `Bearer ${token}`) {
+      sendJson(response, 401, { error: "invalid bridge token" })
       return
     }
 
-    if (token && request.headers.authorization !== `Bearer ${token}`) {
-      sendJson(response, 401, { error: "invalid bridge token" })
+    if (request.method === "GET" && requestUrl.pathname === "/health") {
+      sendJson(response, 200, {
+        ok: true,
+        protocolVersion,
+        capabilities: bridgeCapabilities()
+      })
       return
     }
 
@@ -102,6 +105,20 @@ const server = http.createServer(async (request, response) => {
     }
 
     const payload = await readJson(request)
+    const protocolError = validateProtocol(payload)
+
+    if (protocolError) {
+      sendJson(response, 400, { error: protocolError })
+      return
+    }
+
+    const workspace = await resolveWorkspace(payload.repository)
+
+    if (workspace.error) {
+      sendJson(response, 422, { error: workspace.error })
+      return
+    }
+
     const idempotencyKey =
       payload.idempotencyKey || request.headers["idempotency-key"]
 
@@ -148,7 +165,8 @@ const server = http.createServer(async (request, response) => {
     const result = await runCodex(
       buildPrompt(payload, contextDir, runtimeSkillBundleResults),
       id,
-      payload.workflowRunId
+      payload.workflowRunId,
+      workspace.path
     ).finally(async () => {
       if (idempotencyKey) {
         activeIdempotencyKeys.delete(idempotencyKey)
@@ -180,7 +198,7 @@ server.listen(port, host, () => {
   }
 })
 
-async function runCodex(prompt, id, workflowRunId) {
+async function runCodex(prompt, id, workflowRunId, workspacePath) {
   const outputFile = path.join(os.tmpdir(), `codex-bridge-${id}.txt`)
   const command = process.env.CODEX_BRIDGE_COMMAND ?? "codex"
   const sandbox = process.env.CODEX_BRIDGE_SANDBOX ?? "workspace-write"
@@ -191,7 +209,7 @@ async function runCodex(prompt, id, workflowRunId) {
     "-c",
     `service_tier="${serviceTier}"`,
     "-C",
-    repoRoot,
+    workspacePath,
     "--skip-git-repo-check",
     "--sandbox",
     sandbox,
@@ -201,7 +219,7 @@ async function runCodex(prompt, id, workflowRunId) {
   ]
 
   const child = spawn(command, args, {
-    cwd: repoRoot,
+    cwd: workspacePath,
     shell: process.platform === "win32",
     stdio: ["pipe", "pipe", "pipe"]
   })
@@ -251,6 +269,92 @@ async function runCodex(prompt, id, workflowRunId) {
         ? "Codex completed."
         : `Codex exited with status ${exitCode}.`
   }
+}
+
+function validateProtocol(payload) {
+  const requestedProtocol = payload.protocolVersion ?? "harness-agent-bridge/v0.2"
+  const requiresRuntimeSkills =
+    Array.isArray(payload.runtimeSkillBundles) &&
+    payload.runtimeSkillBundles.length > 0
+
+  if (requiresRuntimeSkills && requestedProtocol !== "harness-agent-bridge/v0.3") {
+    return "runtime skill bundles require harness-agent-bridge/v0.3"
+  }
+
+  if (requestedProtocol === "harness-agent-bridge/v0.3" && protocolVersion !== requestedProtocol) {
+    return "bridge runtime skill support is disabled"
+  }
+
+  return undefined
+}
+
+async function resolveWorkspace(repository) {
+  if (!String(repository ?? "").trim()) {
+    return { path: repoRoot }
+  }
+
+  const requestedRepository = normalizeGitHubRepository(repository)
+
+  if (!requestedRepository) {
+    return { error: "repository must be an owner/name GitHub repository" }
+  }
+
+  const originUrl = await readProcessOutput("git", [
+    "-C",
+    repoRoot,
+    "remote",
+    "get-url",
+    "origin"
+  ]).catch(() => "")
+  const workspaceRepository = normalizeGitHubRepository(originUrl.trim())
+
+  if (workspaceRepository?.toLowerCase() !== requestedRepository.toLowerCase()) {
+    return {
+      error: `repository ${requestedRepository} is not checked out in the configured Codex workspace`
+    }
+  }
+
+  return { path: repoRoot }
+}
+
+function normalizeGitHubRepository(value) {
+  const normalized = String(value ?? "")
+    .trim()
+    .replace(/^git@github\.com:/i, "")
+    .replace(/^https?:\/\/github\.com\//i, "")
+    .replace(/\.git$/i, "")
+    .replace(/^\/+|\/+$/g, "")
+
+  return /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(normalized)
+    ? normalized
+    : undefined
+}
+
+async function readProcessOutput(command, args) {
+  const child = spawn(command, args, {
+    shell: process.platform === "win32",
+    stdio: ["ignore", "pipe", "pipe"]
+  })
+  let stdout = ""
+  let stderr = ""
+
+  child.stdout.on("data", (chunk) => {
+    stdout += chunk.toString()
+  })
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk.toString()
+  })
+
+  const exitCode = await new Promise((resolve, reject) => {
+    child.on("error", reject)
+    child.on("close", (code) => resolve(code ?? 1))
+  })
+
+  if (exitCode !== 0) {
+    throw new Error(stderr.trim() || `${command} exited with ${exitCode}`)
+  }
+
+  return stdout
 }
 
 function stopWorkflowRun(workflowRunId) {
@@ -615,4 +719,8 @@ function tail(value, maxLength) {
 
 function formatError(error) {
   return error instanceof Error ? error.message : String(error)
+}
+
+function isLoopbackHost(value) {
+  return ["127.0.0.1", "::1", "localhost"].includes(value)
 }
