@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "codex-bridge": "node scripts/codex-bridge.mjs",
+    "c4:diagrams": "node scripts/generate-c4-diagrams.mjs",
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",

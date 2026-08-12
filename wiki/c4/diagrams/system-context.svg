@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="580" viewBox="0 0 1080 580" role="img" aria-labelledby="title desc">
+  <title id="title">System Context</title>
+  <desc id="desc">Evidence-backed from wiki/c4/workspace.dsl and current API/UI source files.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#344054" />
+    </marker>
+  </defs>
+  <style>
+    svg { background: #ffffff; font-family: Arial, Helvetica, sans-serif; }
+    .diagram-title { fill: #101828; font-size: 24px; font-weight: 700; }
+    .diagram-meta { fill: #667085; font-size: 13px; }
+    .node { stroke: #344054; stroke-width: 1.2; }
+    .node-title { fill: #101828; font-size: 14px; font-weight: 700; }
+    .node-desc { fill: #344054; font-size: 12px; }
+    .edge { stroke: #344054; stroke-width: 1.4; marker-end: url(#arrow); }
+    .edge-label { fill: #475467; font-size: 12px; paint-order: stroke; stroke: #ffffff; stroke-width: 4px; stroke-linejoin: round; }
+  </style>
+  <text class="diagram-title" x="32" y="36">System Context</text>
+  <text class="diagram-meta" x="32" y="58">System Context - Evidence-backed from wiki/c4/workspace.dsl and current API/UI source files.</text>
+  <g class="edges">
+    <line class="edge" x1="260" y1="245" x2="360" y2="235" />
+    <text class="edge-label" x="310" y="234">operates</text>
+    <line class="edge" x1="630" y1="235" x2="780" y2="125" />
+    <text class="edge-label" x="705" y="174">agent runs</text>
+    <line class="edge" x1="630" y1="235" x2="780" y2="275" />
+    <text class="edge-label" x="705" y="249">optional execution</text>
+    <line class="edge" x1="630" y1="235" x2="780" y2="425" />
+    <text class="edge-label" x="705" y="324">repository readiness</text>
+  </g>
+  <g class="nodes">
+    <rect class="node person" x="40" y="190" width="220" height="110" rx="8" fill="#fff4cc" />
+    <text class="node-title" x="56" y="218">Operator</text>
+    <text class="node-desc" x="56" y="242">Creates projects, launches</text>
+    <text class="node-desc" x="56" y="258">workflow runs, reviews artifacts,</text>
+    <text class="node-desc" x="56" y="274">decides gates.</text>
+    <rect class="node system" x="360" y="170" width="270" height="130" rx="8" fill="#dff3ff" />
+    <text class="node-title" x="376" y="198">Jormungand Harness</text>
+    <text class="node-title" x="376" y="216">Framework</text>
+    <text class="node-desc" x="376" y="240">Dashboard and workflow</text>
+    <text class="node-desc" x="376" y="256">orchestration for agent-assisted</text>
+    <text class="node-desc" x="376" y="272">delivery.</text>
+    <rect class="node external" x="780" y="70" width="220" height="110" rx="8" fill="#ffe3d8" />
+    <text class="node-title" x="796" y="98">Codex Bridge</text>
+    <text class="node-desc" x="796" y="122">Local Codex execution bridge.</text>
+    <rect class="node external" x="780" y="220" width="220" height="110" rx="8" fill="#ffe3d8" />
+    <text class="node-title" x="796" y="248">OpenClaw Runtime</text>
+    <text class="node-desc" x="796" y="272">Optional bridge or A2A executor.</text>
+    <rect class="node external" x="780" y="370" width="220" height="110" rx="8" fill="#ffe3d8" />
+    <text class="node-title" x="796" y="398">GitHub</text>
+    <text class="node-desc" x="796" y="422">Repository source and intake</text>
+    <text class="node-desc" x="796" y="438">readiness target.</text>
+  </g>
+</svg>

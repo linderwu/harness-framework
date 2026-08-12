@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1640" height="610" viewBox="0 0 1640 610" role="img" aria-labelledby="title desc">
+  <title id="title">Agent Bridge Components</title>
+  <desc id="desc">Evidence-backed component view for Agent Bridge.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#344054" />
+    </marker>
+  </defs>
+  <style>
+    svg { background: #ffffff; font-family: Arial, Helvetica, sans-serif; }
+    .diagram-title { fill: #101828; font-size: 24px; font-weight: 700; }
+    .diagram-meta { fill: #667085; font-size: 13px; }
+    .node { stroke: #344054; stroke-width: 1.2; }
+    .node-title { fill: #101828; font-size: 14px; font-weight: 700; }
+    .node-desc { fill: #344054; font-size: 12px; }
+    .edge { stroke: #344054; stroke-width: 1.4; marker-end: url(#arrow); }
+    .edge-label { fill: #475467; font-size: 12px; paint-order: stroke; stroke: #ffffff; stroke-width: 4px; stroke-linejoin: round; }
+  </style>
+  <text class="diagram-title" x="32" y="36">Agent Bridge Components</text>
+  <text class="diagram-meta" x="32" y="58">Component - Evidence-backed component view for Agent Bridge.</text>
+  <g class="edges">
+    <line class="edge" x1="1080" y1="115" x2="780" y2="130" />
+    <text class="edge-label" x="930" y="116.5">invokeConfiguredAgent</text>
+    <line class="edge" x1="780" y1="130" x2="1340" y2="135" />
+    <text class="edge-label" x="1060" y="126.5">HTTP bridge</text>
+    <line class="edge" x1="780" y1="130" x2="1340" y2="295" />
+    <text class="edge-label" x="1060" y="206.5">bridge HTTP</text>
+    <line class="edge" x1="670" y1="190" x2="670" y2="240" />
+    <text class="edge-label" x="670" y="209">A2A command</text>
+    <line class="edge" x1="780" y1="130" x2="820" y2="130" />
+    <text class="edge-label" x="800" y="124">intake repo</text>
+    <line class="edge" x1="1040" y1="130" x2="1340" y2="455" />
+    <text class="edge-label" x="1190" y="286.5">ensure repo</text>
+    <line class="edge" x1="1040" y1="300" x2="1340" y2="135" />
+    <text class="edge-label" x="1190" y="211.5">stop/cancel</text>
+  </g>
+  <g class="nodes">
+    <rect class="node person" x="40" y="190" width="220" height="110" rx="8" fill="#fff4cc" />
+    <text class="node-title" x="56" y="218">Operator</text>
+    <text class="node-desc" x="56" y="242">Uses the system.</text>
+    <rect class="node container" x="300" y="60" width="220" height="110" rx="8" fill="#e6f4ea" />
+    <text class="node-title" x="316" y="88">Harness Dashboard</text>
+    <text class="node-desc" x="316" y="112">Browser UI.</text>
+    <rect class="node container" x="300" y="320" width="220" height="110" rx="8" fill="#e6f4ea" />
+    <text class="node-title" x="316" y="348">Next.js API Routes</text>
+    <text class="node-desc" x="316" y="372">HTTP API.</text>
+    <rect class="node container" x="1080" y="60" width="220" height="110" rx="8" fill="#e6f4ea" />
+    <text class="node-title" x="1096" y="88">Workflow Engine</text>
+    <text class="node-desc" x="1096" y="112">Workflow domain logic.</text>
+    <rect class="node container" x="1080" y="220" width="220" height="110" rx="8" fill="#e6f4ea" />
+    <text class="node-title" x="1096" y="248">Agent Bridge</text>
+    <text class="node-desc" x="1096" y="272">External executor integration.</text>
+    <rect class="node container" x="1080" y="380" width="220" height="110" rx="8" fill="#e6f4ea" />
+    <text class="node-title" x="1096" y="408">Runtime Skill Resolver</text>
+    <text class="node-desc" x="1096" y="432">Runtime skill bundle resolution.</text>
+    <rect class="node storage" x="820" y="380" width="220" height="110" rx="8" fill="#f5e6ff" />
+    <text class="node-title" x="836" y="408">Workspace Store</text>
+    <text class="node-desc" x="836" y="432">JSON-backed persistence.</text>
+    <rect class="node external" x="1340" y="80" width="220" height="110" rx="8" fill="#ffe3d8" />
+    <text class="node-title" x="1356" y="108">Codex Bridge</text>
+    <text class="node-desc" x="1356" y="132">External bridge.</text>
+    <rect class="node external" x="1340" y="240" width="220" height="110" rx="8" fill="#ffe3d8" />
+    <text class="node-title" x="1356" y="268">OpenClaw Runtime</text>
+    <text class="node-desc" x="1356" y="292">Optional executor.</text>
+    <rect class="node external" x="1340" y="400" width="220" height="110" rx="8" fill="#ffe3d8" />
+    <text class="node-title" x="1356" y="428">GitHub</text>
+    <text class="node-desc" x="1356" y="452">Repository service.</text>
+    <rect class="node component" x="560" y="70" width="220" height="120" rx="8" fill="#eef0ff" />
+    <text class="node-title" x="576" y="98">Bridge Invoker</text>
+    <text class="node-desc" x="576" y="122">Routes invocations to configured</text>
+    <text class="node-desc" x="576" y="138">executor family.</text>
+    <rect class="node component" x="820" y="70" width="220" height="120" rx="8" fill="#eef0ff" />
+    <text class="node-title" x="836" y="98">Intake Repository Agent</text>
+    <text class="node-desc" x="836" y="122">Ensures GitHub repository</text>
+    <text class="node-desc" x="836" y="138">readiness.</text>
+    <rect class="node component" x="560" y="240" width="220" height="120" rx="8" fill="#eef0ff" />
+    <text class="node-title" x="576" y="268">A2A Envelope Sender</text>
+    <text class="node-desc" x="576" y="292">Builds and sends OpenClaw A2A</text>
+    <text class="node-desc" x="576" y="308">envelopes.</text>
+    <rect class="node component" x="820" y="240" width="220" height="120" rx="8" fill="#eef0ff" />
+    <text class="node-title" x="836" y="268">Bridge Control</text>
+    <text class="node-desc" x="836" y="292">Sends stop/cancel controls.</text>
+  </g>
+</svg>

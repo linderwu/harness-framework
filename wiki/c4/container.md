@@ -22,10 +22,15 @@ Canonical Structurizr view key: `container`
 - Workspace Store: `lib/store.ts` and `lib/workspace.ts`.
 - Runtime Skill Resolver: `lib/runtime-skills.ts`.
 
+## Generated Diagrams
+
+- `wiki/c4/diagrams/container.mmd`
+- `wiki/c4/diagrams/container.svg`
+
 ## Graph Evidence
 
 Graphify identified `advanceWorkflow()`, `invokeConfiguredAgent()`, `WorkflowRun`, and `getAgentProfile()` as central abstractions in the code graph. See [[raw/2026-08-11-graphify-code-only-run]] and `graphify/jormungand-root/GRAPH_REPORT.md`.
 
 ## Notes
 
-The model follows codebase-MCP-first discovery, then graphify output. Rendering output is optional; `wiki/c4/workspace.dsl` remains the source of truth.
+The model follows codebase-MCP-first discovery, then graphify output. `wiki/c4/workspace.dsl` remains the source of truth, and generated diagrams are required completion artifacts.

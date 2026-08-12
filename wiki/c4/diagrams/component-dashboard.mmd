@@ -1,0 +1,23 @@
+flowchart LR
+  %% Harness Dashboard Components
+  operator["Operator<br/>Uses the system."]
+  dashboard["Harness Dashboard<br/>Browser UI."]
+  api["Next.js API Routes<br/>HTTP API."]
+  engine["Workflow Engine<br/>Workflow domain logic."]
+  bridge["Agent Bridge<br/>External executor integration."]
+  resolver["Runtime Skill Resolver<br/>Runtime skill bundle resolution."]
+  store["Workspace Store<br/>JSON-backed persistence."]
+  codex["Codex Bridge<br/>External bridge."]
+  openclaw["OpenClaw Runtime<br/>Optional executor."]
+  github["GitHub<br/>Repository service."]
+  composer["Project Composer<br/>Collects project, agent, skills, approvals, and context files."]
+  selector["Project Selector<br/>Builds searchable project/run navigation."]
+  board["Workflow Board<br/>Shows stages, event skills, artifacts, gates, and actions."]
+  health["Bridge Status Panel<br/>Polls and displays Codex/OpenClaw bridge health."]
+  operator -->|"creates"| composer
+  operator -->|"selects"| selector
+  operator -->|"reviews/acts"| board
+  composer -->|"POST projects/runs"| api
+  selector -->|"GET projects/runs"| api
+  board -->|"advance/stop/cancel/approve"| api
+  health -->|"GET agent health"| api

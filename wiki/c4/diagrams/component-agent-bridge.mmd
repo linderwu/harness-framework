@@ -1,0 +1,23 @@
+flowchart LR
+  %% Agent Bridge Components
+  operator["Operator<br/>Uses the system."]
+  dashboard["Harness Dashboard<br/>Browser UI."]
+  api["Next.js API Routes<br/>HTTP API."]
+  engine["Workflow Engine<br/>Workflow domain logic."]
+  bridge["Agent Bridge<br/>External executor integration."]
+  resolver["Runtime Skill Resolver<br/>Runtime skill bundle resolution."]
+  store["Workspace Store<br/>JSON-backed persistence."]
+  codex["Codex Bridge<br/>External bridge."]
+  openclaw["OpenClaw Runtime<br/>Optional executor."]
+  github["GitHub<br/>Repository service."]
+  invoker["Bridge Invoker<br/>Routes invocations to configured executor family."]
+  intake["Intake Repository Agent<br/>Ensures GitHub repository readiness."]
+  a2a["A2A Envelope Sender<br/>Builds and sends OpenClaw A2A envelopes."]
+  control["Bridge Control<br/>Sends stop/cancel controls."]
+  engine -->|"invokeConfiguredAgent"| invoker
+  invoker -->|"HTTP bridge"| codex
+  invoker -->|"bridge HTTP"| openclaw
+  invoker -->|"A2A command"| a2a
+  invoker -->|"intake repo"| intake
+  intake -->|"ensure repo"| github
+  control -->|"stop/cancel"| codex

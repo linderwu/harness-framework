@@ -24,6 +24,11 @@ This workspace follows the Ouroboros Trivium knowledge architecture from [[raw/2
 - C4 model: [[wiki/c4/workspace]]
 - System context: [[wiki/c4/system-context]]
 - Container view: [[wiki/c4/container]]
+- Component views: [[wiki/c4/component]]
+- Dynamic view: [[wiki/c4/dynamic]]
+- Deployment view: [[wiki/c4/deployment]]
+- Code-level reference view: [[wiki/c4/code]]
+- Generated diagrams: `wiki/c4/diagrams/index.html`
 
 ## Entities
 

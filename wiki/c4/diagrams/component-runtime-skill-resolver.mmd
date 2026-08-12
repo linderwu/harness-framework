@@ -1,0 +1,19 @@
+flowchart LR
+  %% Runtime Skill Resolver Components
+  operator["Operator<br/>Uses the system."]
+  dashboard["Harness Dashboard<br/>Browser UI."]
+  api["Next.js API Routes<br/>HTTP API."]
+  engine["Workflow Engine<br/>Workflow domain logic."]
+  bridge["Agent Bridge<br/>External executor integration."]
+  resolver["Runtime Skill Resolver<br/>Runtime skill bundle resolution."]
+  store["Workspace Store<br/>JSON-backed persistence."]
+  codex["Codex Bridge<br/>External bridge."]
+  openclaw["OpenClaw Runtime<br/>Optional executor."]
+  github["GitHub<br/>Repository service."]
+  reader["Registry Reader<br/>Loads .harness registry and lockfile."]
+  matcher["Bundle Matcher<br/>Checks requested bundles against registry and lockfile."]
+  reporter["Resolution Reporter<br/>Returns structured success/failure audit result."]
+  engine -->|"requests skill bundles"| reader
+  reader -->|"registry + lockfile"| matcher
+  matcher -->|"resolution"| reporter
+  reporter -->|"audit result"| engine

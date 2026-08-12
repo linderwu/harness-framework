@@ -23,6 +23,11 @@ Jormungand is a local harness dashboard for project workflow orchestration. An o
 - OpenClaw Runtime: optional OpenClaw bridge or A2A executor.
 - GitHub: repository source and intake-time repository readiness target.
 
+## Generated Diagrams
+
+- `wiki/c4/diagrams/system-context.mmd`
+- `wiki/c4/diagrams/system-context.svg`
+
 ## Evidence
 
 - [[raw/2026-08-11-user-request-ouroboros-application]]
