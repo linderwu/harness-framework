@@ -1,6 +1,6 @@
 # Local Codex Bridge
 
-The dashboard records `codex`, concrete OpenClaw profiles, and `manual` as workflow executors. To make `codex` execute on this machine, run the local bridge and point the app at it.
+The dashboard records `codex` and concrete OpenClaw profiles as workflow executors. To make `codex` execute on this machine, run the local bridge and point the app at it.
 
 ## Local Development
 
@@ -23,8 +23,8 @@ When a workflow event is assigned to `codex`, the Next.js API calls `POST /agent
 codex exec -c service_tier="fast" -C <repo> --sandbox workspace-write -
 ```
 
-Without `CODEX_BRIDGE_URL`, non-manual agents fail closed by default instead of
-silently creating simulated artifacts. Set `HARNESS_ALLOW_SIMULATED_AGENTS=1`
+Without `CODEX_BRIDGE_URL`, Codex fails closed by default instead of silently
+creating simulated artifacts. Set `HARNESS_ALLOW_SIMULATED_AGENTS=1`
 only when you intentionally want local demo artifacts instead of a real agent
 run.
 

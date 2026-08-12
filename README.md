@@ -1,6 +1,6 @@
 # Harness Framework 使用手冊
 
-這個專案是 Jormungandr / Harness dashboard。Dashboard 讓使用者建立 workflow run，選擇 `codex`、OpenClaw agent 或 `manual` executor，並透過 approval gates 管控 plan、design、verification 等階段。
+這個專案是 Jormungandr / Harness dashboard。Dashboard 讓使用者建立 workflow run，選擇 `codex` 或 OpenClaw agent executor，並透過 approval gates 管控 plan、design、verification 等階段。
 
 ## 系統組成
 
@@ -97,7 +97,7 @@ $env:CODEX_BRIDGE_URL = "http://127.0.0.1:4177"
 $env:CODEX_BRIDGE_TOKEN = "<same-value-as-HARNESS_BRIDGE_TOKEN>"
 ```
 
-沒有設定 `CODEX_BRIDGE_URL` 時，非 manual agent 預設會 fail closed。只有在刻意做 demo artifact 時才設定：
+沒有設定 `CODEX_BRIDGE_URL` 時，Codex executor 預設會 fail closed。只有在刻意做 demo artifact 時才設定：
 
 ```powershell
 $env:HARNESS_ALLOW_SIMULATED_AGENTS = "1"
@@ -233,7 +233,7 @@ Invoke-RestMethod http://localhost:3000/api/agent-health
 1. 開啟 `http://localhost:3000`。
 2. 建立或選擇 project。
 3. 輸入 requirement、repository reference、context files。
-4. 選擇 workflow default executor：`codex`、OpenClaw profile 或 `manual`。
+4. 選擇 workflow default executor：`codex` 或 OpenClaw profile。
 5. 需要時覆寫單一 workflow skill 的 executor。
 6. 建立 run。
 7. 依 approval gates 推進 plan、design、verification。
@@ -315,7 +315,7 @@ npm run typecheck
 - 確認 SSH password 由環境變數、password file 或 DPAPI secret 提供。
 - 先在 OpenClaw server 上用 `docker exec -i openclaw openclaw agent ... --json` 做最小測試。
 
-`Only manual artifacts are produced`
+`Only simulated artifacts are produced`
 
 - 檢查是否設定了 `HARNESS_ALLOW_SIMULATED_AGENTS=1`。
 - 若不是刻意 demo，移除此設定並配置真實 bridge。

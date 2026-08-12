@@ -1940,10 +1940,6 @@ function AgentSelect({
     {
       label: "OpenClaw",
       agents: agentProfiles.filter((agent) => agent.family === "openclaw")
-    },
-    {
-      label: "Manual",
-      agents: agentProfiles.filter((agent) => agent.family === "manual")
     }
   ].filter((group) => group.agents.length > 0)
 

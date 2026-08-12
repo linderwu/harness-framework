@@ -11,7 +11,7 @@ updated: 2026-08-11
 
 ## Summary
 
-The agent bridge adapts workflow agent invocations to Codex bridge, OpenClaw bridge, OpenClaw A2A command, manual, or simulated execution modes.
+The agent bridge adapts workflow agent invocations to Codex bridge, OpenClaw bridge, OpenClaw A2A command, or explicit simulated execution modes.
 
 ## Source of Truth
 
@@ -52,7 +52,7 @@ The agent bridge adapts workflow agent invocations to Codex bridge, OpenClaw bri
 ## Interface
 
 ```ts
-invokeConfiguredAgent(input): Promise<AgentArtifactResult | undefined>
+invokeConfiguredAgent(input): Promise<AgentArtifactResult>
 cancelConfiguredAgentRun(run): Promise<void>
 stopConfiguredAgentRun(run): Promise<void>
 ```

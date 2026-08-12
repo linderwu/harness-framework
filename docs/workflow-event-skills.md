@@ -149,7 +149,6 @@ Supported MVP executors:
 - `openclaw.rowlet`
 - `openclaw.roaringmoon`
 - `openclaw.charizard`
-- `manual`
 
 The dashboard lets the user set a default development agent, then override the executor for each individual skill. Runtime events and agent run records must use the assigned executor, not the workflow-level default.
 

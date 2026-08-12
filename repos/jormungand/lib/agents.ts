@@ -1,6 +1,6 @@
 import type { AgentKind, OpenClawMainAgent } from "./types"
 
-export type AgentFamily = "codex" | "openclaw" | "manual"
+export type AgentFamily = "codex" | "openclaw"
 
 export interface AgentProfile {
   id: AgentKind
@@ -35,11 +35,6 @@ export const agentProfiles = [
     label: "Charizard",
     family: "openclaw",
     mainAgent: "charizard"
-  },
-  {
-    id: "manual",
-    label: "Manual",
-    family: "manual"
   }
 ] as const satisfies readonly AgentProfile[]
 

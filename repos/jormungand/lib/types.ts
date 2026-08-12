@@ -39,7 +39,6 @@ export type OpenClawMainAgent = "rowlet" | "roaringmoon" | "charizard"
 export type AgentKind =
   | "codex"
   | `openclaw.${OpenClawMainAgent}`
-  | "manual"
 
 export type ApprovalActorType =
   | "human"

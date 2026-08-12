@@ -45,15 +45,11 @@ const bridgeProtocolV3 = "harness-agent-bridge/v0.3"
 
 export async function invokeConfiguredAgent(
   input: AgentInvocationInput
-): Promise<AgentArtifactResult | undefined> {
+): Promise<AgentArtifactResult> {
   const profile = getAgentProfile(input.executor)
 
   if (input.skill.id === "intake.requirement") {
     return invokeIntakeAgent(input)
-  }
-
-  if (profile.family === "manual") {
-    return undefined
   }
 
   const requiredProtocol = requiredBridgeProtocol(input)
@@ -413,7 +409,7 @@ function getBridgeSource(agent: AgentKind): AgentArtifactResult["source"] {
 }
 
 function getIntakeSource(agent: AgentKind): AgentArtifactResult["source"] {
-  return getAgentProfile(agent).family === "manual" ? "simulated" : getBridgeSource(agent)
+  return getBridgeSource(agent)
 }
 
 function formatError(error: unknown) {

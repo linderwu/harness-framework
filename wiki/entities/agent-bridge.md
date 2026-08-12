@@ -11,7 +11,7 @@ updated: 2026-08-11
 
 ## Summary
 
-The agent bridge translates workflow-stage requests into configured Codex bridge, OpenClaw bridge, OpenClaw A2A, or manual/simulated execution behavior.
+The agent bridge translates workflow-stage requests into configured Codex bridge, OpenClaw bridge, OpenClaw A2A, or explicit simulated execution behavior.
 
 ## Responsibility Boundaries
 

@@ -86,7 +86,7 @@ export interface AgentInvocationInput {
 
 export type AgentInvoker = (
   input: AgentInvocationInput
-) => Promise<AgentArtifactResult | undefined>
+) => Promise<AgentArtifactResult>
 
 export type RuntimeSkillResolver = (
   skill: WorkflowEventSkill
