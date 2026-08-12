@@ -10,7 +10,7 @@
     "start": "next start",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "test": "node -e \"require('fs').rmSync('.tmp-tests',{recursive:true,force:true})\" && tsc tests/ouroboros-layout.test.ts tests/workspace-model.test.ts tests/workflow.test.ts tests/runtime-skills.test.ts tests/layout-css.test.ts tests/harness-dashboard-structure.test.ts tests/project-selector.test.ts lib/agents.ts lib/project-templates.ts lib/types.ts lib/workflow.ts lib/workspace.ts lib/runtime-skills.ts lib/project-selector.ts --outDir .tmp-tests --module commonjs --target es2022 --moduleResolution node --baseUrl . --esModuleInterop --skipLibCheck && node --test .tmp-tests/tests/*.test.js"
+    "test": "node -e \"require('fs').rmSync('.tmp-tests',{recursive:true,force:true})\" && tsc tests/ouroboros-layout.test.ts tests/workspace-model.test.ts tests/workflow.test.ts tests/runtime-skills.test.ts tests/layout-css.test.ts tests/harness-dashboard-structure.test.ts tests/project-selector.test.ts tests/site-auth.test.ts lib/agents.ts lib/project-templates.ts lib/types.ts lib/workflow.ts lib/workspace.ts lib/runtime-skills.ts lib/project-selector.ts lib/site-auth.ts --outDir .tmp-tests --module commonjs --target es2022 --moduleResolution node --baseUrl . --esModuleInterop --skipLibCheck && node --test .tmp-tests/tests/*.test.js"
   },
   "dependencies": {
     "lucide-react": "^0.468.0",

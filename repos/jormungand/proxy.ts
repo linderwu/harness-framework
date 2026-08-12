@@ -1,10 +1,20 @@
 import { timingSafeEqual } from "crypto"
 import type { NextRequest } from "next/server"
 import { NextResponse } from "next/server"
+import { shouldRequireSiteAuthentication } from "./lib/site-auth"
 
 const authRealm = "Jormungandr"
 
 export function proxy(request: NextRequest) {
+  if (
+    !shouldRequireSiteAuthentication(
+      request.method,
+      process.env.SITE_AUTH_MODE
+    )
+  ) {
+    return NextResponse.next()
+  }
+
   const username = process.env.SITE_AUTH_USERNAME
   const password = process.env.SITE_AUTH_PASSWORD
 
