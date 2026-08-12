@@ -1,0 +1,10 @@
+.git
+.next
+.omx
+.tmp-tests
+.worktrees
+node_modules
+repos/*/.next
+repos/*/.tmp-tests
+repos/*/node_modules
+repos/*/tsconfig.tsbuildinfo

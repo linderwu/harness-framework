@@ -25,6 +25,9 @@ test("Zeabur deploys the nested app project", () => {
   const zbpack = JSON.parse(
     readFileSync(path.join(workspaceRoot, "zbpack.json"), "utf8")
   )
+  const dockerfile = readFileSync(path.join(workspaceRoot, "Dockerfile"), "utf8")
 
   assert.equal(zbpack.app_dir, "repos/jormungand")
+  assert.match(dockerfile, /WORKDIR \/app\/repos\/jormungand/)
+  assert.match(dockerfile, /\$\{PORT:-3000\}/)
 })
