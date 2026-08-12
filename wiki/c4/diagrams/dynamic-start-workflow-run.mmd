@@ -7,12 +7,11 @@ flowchart LR
   resolver["Runtime Skill Resolver<br/>Resolves runtime bundles."]
   bridge["Agent Bridge<br/>Invokes configured executor."]
   store["Workspace Store<br/>Persists run and artifacts."]
-  codex["Codex Bridge<br/>External agent run."]
-  operator -->|"1. enter request"| dashboard
-  dashboard -->|"2. POST run"| api
+  codex["Configured Codex/OpenClaw Bridge<br/>Authenticated v0.3 agent run with verified runtime skills."]
+  operator -->|"1. request"| dashboard
+  dashboard -->|"2. POST"| api
   api -->|"3. create/advance"| engine
   engine -->|"4. resolve skills"| resolver
-  engine -->|"5. invoke agent"| bridge
-  bridge -->|"6. POST agent-runs"| codex
+  engine -->|"5. invoke"| bridge
+  bridge -->|"6. agent-runs"| codex
   engine -->|"7. persist"| store
-  dashboard -->|"8. refresh state"| api

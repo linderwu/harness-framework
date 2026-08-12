@@ -4,7 +4,7 @@ type: entity
 tags: [workflow, domain, runtime]
 status: active
 created: 2026-08-11
-updated: 2026-08-11
+updated: 2026-08-13
 ---
 
 # Workflow Engine
@@ -18,6 +18,15 @@ The workflow engine creates workflow runs, advances stage state, records artifac
 - Owns workflow state transitions and artifact/gate creation.
 - Does not own persistent storage implementation.
 - Does not own external agent transport details.
+
+## Project-Type Semantics
+
+`agent_task` is a distinct one-stage execution path. Research, Development,
+Testing, Documentation, Diagnosis, and Decision currently provide different
+project templates and phase labels but share the same default workflow event
+skill chain. Template creation was verified independently from real bridge
+workflow execution; see
+[[raw/2026-08-13-secure-bridge-deployment-verification]].
 
 ## Source
 
@@ -33,4 +42,6 @@ API routes call workflow functions. The workflow engine calls [[wiki/entities/ag
 ## References
 
 - [[raw/2026-08-11-graphify-code-only-run]]
+- [[raw/2026-08-13-graphify-deep-minimax-run]]
+- [[wiki/concepts/tech-debt-synchronous-bridge-transport]]
 - `graphify/jormungand-root/GRAPH_REPORT.md`

@@ -31,3 +31,48 @@ test("Zeabur deploys the nested app project", () => {
   assert.match(dockerfile, /WORKDIR \/app\/repos\/jormungand/)
   assert.match(dockerfile, /\$\{PORT:-3000\}/)
 })
+
+test("Ouroboros production C4 sources and exports stay aligned", () => {
+  const workspaceRoot = path.resolve(process.cwd(), "..", "..")
+  const dsl = readFileSync(
+    path.join(workspaceRoot, "wiki", "c4", "workspace.dsl"),
+    "utf8"
+  )
+  const deploymentWiki = readFileSync(
+    path.join(workspaceRoot, "wiki", "c4", "deployment.md"),
+    "utf8"
+  )
+  const generator = readFileSync(
+    path.join(process.cwd(), "scripts", "generate-c4-diagrams.mjs"),
+    "utf8"
+  )
+  const manifest = JSON.parse(
+    readFileSync(
+      path.join(workspaceRoot, "wiki", "c4", "diagrams", "manifest.json"),
+      "utf8"
+    )
+  ) as { outputs: Array<{ key: string; files: string[] }> }
+
+  for (const token of [
+    "/health",
+    "/api/agent-health",
+    "OpenClaw Bridge",
+    "4178",
+    "skill.lock.json"
+  ]) {
+    assert.match(dsl, new RegExp(token.replaceAll("/", "\\/")))
+    assert.match(deploymentWiki, new RegExp(token.replaceAll("/", "\\/")))
+    assert.match(generator, new RegExp(token.replaceAll("/", "\\/")))
+  }
+
+  assert.match(dsl, /deploymentProduction/)
+  assert.match(generator, /key: "deployment-production"/)
+  assert.equal(manifest.outputs.length, 12)
+  assert.deepEqual(
+    manifest.outputs.find((output) => output.key === "deployment-production")?.files,
+    [
+      "wiki/c4/diagrams/deployment-production.mmd",
+      "wiki/c4/diagrams/deployment-production.svg"
+    ]
+  )
+})

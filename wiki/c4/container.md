@@ -4,7 +4,7 @@ type: c4
 tags: [architecture, c4, container]
 status: active
 created: 2026-08-11
-updated: 2026-08-11
+updated: 2026-08-13
 ---
 
 # Jormungand Container View
@@ -16,7 +16,9 @@ Canonical Structurizr view key: `container`
 ## Containers
 
 - Harness Dashboard: `repos/jormungand/components/harness-dashboard.tsx` and `repos/jormungand/app/page.tsx`.
-- Next.js API Routes: `repos/jormungand/app/api/**/route.ts`.
+- Next.js HTTP Boundary and API Routes: `repos/jormungand/proxy.ts`, public
+  `repos/jormungand/app/health/route.ts`, and protected
+  `repos/jormungand/app/api/**/route.ts`.
 - Workflow Engine: `repos/jormungand/lib/workflow.ts`.
 - Agent Bridge: `repos/jormungand/lib/agent-bridge.ts`.
 - Workspace Store: `repos/jormungand/lib/store.ts` and `repos/jormungand/lib/workspace.ts`.
@@ -29,7 +31,12 @@ Canonical Structurizr view key: `container`
 
 ## Graph Evidence
 
-Graphify identified `advanceWorkflow()`, `invokeConfiguredAgent()`, `WorkflowRun`, and `getAgentProfile()` as central abstractions in the code graph. See [[raw/2026-08-11-graphify-code-only-run]] and `graphify/jormungand-root/GRAPH_REPORT.md`.
+The final refreshed deep graph contains 500 nodes and 985 edges. It continues to
+identify `advanceWorkflow()`, `invokeConfiguredAgent()`, `WorkflowRun`, and
+`getAgentProfile()` as central abstractions. See
+[[raw/2026-08-13-graphify-deep-minimax-run]],
+[[raw/2026-08-13-graphify-final-refresh]], and
+`graphify/jormungand-root/GRAPH_REPORT.md`.
 
 ## Notes
 

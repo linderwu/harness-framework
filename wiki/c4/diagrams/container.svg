@@ -17,13 +17,14 @@
     .edge { stroke: #344054; stroke-width: 1.4; marker-end: url(#arrow); }
     .edge-label { fill: #475467; font-size: 12px; paint-order: stroke; stroke: #ffffff; stroke-width: 4px; stroke-linejoin: round; }
   </style>
+  <rect class="canvas-background" width="100%" height="100%" fill="#ffffff" />
   <text class="diagram-title" x="32" y="36">Container</text>
   <text class="diagram-meta" x="32" y="58">Container - Evidence-backed from repos/jormungand/app/page.tsx, repos/jormungand/app/api/** routes, and repos/jormungand/lib/*.ts.</text>
   <g class="edges">
     <line class="edge" x1="250" y1="285" x2="300" y2="125" />
     <text class="edge-label" x="275" y="199">operates</text>
     <line class="edge" x1="410" y1="180" x2="410" y2="250" />
-    <text class="edge-label" x="410" y="209">fetch / mutate</text>
+    <text class="edge-label" x="410" y="209">authenticated fetch / mutate</text>
     <line class="edge" x1="520" y1="305" x2="600" y2="215" />
     <text class="edge-label" x="560" y="254">create/advance</text>
     <line class="edge" x1="520" y1="305" x2="600" y2="405" />
@@ -50,9 +51,10 @@
     <text class="node-desc" x="316" y="122">Project selection, workflow</text>
     <text class="node-desc" x="316" y="138">launch, artifacts, approval gates.</text>
     <rect class="node container" x="300" y="250" width="220" height="110" rx="8" fill="#e6f4ea" />
-    <text class="node-title" x="316" y="278">Next.js API Routes</text>
-    <text class="node-desc" x="316" y="302">Workflow, project, approval, and</text>
-    <text class="node-desc" x="316" y="318">bridge health HTTP API.</text>
+    <text class="node-title" x="316" y="278">Authenticated HTTP</text>
+    <text class="node-title" x="316" y="296">Boundary</text>
+    <text class="node-desc" x="316" y="320">Public /health; site-authenticated</text>
+    <text class="node-desc" x="316" y="336">UI, API, and /api/agent-health.</text>
     <rect class="node container" x="600" y="160" width="220" height="110" rx="8" fill="#e6f4ea" />
     <text class="node-title" x="616" y="188">Workflow Engine</text>
     <text class="node-desc" x="616" y="212">Creates/advances runs and</text>

@@ -4,7 +4,7 @@ type: spec
 module: workspace
 visibility: internal
 created: 2026-08-11
-updated: 2026-08-11
+updated: 2026-08-13
 ---
 
 # Workspace Store
@@ -46,6 +46,10 @@ The workspace layer creates projects, normalizes legacy workflow state, links pr
 ### Side Effects
 
 `repos/jormungand/lib/workspace.ts` is pure state transformation. `repos/jormungand/lib/store.ts` owns persistence side effects.
+
+The production store remains a single-process JSON file on the application
+filesystem. It is not a multi-replica or disaster-recovery persistence
+contract; see [[wiki/concepts/tech-debt-json-state-persistence]].
 
 ## Interface
 

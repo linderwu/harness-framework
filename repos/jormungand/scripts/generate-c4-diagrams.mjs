@@ -25,8 +25,8 @@ const diagrams = [
     nodes: [
       node("operator", "Operator", "Creates projects, launches workflow runs, reviews artifacts, decides gates.", "person", 40, 190),
       node("jormungand", "Jormungand Harness Framework", "Dashboard and workflow orchestration for agent-assisted delivery.", "system", 360, 170, 270, 130),
-      node("codex", "Codex Bridge", "Local Codex execution bridge.", "external", 780, 70),
-      node("openclaw", "OpenClaw Runtime", "Optional bridge or A2A executor.", "external", 780, 220),
+      node("codex", "Codex Bridge", "Authenticated v0.3 bridge for one configured repository.", "external", 780, 70),
+      node("openclaw", "OpenClaw Runtime", "Authenticated v0.3 bridge or optional A2A executor.", "external", 780, 220),
       node("github", "GitHub", "Repository source and intake readiness target.", "external", 780, 370)
     ],
     edges: [
@@ -44,7 +44,7 @@ const diagrams = [
     nodes: [
       node("operator", "Operator", "Uses browser UI.", "person", 30, 230),
       node("dashboard", "Harness Dashboard", "Project selection, workflow launch, artifacts, approval gates.", "container", 300, 70),
-      node("api", "Next.js API Routes", "Workflow, project, approval, and bridge health HTTP API.", "container", 300, 250),
+      node("api", "Authenticated HTTP Boundary", "Public /health; site-authenticated UI, API, and /api/agent-health.", "container", 300, 250),
       node("engine", "Workflow Engine", "Creates/advances runs and coordinates gates.", "container", 600, 160),
       node("bridge", "Agent Bridge", "Normalizes Codex/OpenClaw/simulated executor calls.", "container", 900, 70),
       node("resolver", "Runtime Skill Resolver", "Resolves bridge protocol v0.3 skill bundles.", "container", 900, 250),
@@ -55,7 +55,7 @@ const diagrams = [
     ],
     edges: [
       edge("operator", "dashboard", "operates"),
-      edge("dashboard", "api", "fetch / mutate"),
+      edge("dashboard", "api", "authenticated fetch / mutate"),
       edge("api", "engine", "create/advance"),
       edge("api", "store", "read/write"),
       edge("engine", "bridge", "invoke agents"),
@@ -80,22 +80,37 @@ const diagrams = [
     edge("board", "api", "advance/stop/cancel/approve"),
     edge("health", "api", "GET agent health")
   ]),
-  componentDiagram("component-api-routes", "API Route Components", "Next.js API Routes", [
-    ["projects", "Project Routes", "Create/list projects and project-scoped runs."],
-    ["workflow", "Workflow Run Routes", "Create/read/advance/stop/cancel workflow runs."],
-    ["approval", "Approval Gate Routes", "Apply approval decisions."],
-    ["health", "Agent Health Routes", "Probe configured bridge health."]
-  ], [
-    edge("dashboard", "projects", "project requests"),
-    edge("dashboard", "workflow", "run requests"),
-    edge("dashboard", "approval", "gate decisions"),
-    edge("dashboard", "health", "health polling"),
-    edge("projects", "store", "read/write"),
-    edge("workflow", "engine", "create/advance"),
-    edge("workflow", "store", "persist"),
-    edge("approval", "engine", "decide gate"),
-    edge("health", "bridge", "probe bridge config")
-  ]),
+  {
+    key: "component-api-routes",
+    title: "API Route Components",
+    c4Type: "Component",
+    evidence: "Evidence-backed from repos/jormungand/proxy.ts and repos/jormungand/app/**/route.ts.",
+    nodes: [
+      node("dashboard", "Harness Dashboard", "Browser UI.", "container", 40, 280),
+      node("boundary", "Site Auth And Liveness", "Defaults site auth to all routes while allowing public GET /health.", "component", 360, 280, 240, 120),
+      node("projects", "Project Routes", "Create/list projects and project-scoped runs.", "component", 720, 30, 240, 120),
+      node("workflow", "Workflow Run Routes", "Create/read/advance/stop/cancel workflow runs.", "component", 720, 200, 240, 120),
+      node("approval", "Approval Gate Routes", "Apply approval decisions.", "component", 720, 370, 240, 120),
+      node("health", "Protected Agent Health", "Probe authenticated Codex/OpenClaw bridge health.", "component", 720, 540, 240, 120),
+      node("store", "Workspace Store", "JSON-backed persistence.", "storage", 1080, 30),
+      node("engine", "Workflow Engine", "Creates/advances runs and decides gates.", "container", 1080, 300),
+      node("codex", "Codex Bridge", "Authenticated v0.3 health endpoint.", "external", 1080, 500),
+      node("openclaw", "OpenClaw Bridge", "Authenticated v0.3 health endpoint.", "external", 1080, 680)
+    ],
+    edges: [
+      edge("dashboard", "boundary", "authenticated"),
+      edge("boundary", "projects", "projects"),
+      edge("boundary", "workflow", "runs"),
+      edge("boundary", "approval", "gates"),
+      edge("boundary", "health", "health"),
+      edge("projects", "store", "read/write"),
+      edge("workflow", "engine", "advance"),
+      edge("workflow", "store", "persist"),
+      edge("approval", "engine", "decide"),
+      edge("health", "codex", "bearer"),
+      edge("health", "openclaw", "bearer")
+    ]
+  },
   componentDiagram("component-workflow-engine", "Workflow Engine Components", "Workflow Engine", [
     ["catalog", "Event Skill Catalog", "Defines skills, gates, knowledge sources, and runtime bundles."],
     ["factory", "Run Factory", "Creates normalized runs and policies."],
@@ -153,23 +168,22 @@ const diagrams = [
     evidence: "Evidence-backed from repos/jormungand/app/api/workflow-runs/route.ts and repos/jormungand/lib/workflow.ts.",
     nodes: [
       node("operator", "Operator", "Submits requirement and policy.", "person", 40, 80),
-      node("dashboard", "Harness Dashboard", "Collects run request.", "container", 300, 80),
-      node("api", "Workflow Route", "POST /api/workflow-runs.", "component", 560, 80),
-      node("engine", "Workflow Engine", "Creates and advances run.", "container", 820, 80),
-      node("resolver", "Runtime Skill Resolver", "Resolves runtime bundles.", "component", 820, 260),
-      node("bridge", "Agent Bridge", "Invokes configured executor.", "container", 1080, 80),
-      node("store", "Workspace Store", "Persists run and artifacts.", "storage", 1080, 260),
-      node("codex", "Codex Bridge", "External agent run.", "external", 1340, 80)
+      node("dashboard", "Harness Dashboard", "Collects run request.", "container", 380, 80),
+      node("api", "Workflow Route", "POST /api/workflow-runs.", "component", 720, 80),
+      node("engine", "Workflow Engine", "Creates and advances run.", "container", 1060, 80),
+      node("resolver", "Runtime Skill Resolver", "Resolves runtime bundles.", "component", 1060, 300),
+      node("bridge", "Agent Bridge", "Invokes configured executor.", "container", 1400, 80),
+      node("store", "Workspace Store", "Persists run and artifacts.", "storage", 1400, 300),
+      node("codex", "Configured Codex/OpenClaw Bridge", "Authenticated v0.3 agent run with verified runtime skills.", "external", 1740, 80, 260, 110)
     ],
     edges: [
-      edge("operator", "dashboard", "1. enter request"),
-      edge("dashboard", "api", "2. POST run"),
+      edge("operator", "dashboard", "1. request"),
+      edge("dashboard", "api", "2. POST"),
       edge("api", "engine", "3. create/advance"),
       edge("engine", "resolver", "4. resolve skills"),
-      edge("engine", "bridge", "5. invoke agent"),
-      edge("bridge", "codex", "6. POST agent-runs"),
-      edge("engine", "store", "7. persist"),
-      edge("dashboard", "api", "8. refresh state")
+      edge("engine", "bridge", "5. invoke"),
+      edge("bridge", "codex", "6. agent-runs"),
+      edge("engine", "store", "7. persist")
     ]
   },
   {
@@ -191,6 +205,39 @@ const diagrams = [
       edge("next", "codex", "HTTP bridge"),
       edge("next", "openclaw", "HTTP or child_process"),
       edge("next", "github", "repository API")
+    ]
+  },
+  {
+    key: "deployment-production",
+    title: "Deployment: Production Bridges",
+    c4Type: "Deployment",
+    evidence: "Evidence-backed by raw/2026-08-13-secure-bridge-deployment-verification.md and commit 52a020e.",
+    nodes: [
+      node("browser", "Operator Browser", "Uses the authenticated Zeabur dashboard.", "person", 40, 130),
+      node("zeabur", "Zeabur HTTPS Boundary", "Public /health; site-authenticated UI, API, and /api/agent-health.", "container", 380, 100, 250, 120),
+      node("next", "Jormungand Next.js", "Workflow engine, agent adapter, and runtime-skill resolver.", "container", 760, 100, 250, 120),
+      node("state", "Container JSON State", "Single-process state with accepted durability debt.", "storage", 760, 300, 250, 110),
+      node("codexIngress", "Codex Bridge Ingress", "Bearer-authenticated public bridge endpoint.", "external", 1160, 30, 240, 110),
+      node("codexProcess", "Codex Bridge Process", "v0.3, repository-origin guard, skills-v1.0.0 checksum verification.", "external", 1530, 30, 260, 120),
+      node("openclawIngress", "OpenClaw Bridge Ingress", "Bearer-authenticated public bridge endpoint.", "external", 1160, 200, 240, 110),
+      node("cloudflare", "Cloudflare Tunnel", "Forwards the formal hostname to the VM loopback service.", "external", 1530, 200, 240, 110),
+      node("vmBridge", "VM User Bridge :4178", "jormungandr-openclaw-bridge.service; v0.3 exact skill.lock.json allowlist.", "external", 1900, 200, 280, 120),
+      node("openclaw", "OpenClaw Docker Container", "Runs Rowlet, Roaring Moon, and Charizard with verified skills/context.", "external", 1900, 390, 280, 120),
+      node("deployer", "Pinned SSH Deployer", "Strict known_hosts; syncs bridge code and deployed skill.lock.json.", "component", 1160, 450, 250, 120),
+      node("release", "GitHub Runtime Skill Release", "skills-v1.0.0 immutable bundle with locked SHA-256.", "external", 2400, 390, 270, 110)
+    ],
+    edges: [
+      edge("browser", "zeabur", "Basic auth"),
+      edge("zeabur", "next", "HTTP route"),
+      edge("next", "state", "JSON read/write"),
+      edge("next", "codexIngress", "bearer v0.3"),
+      edge("codexIngress", "codexProcess", "bridge request"),
+      edge("next", "openclawIngress", "bearer v0.3"),
+      edge("openclawIngress", "cloudflare", "HTTPS"),
+      edge("cloudflare", "vmBridge", "127.0.0.1:4178"),
+      edge("vmBridge", "openclaw", "docker exec"),
+      edge("deployer", "vmBridge", "pinned SSH: sync bridge + skill.lock.json"),
+      edge("vmBridge", "release", "download locked bundle")
     ]
   },
   {
@@ -229,13 +276,13 @@ function componentDiagram(key, title, containerName, components, edges) {
   const nodes = [
     node("operator", "Operator", "Uses the system.", "person", 40, 190),
     node("dashboard", "Harness Dashboard", "Browser UI.", "container", 300, 60),
-    node("api", "Next.js API Routes", "HTTP API.", "container", 300, 320),
+    node("api", "Next.js HTTP Boundary", "Site-authenticated API plus public /health.", "container", 300, 320),
     node("engine", "Workflow Engine", "Workflow domain logic.", "container", 1080, 60),
     node("bridge", "Agent Bridge", "External executor integration.", "container", 1080, 220),
     node("resolver", "Runtime Skill Resolver", "Runtime skill bundle resolution.", "container", 1080, 380),
     node("store", "Workspace Store", "JSON-backed persistence.", "storage", 820, 380),
-    node("codex", "Codex Bridge", "External bridge.", "external", 1340, 80),
-    node("openclaw", "OpenClaw Runtime", "Optional executor.", "external", 1340, 240),
+    node("codex", "Codex Bridge", "Authenticated v0.3 external bridge.", "external", 1340, 80),
+    node("openclaw", "OpenClaw Runtime", "Authenticated v0.3 or A2A executor.", "external", 1340, 240),
     node("github", "GitHub", "Repository service.", "external", 1340, 400)
   ]
 
@@ -327,6 +374,7 @@ function svgFor(diagram) {
     .edge { stroke: #344054; stroke-width: 1.4; marker-end: url(#arrow); }
     .edge-label { fill: #475467; font-size: 12px; paint-order: stroke; stroke: #ffffff; stroke-width: 4px; stroke-linejoin: round; }
   </style>
+  <rect class="canvas-background" width="100%" height="100%" fill="#ffffff" />
   <text class="diagram-title" x="32" y="36">${escapeXml(diagram.title)}</text>
   <text class="diagram-meta" x="32" y="58">${escapeXml(diagram.c4Type)} - ${escapeXml(diagram.evidence)}</text>
   <g class="edges">

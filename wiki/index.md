@@ -3,7 +3,7 @@ title: Jormungand Ouroboros Index
 type: index
 status: active
 created: 2026-08-11
-updated: 2026-08-11
+updated: 2026-08-13
 ---
 
 # Jormungand Ouroboros Index
@@ -29,6 +29,8 @@ This workspace follows the Ouroboros Trivium knowledge architecture from [[raw/2
 - Deployment view: [[wiki/c4/deployment]]
 - Code-level reference view: [[wiki/c4/code]]
 - Generated diagrams: `wiki/c4/diagrams/index.html`
+- Production deployment evidence: [[raw/2026-08-13-secure-bridge-deployment-verification]]
+- Production diagram evidence: [[raw/2026-08-13-c4-production-diagram-generation]]
 
 ## Entities
 
@@ -40,6 +42,8 @@ This workspace follows the Ouroboros Trivium knowledge architecture from [[raw/2
 ## Concepts
 
 - [[wiki/concepts/root-local-code-exception]]
+- [[wiki/concepts/tech-debt-synchronous-bridge-transport]]
+- [[wiki/concepts/tech-debt-json-state-persistence]]
 
 ## Patterns
 
@@ -50,3 +54,5 @@ This workspace follows the Ouroboros Trivium knowledge architecture from [[raw/2
 - `graphify/jormungand-root/graph.json`
 - `graphify/jormungand-root/graph.html`
 - `graphify/jormungand-root/GRAPH_REPORT.md`
+- Deep Graphify run: [[raw/2026-08-13-graphify-deep-minimax-run]]
+- Final graph refresh: [[raw/2026-08-13-graphify-final-refresh]]

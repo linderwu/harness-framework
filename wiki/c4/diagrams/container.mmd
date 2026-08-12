@@ -2,7 +2,7 @@ flowchart LR
   %% Container
   operator["Operator<br/>Uses browser UI."]
   dashboard["Harness Dashboard<br/>Project selection, workflow launch, artifacts, approval gates."]
-  api["Next.js API Routes<br/>Workflow, project, approval, and bridge health HTTP API."]
+  api["Authenticated HTTP Boundary<br/>Public /health; site-authenticated UI, API, and /api/agent-health."]
   engine["Workflow Engine<br/>Creates/advances runs and coordinates gates."]
   bridge["Agent Bridge<br/>Normalizes Codex/OpenClaw/simulated executor calls."]
   resolver["Runtime Skill Resolver<br/>Resolves bridge protocol v0.3 skill bundles."]
@@ -11,7 +11,7 @@ flowchart LR
   openclaw["OpenClaw Runtime<br/>Optional external executor."]
   github["GitHub<br/>Repository source/target."]
   operator -->|"operates"| dashboard
-  dashboard -->|"fetch / mutate"| api
+  dashboard -->|"authenticated fetch / mutate"| api
   api -->|"create/advance"| engine
   api -->|"read/write"| store
   engine -->|"invoke agents"| bridge

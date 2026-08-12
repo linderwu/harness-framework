@@ -17,6 +17,7 @@
     .edge { stroke: #344054; stroke-width: 1.4; marker-end: url(#arrow); }
     .edge-label { fill: #475467; font-size: 12px; paint-order: stroke; stroke: #ffffff; stroke-width: 4px; stroke-linejoin: round; }
   </style>
+  <rect class="canvas-background" width="100%" height="100%" fill="#ffffff" />
   <text class="diagram-title" x="32" y="36">Runtime Skill Resolver Components</text>
   <text class="diagram-meta" x="32" y="58">Component - Evidence-backed component view for Runtime Skill Resolver.</text>
   <g class="edges">
@@ -37,8 +38,9 @@
     <text class="node-title" x="316" y="88">Harness Dashboard</text>
     <text class="node-desc" x="316" y="112">Browser UI.</text>
     <rect class="node container" x="300" y="320" width="220" height="110" rx="8" fill="#e6f4ea" />
-    <text class="node-title" x="316" y="348">Next.js API Routes</text>
-    <text class="node-desc" x="316" y="372">HTTP API.</text>
+    <text class="node-title" x="316" y="348">Next.js HTTP Boundary</text>
+    <text class="node-desc" x="316" y="372">Site-authenticated API plus public</text>
+    <text class="node-desc" x="316" y="388">/health.</text>
     <rect class="node container" x="1080" y="60" width="220" height="110" rx="8" fill="#e6f4ea" />
     <text class="node-title" x="1096" y="88">Workflow Engine</text>
     <text class="node-desc" x="1096" y="112">Workflow domain logic.</text>
@@ -53,10 +55,12 @@
     <text class="node-desc" x="836" y="432">JSON-backed persistence.</text>
     <rect class="node external" x="1340" y="80" width="220" height="110" rx="8" fill="#ffe3d8" />
     <text class="node-title" x="1356" y="108">Codex Bridge</text>
-    <text class="node-desc" x="1356" y="132">External bridge.</text>
+    <text class="node-desc" x="1356" y="132">Authenticated v0.3 external</text>
+    <text class="node-desc" x="1356" y="148">bridge.</text>
     <rect class="node external" x="1340" y="240" width="220" height="110" rx="8" fill="#ffe3d8" />
     <text class="node-title" x="1356" y="268">OpenClaw Runtime</text>
-    <text class="node-desc" x="1356" y="292">Optional executor.</text>
+    <text class="node-desc" x="1356" y="292">Authenticated v0.3 or A2A</text>
+    <text class="node-desc" x="1356" y="308">executor.</text>
     <rect class="node external" x="1340" y="400" width="220" height="110" rx="8" fill="#ffe3d8" />
     <text class="node-title" x="1356" y="428">GitHub</text>
     <text class="node-desc" x="1356" y="452">Repository service.</text>

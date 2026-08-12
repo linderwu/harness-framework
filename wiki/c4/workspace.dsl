@@ -2,11 +2,11 @@ workspace "Jormungand Harness Framework" "C4 model for the Jormungand harness da
     model {
         user = person "Operator" "Creates projects, launches workflow runs, reviews artifacts, and decides approval gates."
 
-        codexBridge = softwareSystem "Codex Bridge" "Local Codex execution bridge." "External" {
+        codexBridge = softwareSystem "Codex Bridge" "Authenticated v0.3 Codex execution bridge bound to a configured repository workspace." "External" {
             tags "External"
         }
 
-        openClaw = softwareSystem "OpenClaw Runtime" "Optional OpenClaw bridge or A2A execution runtime." "External" {
+        openClaw = softwareSystem "OpenClaw Runtime" "Authenticated v0.3 OpenClaw HTTP bridge or optional A2A execution runtime." "External" {
             tags "External"
         }
 
@@ -22,11 +22,12 @@ workspace "Jormungand Harness Framework" "C4 model for the Jormungand harness da
                 bridgeStatusPanel = component "Bridge Status Panel" "Polls bridge health and shows Codex/OpenClaw runtime status." "React + fetch"
             }
 
-            api = container "Next.js API Routes" "HTTP API for workflow runs, projects, agent health, and approval decisions." "Next.js Route Handlers" {
+            api = container "Next.js HTTP Boundary And API" "Site-authenticated HTTP boundary for workflow runs, projects, bridge health, and approvals, with public /health liveness." "Next.js Proxy And Route Handlers" {
+                siteAuthBoundary = component "Site Auth And Liveness Boundary" "Defaults site authentication to all UI/API routes while allowing unauthenticated GET /health." "repos/jormungand/proxy.ts + app/health/route.ts"
                 projectRoutes = component "Project Routes" "Create/list projects and project-scoped workflow runs." "repos/jormungand/app/api/projects/**"
                 workflowRoutes = component "Workflow Run Routes" "Create, read, advance, stop, and cancel workflow runs." "repos/jormungand/app/api/workflow-runs/**"
                 approvalRoutes = component "Approval Gate Routes" "Apply approval gate decisions to waiting workflow runs." "repos/jormungand/app/api/approval-gates/**"
-                agentHealthRoutes = component "Agent Health Routes" "Probe configured Codex/OpenClaw bridge health." "repos/jormungand/app/api/agent-health/route.ts"
+                agentHealthRoutes = component "Protected Agent Health Routes" "Probe authenticated Codex/OpenClaw bridge health behind site auth." "repos/jormungand/app/api/agent-health/route.ts"
             }
 
             workflowEngine = container "Workflow Engine" "Creates and advances workflow runs, emits artifacts, and coordinates approval gates." "TypeScript" {
@@ -58,15 +59,15 @@ workspace "Jormungand Harness Framework" "C4 model for the Jormungand harness da
         }
 
         user -> dashboard "Operates project and workflow controls"
-        dashboard -> api "Submits workflow and approval requests"
-        dashboard -> api "Polls project, run, and bridge health state"
+        dashboard -> api "Submits authenticated workflow and approval requests"
+        dashboard -> api "Polls protected project, run, and bridge health state"
         api -> workflowEngine "Creates and advances workflow state"
         api -> workspaceStore "Reads and writes project and workflow records"
         workflowEngine -> agentBridge "Invokes configured agent executors"
         workflowEngine -> runtimeSkillResolver "Requests runtime skill bundle resolution"
         workflowEngine -> workspaceStore "Persists generated runs, artifacts, gates, events, and revisions"
-        agentBridge -> codexBridge "Posts Codex agent-run requests"
-        agentBridge -> openClaw "Posts bridge requests or sends A2A envelopes"
+        agentBridge -> codexBridge "Posts authenticated v0.3 Codex agent-run requests"
+        agentBridge -> openClaw "Posts authenticated v0.3 bridge requests or sends A2A envelopes"
         agentBridge -> github "Ensures requested repositories during intake"
         runtimeSkillResolver -> workspaceStore "Uses project-local harness registry files"
 
@@ -76,12 +77,18 @@ workspace "Jormungand Harness Framework" "C4 model for the Jormungand harness da
         workflowBoard -> approvalRoutes "Submits approval decisions"
         bridgeStatusPanel -> agentHealthRoutes "Polls bridge status"
 
+        siteAuthBoundary -> projectRoutes "Allows authenticated project requests"
+        siteAuthBoundary -> workflowRoutes "Allows authenticated workflow requests"
+        siteAuthBoundary -> approvalRoutes "Allows authenticated approval requests"
+        siteAuthBoundary -> agentHealthRoutes "Allows authenticated health requests"
+
         workflowRoutes -> runFactory "Creates run"
         workflowRoutes -> stageAdvancer "Advances run"
         workflowRoutes -> stateAccess "Persists run"
         approvalRoutes -> approvalCoordinator "Records gate decision"
         approvalRoutes -> stateAccess "Persists decision"
-        agentHealthRoutes -> bridgeInvoker "Uses configured bridge URLs"
+        agentHealthRoutes -> codexBridge "Authenticated GET /health"
+        agentHealthRoutes -> openClaw "Authenticated GET /health"
 
         stageAdvancer -> eventSkillCatalog "Reads workflow skill definitions"
         stageAdvancer -> artifactRecorder "Records stage artifacts and events"
@@ -120,6 +127,50 @@ workspace "Jormungand Harness Framework" "C4 model for the Jormungand harness da
                 infrastructureNode "Codex Bridge Endpoint" "CODEX_BRIDGE_URL when configured."
                 infrastructureNode "OpenClaw Bridge Or A2A Command" "OPENCLAW_BRIDGE_URL or OPENCLAW_A2A_COMMAND when configured."
                 infrastructureNode "GitHub API" "Repository readiness and source repository access."
+            }
+        }
+
+        production = deploymentEnvironment "Production" {
+            deploymentNode "Operator Device" "Authenticated operator access." "Browser" {
+                infrastructureNode "Operator Browser" "Uses the Zeabur HTTPS endpoint."
+            }
+
+            deploymentNode "Zeabur" "Managed application deployment." "Docker / Node.js" {
+                deploymentNode "Jormungand Service" "Next.js production process. /health is public; UI, API, and /api/agent-health require site auth." "Next.js 16" {
+                    containerInstance dashboard
+                    containerInstance api
+                    containerInstance workflowEngine
+                    containerInstance agentBridge
+                    containerInstance runtimeSkillResolver
+                }
+
+                deploymentNode "Container Filesystem" "Single-process JSON state; durability is not guaranteed across replacement." "Ephemeral filesystem" {
+                    containerInstance workspaceStore
+                }
+            }
+
+            deploymentNode "Codex Workstation" "Configured repository execution boundary." "Windows / Node.js" {
+                infrastructureNode "Codex Bridge Process" "Authenticated v0.3 bridge with repository-origin guard and runtime bundle verification."
+                infrastructureNode "Configured Repository Workspace" "The only repository origin accepted for Codex execution."
+            }
+
+            deploymentNode "Cloudflare" "Public OpenClaw bridge ingress." "Tunnel" {
+                infrastructureNode "OpenClaw Tunnel" "Forwards the formal bridge hostname to the VM loopback service."
+            }
+
+            deploymentNode "OpenClaw VM" "OpenClaw execution host." "Linux VM" {
+                infrastructureNode "jormungandr-openclaw-bridge.service" "Enabled user service bound to 127.0.0.1:4178; authenticates v0.3 requests and enforces the deployed exact skill lock."
+                deploymentNode "OpenClaw Docker Runtime" "Healthy OpenClaw container." "Docker" {
+                    infrastructureNode "OpenClaw Agent Runtime" "Executes Rowlet, Roaring Moon, and Charizard tasks with verified runtime skills and context files."
+                }
+            }
+
+            deploymentNode "Deployment Workstation" "Maintains the OpenClaw VM bridge." "Windows / PowerShell" {
+                infrastructureNode "Pinned SSH Deployer" "Uses persistent known_hosts with strict checking; synchronizes openclaw-bridge.mjs and .harness/skill.lock.json."
+            }
+
+            deploymentNode "GitHub" "Source and immutable runtime-skill distribution." "GitHub" {
+                infrastructureNode "skills-v1.0.0 Release" "Hosts the checksum-locked superpowers-full runtime bundle."
             }
         }
     }
@@ -171,12 +222,18 @@ workspace "Jormungand Harness Framework" "C4 model for the Jormungand harness da
             api -> workflowEngine "createWorkflowRun() and advanceWorkflow()"
             workflowEngine -> runtimeSkillResolver "Resolve runtime skill bundles"
             workflowEngine -> agentBridge "Invoke configured agent"
-            agentBridge -> codexBridge "POST agent-runs"
+            agentBridge -> codexBridge "POST authenticated v0.3 agent-runs (Codex path)"
+            agentBridge -> openClaw "POST authenticated v0.3 agent-runs (OpenClaw alternative)"
             workflowEngine -> workspaceStore "Persist run, artifacts, gates, events"
             dashboard -> api "GET latest state"
         }
 
         deployment jormungand local "deploymentLocal" "Local development/runtime deployment" {
+            include *
+            autoLayout
+        }
+
+        deployment jormungand production "deploymentProduction" "Verified Zeabur, Codex, and OpenClaw production deployment" {
             include *
             autoLayout
         }

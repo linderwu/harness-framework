@@ -4,7 +4,7 @@ type: spec
 module: workflow
 visibility: internal
 created: 2026-08-11
-updated: 2026-08-11
+updated: 2026-08-13
 ---
 
 # Workflow Engine
@@ -28,6 +28,9 @@ The workflow engine builds and advances workflow runs through intake, plan, desi
 - Open approval gates for human or independent-agent review.
 - Record workflow events, artifacts, revisions, and agent runs.
 - Support cancellation and stage stopping.
+- Treat `agent_task` as a distinct one-stage execution path.
+- Use the common default event-skill chain for all other project templates;
+  their phase labels do not define separate execution engines.
 
 ### Inputs
 
@@ -74,3 +77,4 @@ Workflow behavior is covered by `repos/jormungand/tests/workflow.test.ts`.
 
 - [[wiki/entities/workflow-engine]]
 - [[wiki/c4/container]]
+- [[raw/2026-08-13-secure-bridge-deployment-verification]]

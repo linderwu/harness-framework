@@ -1,6 +1,6 @@
 {
   "schemaVersion": "ouroboros-c4-diagrams/v1",
-  "generatedAt": "2026-08-12T05:18:33.399Z",
+  "generatedAt": "2026-08-12T17:36:54.037Z",
   "source": "wiki/c4/workspace.dsl",
   "outputs": [
     {
@@ -37,7 +37,7 @@
       "key": "component-api-routes",
       "title": "API Route Components",
       "c4Type": "Component",
-      "evidence": "Evidence-backed component view for Next.js API Routes.",
+      "evidence": "Evidence-backed from repos/jormungand/proxy.ts and repos/jormungand/app/**/route.ts.",
       "files": [
         "wiki/c4/diagrams/component-api-routes.mmd",
         "wiki/c4/diagrams/component-api-routes.svg"
@@ -101,6 +101,16 @@
       "files": [
         "wiki/c4/diagrams/deployment-local.mmd",
         "wiki/c4/diagrams/deployment-local.svg"
+      ]
+    },
+    {
+      "key": "deployment-production",
+      "title": "Deployment: Production Bridges",
+      "c4Type": "Deployment",
+      "evidence": "Evidence-backed by raw/2026-08-13-secure-bridge-deployment-verification.md and commit 52a020e.",
+      "files": [
+        "wiki/c4/diagrams/deployment-production.mmd",
+        "wiki/c4/diagrams/deployment-production.svg"
       ]
     },
     {

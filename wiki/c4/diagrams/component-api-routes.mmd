@@ -1,25 +1,23 @@
 flowchart LR
   %% API Route Components
-  operator["Operator<br/>Uses the system."]
   dashboard["Harness Dashboard<br/>Browser UI."]
-  api["Next.js API Routes<br/>HTTP API."]
-  engine["Workflow Engine<br/>Workflow domain logic."]
-  bridge["Agent Bridge<br/>External executor integration."]
-  resolver["Runtime Skill Resolver<br/>Runtime skill bundle resolution."]
-  store["Workspace Store<br/>JSON-backed persistence."]
-  codex["Codex Bridge<br/>External bridge."]
-  openclaw["OpenClaw Runtime<br/>Optional executor."]
-  github["GitHub<br/>Repository service."]
+  boundary["Site Auth And Liveness<br/>Defaults site auth to all routes while allowing public GET /health."]
   projects["Project Routes<br/>Create/list projects and project-scoped runs."]
   workflow["Workflow Run Routes<br/>Create/read/advance/stop/cancel workflow runs."]
   approval["Approval Gate Routes<br/>Apply approval decisions."]
-  health["Agent Health Routes<br/>Probe configured bridge health."]
-  dashboard -->|"project requests"| projects
-  dashboard -->|"run requests"| workflow
-  dashboard -->|"gate decisions"| approval
-  dashboard -->|"health polling"| health
+  health["Protected Agent Health<br/>Probe authenticated Codex/OpenClaw bridge health."]
+  store["Workspace Store<br/>JSON-backed persistence."]
+  engine["Workflow Engine<br/>Creates/advances runs and decides gates."]
+  codex["Codex Bridge<br/>Authenticated v0.3 health endpoint."]
+  openclaw["OpenClaw Bridge<br/>Authenticated v0.3 health endpoint."]
+  dashboard -->|"authenticated"| boundary
+  boundary -->|"projects"| projects
+  boundary -->|"runs"| workflow
+  boundary -->|"gates"| approval
+  boundary -->|"health"| health
   projects -->|"read/write"| store
-  workflow -->|"create/advance"| engine
+  workflow -->|"advance"| engine
   workflow -->|"persist"| store
-  approval -->|"decide gate"| engine
-  health -->|"probe bridge config"| bridge
+  approval -->|"decide"| engine
+  health -->|"bearer"| codex
+  health -->|"bearer"| openclaw

@@ -17,6 +17,7 @@
     .edge { stroke: #344054; stroke-width: 1.4; marker-end: url(#arrow); }
     .edge-label { fill: #475467; font-size: 12px; paint-order: stroke; stroke: #ffffff; stroke-width: 4px; stroke-linejoin: round; }
   </style>
+  <rect class="canvas-background" width="100%" height="100%" fill="#ffffff" />
   <text class="diagram-title" x="32" y="36">System Context</text>
   <text class="diagram-meta" x="32" y="58">System Context - Evidence-backed from wiki/c4/workspace.dsl and current API/UI source files.</text>
   <g class="edges">
@@ -43,10 +44,12 @@
     <text class="node-desc" x="376" y="272">delivery.</text>
     <rect class="node external" x="780" y="70" width="220" height="110" rx="8" fill="#ffe3d8" />
     <text class="node-title" x="796" y="98">Codex Bridge</text>
-    <text class="node-desc" x="796" y="122">Local Codex execution bridge.</text>
+    <text class="node-desc" x="796" y="122">Authenticated v0.3 bridge for one</text>
+    <text class="node-desc" x="796" y="138">configured repository.</text>
     <rect class="node external" x="780" y="220" width="220" height="110" rx="8" fill="#ffe3d8" />
     <text class="node-title" x="796" y="248">OpenClaw Runtime</text>
-    <text class="node-desc" x="796" y="272">Optional bridge or A2A executor.</text>
+    <text class="node-desc" x="796" y="272">Authenticated v0.3 bridge or</text>
+    <text class="node-desc" x="796" y="288">optional A2A executor.</text>
     <rect class="node external" x="780" y="370" width="220" height="110" rx="8" fill="#ffe3d8" />
     <text class="node-title" x="796" y="398">GitHub</text>
     <text class="node-desc" x="796" y="422">Repository source and intake</text>

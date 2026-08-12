@@ -17,6 +17,7 @@
     .edge { stroke: #344054; stroke-width: 1.4; marker-end: url(#arrow); }
     .edge-label { fill: #475467; font-size: 12px; paint-order: stroke; stroke: #ffffff; stroke-width: 4px; stroke-linejoin: round; }
   </style>
+  <rect class="canvas-background" width="100%" height="100%" fill="#ffffff" />
   <text class="diagram-title" x="32" y="36">Deployment: Local Runtime</text>
   <text class="diagram-meta" x="32" y="58">Deployment - Partly inferred from Next.js app layout, local JSON store, and bridge environment variables.</text>
   <g class="edges">

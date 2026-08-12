@@ -4,7 +4,7 @@ type: c4
 tags: [architecture, c4, component]
 status: active
 created: 2026-08-11
-updated: 2026-08-11
+updated: 2026-08-13
 ---
 
 # Jormungand Component Views
@@ -23,9 +23,10 @@ Canonical Structurizr view keys:
 ## Summary
 
 The component views split the main containers into their durable responsibilities:
-UI composition and run controls, HTTP route ownership, workflow state transitions,
-agent execution normalization, JSON-backed persistence, and runtime skill bundle
-resolution.
+UI composition and run controls, authenticated HTTP boundary and route ownership,
+workflow state transitions, agent execution normalization, JSON-backed
+persistence, and runtime skill bundle resolution. The API component view
+distinguishes public liveness from protected bridge health.
 
 ## Generated Diagrams
 
@@ -46,9 +47,12 @@ resolution.
 
 - `repos/jormungand/components/harness-dashboard.tsx`
 - `repos/jormungand/app/api/**/route.ts`
+- `repos/jormungand/app/health/route.ts`
+- `repos/jormungand/proxy.ts`
 - `repos/jormungand/lib/workflow.ts`
 - `repos/jormungand/lib/agent-bridge.ts`
 - `repos/jormungand/lib/store.ts`
 - `repos/jormungand/lib/workspace.ts`
 - `repos/jormungand/lib/runtime-skills.ts`
 - `graphify/jormungand-root/GRAPH_REPORT.md`
+- [[raw/2026-08-13-graphify-deep-minimax-run]]

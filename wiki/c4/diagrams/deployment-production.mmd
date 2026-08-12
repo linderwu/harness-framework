@@ -1,0 +1,25 @@
+flowchart LR
+  %% Deployment: Production Bridges
+  browser["Operator Browser<br/>Uses the authenticated Zeabur dashboard."]
+  zeabur["Zeabur HTTPS Boundary<br/>Public /health; site-authenticated UI, API, and /api/agent-health."]
+  next["Jormungand Next.js<br/>Workflow engine, agent adapter, and runtime-skill resolver."]
+  state["Container JSON State<br/>Single-process state with accepted durability debt."]
+  codexIngress["Codex Bridge Ingress<br/>Bearer-authenticated public bridge endpoint."]
+  codexProcess["Codex Bridge Process<br/>v0.3, repository-origin guard, skills-v1.0.0 checksum verification."]
+  openclawIngress["OpenClaw Bridge Ingress<br/>Bearer-authenticated public bridge endpoint."]
+  cloudflare["Cloudflare Tunnel<br/>Forwards the formal hostname to the VM loopback service."]
+  vmBridge["VM User Bridge :4178<br/>jormungandr-openclaw-bridge.service; v0.3 exact skill.lock.json allowlist."]
+  openclaw["OpenClaw Docker Container<br/>Runs Rowlet, Roaring Moon, and Charizard with verified skills/context."]
+  deployer["Pinned SSH Deployer<br/>Strict known_hosts; syncs bridge code and deployed skill.lock.json."]
+  release["GitHub Runtime Skill Release<br/>skills-v1.0.0 immutable bundle with locked SHA-256."]
+  browser -->|"Basic auth"| zeabur
+  zeabur -->|"HTTP route"| next
+  next -->|"JSON read/write"| state
+  next -->|"bearer v0.3"| codexIngress
+  codexIngress -->|"bridge request"| codexProcess
+  next -->|"bearer v0.3"| openclawIngress
+  openclawIngress -->|"HTTPS"| cloudflare
+  cloudflare -->|"127.0.0.1:4178"| vmBridge
+  vmBridge -->|"docker exec"| openclaw
+  deployer -->|"pinned SSH: sync bridge + skill.lock.json"| vmBridge
+  vmBridge -->|"download locked bundle"| release

@@ -4,7 +4,7 @@ type: spec
 module: system
 visibility: external
 created: 2026-08-11
-updated: 2026-08-11
+updated: 2026-08-13
 ---
 
 # Jormungand System Specification
@@ -44,7 +44,9 @@ The canonical C4 model is `wiki/c4/workspace.dsl`.
 - `repos/jormungand/app/api/approval-gates/[id]/decide/route.ts`: decide approval gates.
 - `repos/jormungand/app/api/projects/route.ts`: project collection access.
 - `repos/jormungand/app/api/projects/[id]/workflow-runs/route.ts`: project-scoped workflow creation.
-- `repos/jormungand/app/api/agent-health/route.ts`: configured agent health.
+- `repos/jormungand/app/health/route.ts`: public application liveness.
+- `repos/jormungand/app/api/agent-health/route.ts`: authenticated configured
+  bridge health.
 
 ## Configuration
 
@@ -55,14 +57,35 @@ Important environment variables include:
 - `CODEX_BRIDGE_PROTOCOL_VERSION`
 - `OPENCLAW_BRIDGE_URL`
 - `OPENCLAW_BRIDGE_TOKEN`
+- `OPENCLAW_GATEWAY_TOKEN`
 - `OPENCLAW_A2A_COMMAND`
 - `OPENCLAW_A2A_PROTOCOL`
 - `OPENCLAW_A2A_MODEL`
 - `HARNESS_ALLOW_SIMULATED_AGENTS`
+- `SITE_AUTH_USERNAME`
+- `SITE_AUTH_PASSWORD`
+- `SITE_AUTH_MODE`
 
 ## Security Considerations
 
-Bridge tokens and runtime credentials must remain outside git. `.env.local`, `.env`, and secret directories are not part of the Ouroboros evidence layer unless explicitly sanitized and recorded as non-secret configuration evidence.
+Bridge tokens and runtime credentials must remain outside git. `.env.local`,
+`.env`, and secret directories are not part of the Ouroboros evidence layer
+unless explicitly sanitized and recorded as non-secret configuration evidence.
+
+`SITE_AUTH_MODE` defaults to `all`. The HTTP boundary protects the UI and API;
+only `/health` bypasses site authentication. Bridge health endpoints use bearer
+authentication, and their tokens are independent from the dashboard Basic Auth
+credentials.
+
+## Production Deployment Contract
+
+- Zeabur serves the nested `repos/jormungand/` Next.js application.
+- Codex and OpenClaw use authenticated bridge protocol v0.3.
+- The OpenClaw public hostname terminates at a tunnel that forwards to the VM
+  user bridge service on loopback port 4178.
+- The OpenClaw deployment synchronizes a VM-local exact runtime-skill lockfile.
+- Project/workflow state remains JSON-backed and container-local unless an
+  external persistent volume is configured.
 
 ## Acceptance Criteria
 
@@ -71,9 +94,12 @@ Bridge tokens and runtime credentials must remain outside git. `.env.local`, `.e
 - C4 source exists at `wiki/c4/workspace.dsl`.
 - Core module specs exist for workflow, agent bridge, and workspace store.
 - Wiki pages cite raw evidence and code/graph sources.
+- Generated C4 outputs include both local and production deployment views.
+- Public `/health` and protected `/api/agent-health` have distinct contracts.
 
 ## References
 
 - [[raw/2026-08-11-user-request-ouroboros-application]]
 - [[raw/2026-08-11-ouroboros-skill-source]]
+- [[raw/2026-08-13-secure-bridge-deployment-verification]]
 - [[wiki/index]]

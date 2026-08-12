@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" width="1640" height="470" viewBox="0 0 1640 470" role="img" aria-labelledby="title desc">
+<svg xmlns="http://www.w3.org/2000/svg" width="2080" height="510" viewBox="0 0 2080 510" role="img" aria-labelledby="title desc">
   <title id="title">Dynamic: Start Workflow Run</title>
   <desc id="desc">Evidence-backed from repos/jormungand/app/api/workflow-runs/route.ts and repos/jormungand/lib/workflow.ts.</desc>
   <defs>
@@ -17,50 +17,51 @@
     .edge { stroke: #344054; stroke-width: 1.4; marker-end: url(#arrow); }
     .edge-label { fill: #475467; font-size: 12px; paint-order: stroke; stroke: #ffffff; stroke-width: 4px; stroke-linejoin: round; }
   </style>
+  <rect class="canvas-background" width="100%" height="100%" fill="#ffffff" />
   <text class="diagram-title" x="32" y="36">Dynamic: Start Workflow Run</text>
   <text class="diagram-meta" x="32" y="58">Dynamic - Evidence-backed from repos/jormungand/app/api/workflow-runs/route.ts and repos/jormungand/lib/workflow.ts.</text>
   <g class="edges">
-    <line class="edge" x1="260" y1="135" x2="300" y2="135" />
-    <text class="edge-label" x="280" y="129">1. enter request</text>
-    <line class="edge" x1="520" y1="135" x2="560" y2="135" />
-    <text class="edge-label" x="540" y="129">2. POST run</text>
-    <line class="edge" x1="780" y1="135" x2="820" y2="135" />
-    <text class="edge-label" x="800" y="129">3. create/advance</text>
-    <line class="edge" x1="930" y1="190" x2="930" y2="260" />
-    <text class="edge-label" x="930" y="219">4. resolve skills</text>
-    <line class="edge" x1="1040" y1="135" x2="1080" y2="135" />
-    <text class="edge-label" x="1060" y="129">5. invoke agent</text>
-    <line class="edge" x1="1300" y1="135" x2="1340" y2="135" />
-    <text class="edge-label" x="1320" y="129">6. POST agent-runs</text>
-    <line class="edge" x1="1040" y1="135" x2="1080" y2="315" />
-    <text class="edge-label" x="1060" y="219">7. persist</text>
-    <line class="edge" x1="520" y1="135" x2="560" y2="135" />
-    <text class="edge-label" x="540" y="129">8. refresh state</text>
+    <line class="edge" x1="260" y1="135" x2="380" y2="135" />
+    <text class="edge-label" x="320" y="129">1. request</text>
+    <line class="edge" x1="600" y1="135" x2="720" y2="135" />
+    <text class="edge-label" x="660" y="129">2. POST</text>
+    <line class="edge" x1="940" y1="135" x2="1060" y2="135" />
+    <text class="edge-label" x="1000" y="129">3. create/advance</text>
+    <line class="edge" x1="1170" y1="190" x2="1170" y2="300" />
+    <text class="edge-label" x="1170" y="239">4. resolve skills</text>
+    <line class="edge" x1="1280" y1="135" x2="1400" y2="135" />
+    <text class="edge-label" x="1340" y="129">5. invoke</text>
+    <line class="edge" x1="1620" y1="135" x2="1740" y2="135" />
+    <text class="edge-label" x="1680" y="129">6. agent-runs</text>
+    <line class="edge" x1="1280" y1="135" x2="1400" y2="355" />
+    <text class="edge-label" x="1340" y="239">7. persist</text>
   </g>
   <g class="nodes">
     <rect class="node person" x="40" y="80" width="220" height="110" rx="8" fill="#fff4cc" />
     <text class="node-title" x="56" y="108">Operator</text>
     <text class="node-desc" x="56" y="132">Submits requirement and policy.</text>
-    <rect class="node container" x="300" y="80" width="220" height="110" rx="8" fill="#e6f4ea" />
-    <text class="node-title" x="316" y="108">Harness Dashboard</text>
-    <text class="node-desc" x="316" y="132">Collects run request.</text>
-    <rect class="node component" x="560" y="80" width="220" height="110" rx="8" fill="#eef0ff" />
-    <text class="node-title" x="576" y="108">Workflow Route</text>
-    <text class="node-desc" x="576" y="132">POST /api/workflow-runs.</text>
-    <rect class="node container" x="820" y="80" width="220" height="110" rx="8" fill="#e6f4ea" />
-    <text class="node-title" x="836" y="108">Workflow Engine</text>
-    <text class="node-desc" x="836" y="132">Creates and advances run.</text>
-    <rect class="node component" x="820" y="260" width="220" height="110" rx="8" fill="#eef0ff" />
-    <text class="node-title" x="836" y="288">Runtime Skill Resolver</text>
-    <text class="node-desc" x="836" y="312">Resolves runtime bundles.</text>
-    <rect class="node container" x="1080" y="80" width="220" height="110" rx="8" fill="#e6f4ea" />
-    <text class="node-title" x="1096" y="108">Agent Bridge</text>
-    <text class="node-desc" x="1096" y="132">Invokes configured executor.</text>
-    <rect class="node storage" x="1080" y="260" width="220" height="110" rx="8" fill="#f5e6ff" />
-    <text class="node-title" x="1096" y="288">Workspace Store</text>
-    <text class="node-desc" x="1096" y="312">Persists run and artifacts.</text>
-    <rect class="node external" x="1340" y="80" width="220" height="110" rx="8" fill="#ffe3d8" />
-    <text class="node-title" x="1356" y="108">Codex Bridge</text>
-    <text class="node-desc" x="1356" y="132">External agent run.</text>
+    <rect class="node container" x="380" y="80" width="220" height="110" rx="8" fill="#e6f4ea" />
+    <text class="node-title" x="396" y="108">Harness Dashboard</text>
+    <text class="node-desc" x="396" y="132">Collects run request.</text>
+    <rect class="node component" x="720" y="80" width="220" height="110" rx="8" fill="#eef0ff" />
+    <text class="node-title" x="736" y="108">Workflow Route</text>
+    <text class="node-desc" x="736" y="132">POST /api/workflow-runs.</text>
+    <rect class="node container" x="1060" y="80" width="220" height="110" rx="8" fill="#e6f4ea" />
+    <text class="node-title" x="1076" y="108">Workflow Engine</text>
+    <text class="node-desc" x="1076" y="132">Creates and advances run.</text>
+    <rect class="node component" x="1060" y="300" width="220" height="110" rx="8" fill="#eef0ff" />
+    <text class="node-title" x="1076" y="328">Runtime Skill Resolver</text>
+    <text class="node-desc" x="1076" y="352">Resolves runtime bundles.</text>
+    <rect class="node container" x="1400" y="80" width="220" height="110" rx="8" fill="#e6f4ea" />
+    <text class="node-title" x="1416" y="108">Agent Bridge</text>
+    <text class="node-desc" x="1416" y="132">Invokes configured executor.</text>
+    <rect class="node storage" x="1400" y="300" width="220" height="110" rx="8" fill="#f5e6ff" />
+    <text class="node-title" x="1416" y="328">Workspace Store</text>
+    <text class="node-desc" x="1416" y="352">Persists run and artifacts.</text>
+    <rect class="node external" x="1740" y="80" width="260" height="110" rx="8" fill="#ffe3d8" />
+    <text class="node-title" x="1756" y="108">Configured</text>
+    <text class="node-title" x="1756" y="126">Codex/OpenClaw Bridge</text>
+    <text class="node-desc" x="1756" y="150">Authenticated v0.3 agent run with</text>
+    <text class="node-desc" x="1756" y="166">verified runtime skills.</text>
   </g>
 </svg>
