@@ -23,11 +23,14 @@ test("Codex bridge rejects repository mismatches before execution", () => {
   assert.match(codexBridgeSource, /runCodex\([\s\S]*workspace\.path/)
 })
 
-test("Codex bridge asks Agent Tasks for a complete answer body", () => {
-  assert.match(codexBridgeSource, /formatFinalInstruction\(payload\)/)
+test("Codex bridge gives Agent Tasks a standalone prompt", () => {
+  assert.match(codexBridgeSource, /buildAgentTaskPrompt\(payload/)
   assert.match(codexBridgeSource, /skill\.id === "agent_task\.response"/)
-  assert.match(codexBridgeSource, /Return the complete answer body/)
-  assert.match(codexBridgeSource, /Do not return only artifact metadata/)
+  assert.match(codexBridgeSource, /standalone Agent Task/)
+  assert.match(codexBridgeSource, /completed response body itself/)
+  assert.match(codexBridgeSource, /Do not produce artifact metadata/)
+  assert.match(codexBridgeSource, /artifact_type, stage, workflow_run/)
+  assert.match(codexBridgeSource, /agent_response/)
 })
 
 test("OpenClaw bridge accepts the compatibility token and enforces its local skill lock", () => {

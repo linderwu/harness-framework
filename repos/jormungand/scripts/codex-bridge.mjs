@@ -583,6 +583,10 @@ function sanitizePathSegment(value) {
 
 function buildPrompt(payload, contextDir, runtimeSkillBundleResults = []) {
   const skill = payload.skill ?? {}
+  if (skill.id === "agent_task.response") {
+    return buildAgentTaskPrompt(payload, contextDir, runtimeSkillBundleResults)
+  }
+
   const artifacts = Array.isArray(payload.artifacts) ? payload.artifacts : []
   const contextFiles = Array.isArray(payload.contextFiles)
     ? payload.contextFiles
@@ -651,6 +655,45 @@ function buildPrompt(payload, contextDir, runtimeSkillBundleResults = []) {
     runtimeSkillSummary || "No runtime skill bundles installed.",
     "",
     formatFinalInstruction(payload)
+  ].join("\n")
+}
+
+function buildAgentTaskPrompt(payload, contextDir, runtimeSkillBundleResults = []) {
+  const contextFiles = Array.isArray(payload.contextFiles)
+    ? payload.contextFiles
+    : []
+  const contextSummary = contextFiles
+    .map(
+      (file) =>
+        `- ${file.path ?? file.name ?? "file"} (${formatBytes(
+          file.size ?? 0
+        )}, ${file.encoding ?? "unknown"})`
+    )
+    .join("\n")
+  const runtimeSkillSummary = runtimeSkillBundleResults
+    .filter((result) => result.verified)
+    .map((result) => `- ${result.id}@${result.version}: ${result.installedPath}`)
+    .join("\n")
+
+  return [
+    "You are Codex running a standalone Agent Task.",
+    "Complete the user's instruction directly.",
+    "Do not produce artifact metadata, status fields, or a structured envelope.",
+    "Do not use fields such as artifact_type, stage, workflow_run, idempotency_key, original_instruction, or agent_response.",
+    "Your final message must be the completed response body itself.",
+    "",
+    `Project: ${payload.projectName ?? "unknown"}`,
+    "",
+    "User instruction:",
+    payload.requirement ?? "",
+    "",
+    "Shared project files:",
+    contextSummary || "No imported project files.",
+    contextDir ? `Materialized file directory: ${contextDir}` : "",
+    contextDir ? "Use these files only as supporting context." : "",
+    "",
+    "Runtime skill bundles:",
+    runtimeSkillSummary || "No runtime skill bundles installed."
   ].join("\n")
 }
 
