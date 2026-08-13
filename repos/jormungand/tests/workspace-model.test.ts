@@ -278,6 +278,93 @@ test("agent task workflow completes in one agent response without a repository",
   assert.equal(completedRun.approvalGates.length, 0)
 })
 
+test("agent task workflow publishes completed response records when a publisher is provided", async () => {
+  const project = createProject({
+    name: "Record Notes",
+    type: "agent_task",
+    goal: "Summarize notes for the archive.",
+    repository: "",
+    source: "dashboard",
+    contextFiles: []
+  })
+  const run = createWorkflowRun({
+    projectId: project.id,
+    projectName: project.name,
+    projectType: project.type,
+    repository: project.repository,
+    requirement: project.goal,
+    contextFiles: project.contextFiles,
+    selectedAgent: "codex",
+    designApprovalActor: "human",
+    verificationApprovalActor: "human"
+  })
+  const publishedRuns: WorkflowRun[] = []
+
+  const completedRun = await advanceWorkflow(run, {
+    invokeAgent: async () => ({
+      status: "completed",
+      source: "codex-bridge",
+      body: "Archived response body."
+    }),
+    publishAgentTaskRecord: async (nextRun) => {
+      publishedRuns.push(nextRun)
+      return {
+        status: "published",
+        repository: "linderwu/jormungand-record",
+        path: "records/2026/08/13/run.md",
+        htmlUrl:
+          "https://github.com/linderwu/jormungand-record/blob/main/records/2026/08/13/run.md"
+      }
+    }
+  })
+
+  assert.equal(completedRun.status, "completed")
+  assert.equal(publishedRuns.length, 1)
+  assert.match(completedRun.events[0].note ?? "", /Agent response record published/)
+})
+
+test("agent task workflow keeps completed response when record publishing fails", async () => {
+  const project = createProject({
+    name: "Record Failure",
+    type: "agent_task",
+    goal: "Keep the local response even when GitHub fails.",
+    repository: "",
+    source: "dashboard",
+    contextFiles: []
+  })
+  const run = createWorkflowRun({
+    projectId: project.id,
+    projectName: project.name,
+    projectType: project.type,
+    repository: project.repository,
+    requirement: project.goal,
+    contextFiles: project.contextFiles,
+    selectedAgent: "codex",
+    designApprovalActor: "human",
+    verificationApprovalActor: "human"
+  })
+
+  const completedRun = await advanceWorkflow(run, {
+    invokeAgent: async () => ({
+      status: "completed",
+      source: "codex-bridge",
+      body: "Local response survives."
+    }),
+    publishAgentTaskRecord: async () => {
+      throw new Error("GitHub unavailable")
+    }
+  })
+
+  assert.equal(completedRun.status, "completed")
+  assert.equal(completedRun.currentStage, "completed")
+  assert.equal(completedRun.artifacts[0].title, "Agent Response")
+  assert.match(completedRun.artifacts[0].body, /Local response survives\./)
+  assert.match(
+    completedRun.events[0].note ?? "",
+    /Agent response record publish failed: GitHub unavailable/
+  )
+})
+
 test("default workflow event skills declare Superpowers for agent-executed development events", () => {
   const run = createWorkflowRun({
     projectId: "project-1",

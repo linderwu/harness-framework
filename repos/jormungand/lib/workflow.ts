@@ -92,6 +92,24 @@ export type RuntimeSkillResolver = (
   skill: WorkflowEventSkill
 ) => RuntimeSkillResolution
 
+export interface AgentTaskRecordPublishResult {
+  status: "published" | "unchanged" | "skipped"
+  repository?: string
+  path?: string
+  htmlUrl?: string
+  reason?: string
+}
+
+export type AgentTaskRecordPublisher = (
+  run: WorkflowRun
+) => Promise<AgentTaskRecordPublishResult>
+
+interface AdvanceWorkflowOptions {
+  invokeAgent?: AgentInvoker
+  resolveRuntimeSkillBundles?: RuntimeSkillResolver
+  publishAgentTaskRecord?: AgentTaskRecordPublisher
+}
+
 export function createDefaultEventSkills(): WorkflowEventSkill[] {
   return [
     {
@@ -485,10 +503,7 @@ export function createWorkflowRun(input: {
 
 export async function advanceWorkflow(
   run: WorkflowRun,
-  options: {
-    invokeAgent?: AgentInvoker
-    resolveRuntimeSkillBundles?: RuntimeSkillResolver
-  } = {}
+  options: AdvanceWorkflowOptions = {}
 ): Promise<WorkflowRun> {
   if (isTerminalStatus(run.status)) {
     return run
@@ -860,10 +875,7 @@ export async function advanceWorkflow(
 
 async function advanceAgentTask(
   run: WorkflowRun,
-  options: {
-    invokeAgent?: AgentInvoker
-    resolveRuntimeSkillBundles?: RuntimeSkillResolver
-  }
+  options: AdvanceWorkflowOptions
 ) {
   run.status = "running"
   const artifactStartIndex = run.artifacts.length
@@ -896,9 +908,57 @@ async function advanceAgentTask(
     run.status = "completed"
   }
 
+  if (taskResult.status !== "failed" && options.publishAgentTaskRecord) {
+    await publishCompletedAgentTaskRecord(run, options.publishAgentTaskRecord)
+  }
+
   run.updatedAt = new Date().toISOString()
   updateEventLogStatus(run)
   return run
+}
+
+async function publishCompletedAgentTaskRecord(
+  run: WorkflowRun,
+  publishAgentTaskRecord: AgentTaskRecordPublisher
+) {
+  try {
+    const result = await publishAgentTaskRecord(run)
+    appendAgentTaskResponseEventNote(run, formatAgentTaskRecordPublishNote(result))
+  } catch (error) {
+    appendAgentTaskResponseEventNote(
+      run,
+      `Agent response record publish failed: ${formatWorkflowError(error)}.`
+    )
+  }
+}
+
+function formatAgentTaskRecordPublishNote(result: AgentTaskRecordPublishResult) {
+  if (result.status === "skipped") {
+    return `Agent response record publish skipped: ${result.reason ?? "unknown reason"}.`
+  }
+
+  const target = [result.repository, result.path].filter(Boolean).join("/")
+  const suffix = result.htmlUrl ? ` ${result.htmlUrl}` : ""
+
+  return result.status === "unchanged"
+    ? `Agent response record unchanged${target ? ` at ${target}` : ""}.${suffix}`
+    : `Agent response record published${target ? ` at ${target}` : ""}.${suffix}`
+}
+
+function appendAgentTaskResponseEventNote(run: WorkflowRun, note: string) {
+  const event = [...run.events]
+    .reverse()
+    .find((item) => item.skillId === "agent_task.response")
+
+  if (!event) {
+    return
+  }
+
+  event.note = [event.note, note].filter(Boolean).join(" ")
+}
+
+function formatWorkflowError(error: unknown) {
+  return error instanceof Error ? error.message : String(error)
 }
 
 function formatAgentTaskMixedResponse(input: {
