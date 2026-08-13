@@ -5,7 +5,7 @@ import { defaultAgentKind, normalizeAgentKind } from "@/lib/agents"
 import { createRuntimeSkillResolver } from "@/lib/runtime-skills"
 import { getProject, upsertWorkflowRun } from "@/lib/store"
 import { advanceWorkflow, createWorkflowRun } from "@/lib/workflow"
-import type { AgentKind, ApprovalActorType } from "@/lib/types"
+import type { AgentKind, ApprovalActorType, WorkflowRun } from "@/lib/types"
 
 export async function POST(
   request: Request,
@@ -36,6 +36,19 @@ export async function POST(
     designApprovalActor: body.designApprovalActor ?? "independent_agent",
     verificationApprovalActor: body.verificationApprovalActor ?? "verification_subagent"
   })
+
+  if (project.type === "agent_task") {
+    const runningRun = await upsertWorkflowRun({
+      ...run,
+      status: "running",
+      updatedAt: new Date().toISOString()
+    })
+
+    void advanceAgentTaskRun(runningRun)
+
+    return NextResponse.json(runningRun, { status: 201 })
+  }
+
   const intakeRun = await advanceWorkflow(run, {
     invokeAgent: invokeConfiguredAgent,
     resolveRuntimeSkillBundles: createRuntimeSkillResolver(),
@@ -44,4 +57,23 @@ export async function POST(
 
   await upsertWorkflowRun(intakeRun)
   return NextResponse.json(intakeRun, { status: 201 })
+}
+
+async function advanceAgentTaskRun(run: WorkflowRun) {
+  try {
+    const advancedRun = await advanceWorkflow(run, {
+      invokeAgent: invokeConfiguredAgent,
+      resolveRuntimeSkillBundles: createRuntimeSkillResolver(),
+      publishAgentTaskRecord: publishAgentTaskResponseRecord
+    })
+
+    await upsertWorkflowRun(advancedRun, { expectedVersion: run.version })
+  } catch (error) {
+    await upsertWorkflowRun({
+      ...run,
+      status: "failed",
+      eventLogWarning: error instanceof Error ? error.message : String(error),
+      updatedAt: new Date().toISOString()
+    }).catch(() => undefined)
+  }
 }
