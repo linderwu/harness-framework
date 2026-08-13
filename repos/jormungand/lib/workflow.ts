@@ -45,6 +45,8 @@ export const actorLabels: Record<ApprovalActorType, string> = {
 
 export const eventTypeLabels: Record<WorkflowEventType, string> = {
   requirement_intake: "Requirement Intake",
+  research_prompt: "Research Prompt",
+  research_execute: "Research Execution",
   plan_interview: "Plan Interview",
   plan_review: "Plan Review",
   plan_approval: "Plan Approval",
@@ -398,6 +400,96 @@ export function createAgentTaskEventSkills(): WorkflowEventSkill[] {
   ]
 }
 
+export function createResearchEventSkills(): WorkflowEventSkill[] {
+  return [
+    {
+      id: "intake.requirement",
+      eventType: "requirement_intake",
+      stage: "intake",
+      name: "Research Intake Skill",
+      purpose: "Create or verify the named repository and preserve the research topic as the durable brief.",
+      trigger: "A research project workflow is started.",
+      allowedActors: ["human", "codex", ...openClawAgentKinds],
+      inputs: ["research topic", "repository reference", "source metadata"],
+      outputs: ["requirement artifact", "ready repository"],
+      constraints: [
+        "Do not perform the research during intake.",
+        "Create or verify the requested repository before research artifacts are generated.",
+        "Preserve the original research topic text."
+      ],
+      gates: ["Research topic must exist before prompt generation starts."],
+      knowledgeSources: ["dashboard research brief", "attached context files"],
+      verificationRules: ["Requirement artifact is non-empty."]
+    },
+    {
+      id: "research.prompt",
+      eventType: "research_prompt",
+      stage: "plan",
+      name: "Research Prompt Generation Skill",
+      purpose: "Generate a reusable research prompt tailored to the research topic before evidence gathering begins.",
+      trigger: "Research intake is complete and the named repository is ready.",
+      allowedActors: ["codex", ...openClawAgentKinds],
+      inputs: ["research topic", "repository reference", "attached context files"],
+      outputs: ["research prompt artifact", "prompt file in the named repository"],
+      constraints: [
+        "Generate the prompt only; do not perform the research in this step.",
+        "Write the generated prompt into the named repository.",
+        "Return the prompt content and the repository path where it was written."
+      ],
+      gates: ["Research execution must use the generated prompt artifact."],
+      knowledgeSources: ["dashboard research brief", "attached context files"],
+      verificationRules: [
+        "Research prompt is non-empty.",
+        "Prompt artifact names the repository path where the prompt was written."
+      ],
+      runtimeSkillBundles: ["research-prompt"]
+    },
+    {
+      id: "research.execute",
+      eventType: "research_execute",
+      stage: "implementation",
+      name: "Research Execution Skill",
+      purpose: "Use the generated research prompt to perform the research and produce the final report.",
+      trigger: "A research prompt artifact has been generated.",
+      allowedActors: ["codex", ...openClawAgentKinds],
+      inputs: ["research prompt artifact", "repository reference", "attached context files"],
+      outputs: ["research report artifact", "research report file in the named repository"],
+      constraints: [
+        "Use the generated prompt from the prior step as the research instruction.",
+        "Do not replace the generated prompt with a new research plan.",
+        "Write the final research output into the named repository.",
+        "Return the research report content and the repository path where it was written."
+      ],
+      gates: ["Workflow completes after the research report is captured."],
+      knowledgeSources: ["generated research prompt", "attached context files"],
+      verificationRules: [
+        "Research report is non-empty.",
+        "Research report references the generated prompt.",
+        "Research report artifact names the repository path where the report was written."
+      ],
+      runtimeSkillBundles: ["research-execute"]
+    },
+    {
+      id: "closeout.archive",
+      eventType: "closeout",
+      stage: "completed",
+      name: "Research Closeout Skill",
+      purpose: "Mark the two-step research workflow complete after prompt generation and research execution.",
+      trigger: "Research report is generated.",
+      allowedActors: ["codex", ...openClawAgentKinds],
+      inputs: ["research prompt artifact", "research report artifact"],
+      outputs: ["completed research workflow run"],
+      constraints: [
+        "Do not add extra research stages during closeout.",
+        "Keep generated prompt and research report artifacts available for audit."
+      ],
+      gates: ["Run is complete."],
+      knowledgeSources: ["research prompt artifact", "research report artifact"],
+      verificationRules: ["Workflow status is completed."]
+    }
+  ]
+}
+
 export function getDefaultSkillExecutor(
   skillId: string,
   selectedAgent: AgentKind
@@ -431,6 +523,8 @@ export function createWorkflowRun(input: {
   const eventSkills =
     projectType === "agent_task"
       ? createAgentTaskEventSkills()
+      : projectType === "research"
+        ? createResearchEventSkills()
       : createDefaultEventSkills()
   const selectedAgent = normalizeAgentKind(input.selectedAgent)
   const stageModes = Object.fromEntries(
@@ -520,6 +614,10 @@ export async function advanceWorkflow(
 
   if (nextRun.projectType === "agent_task") {
     return advanceAgentTask(nextRun, options)
+  }
+
+  if (nextRun.projectType === "research") {
+    return advanceResearchWorkflow(nextRun, options)
   }
 
   switch (nextRun.currentStage) {
@@ -916,6 +1014,116 @@ async function advanceAgentTask(
 
   if (taskResult.status !== "failed" && !invalidResponse && options.publishAgentTaskRecord) {
     await publishCompletedAgentTaskRecord(run, options.publishAgentTaskRecord)
+  }
+
+  run.updatedAt = new Date().toISOString()
+  updateEventLogStatus(run)
+  return run
+}
+
+async function advanceResearchWorkflow(
+  run: WorkflowRun,
+  options: AdvanceWorkflowOptions
+) {
+  switch (run.currentStage) {
+    case "intake": {
+      run.status = "running"
+      const intakeResult = await addAgentArtifact(
+        run,
+        "intake.requirement",
+        "intake",
+        "requirement",
+        "Research Intake",
+        [
+          `Project: ${run.projectName}`,
+          `Requested repository: ${run.repository || "not requested"}`,
+          "Research topic:",
+          run.requirement
+        ].join("\n"),
+        options.invokeAgent,
+        options.resolveRuntimeSkillBundles
+      )
+      if (intakeResult.status !== "failed") {
+        run.currentStage = "plan"
+        run.status = "pending"
+      }
+      break
+    }
+    case "plan": {
+      run.status = "running"
+      const promptResult = await addAgentArtifact(
+        run,
+        "research.prompt",
+        "plan",
+        "research_prompt",
+        "Research Prompt",
+        [
+          `Project: ${run.projectName}`,
+          `Repository: ${run.repository || "not linked yet"}`,
+          "Research topic:",
+          run.requirement,
+          "",
+          "Generate a single reusable prompt for the research agent.",
+          "Write the prompt into the named repository, then return the prompt content and repository path.",
+          "Do not perform the research in this step."
+        ].join("\n"),
+        options.invokeAgent,
+        options.resolveRuntimeSkillBundles
+      )
+      if (promptResult.status !== "failed") {
+        run.currentStage = "implementation"
+        run.status = "pending"
+      }
+      break
+    }
+    case "implementation": {
+      const researchPrompt = getLatestArtifact(run, "research_prompt", "plan")
+
+      if (!researchPrompt) {
+        run.currentStage = "plan"
+        run.status = "pending"
+        break
+      }
+
+      run.status = "running"
+      const researchResult = await addAgentArtifact(
+        run,
+        "research.execute",
+        "implementation",
+        "research_report",
+        "Research Report",
+        [
+          `Project: ${run.projectName}`,
+          `Repository: ${run.repository || "not linked yet"}`,
+          "Use this generated research prompt exactly as the research instruction:",
+          "",
+          researchPrompt.body,
+          "",
+          "Perform the research requested by the prompt.",
+          "Write the final research output into the named repository, then return the report content and repository path."
+        ].join("\n"),
+        options.invokeAgent,
+        options.resolveRuntimeSkillBundles
+      )
+      if (researchResult.status !== "failed") {
+        run.currentStage = "completed"
+        run.status = "completed"
+        addWorkflowEvent(
+          run,
+          "closeout.archive",
+          "completed",
+          resolveSkillExecutor(run, "closeout.archive"),
+          []
+        )
+      }
+      break
+    }
+    case "completed":
+      break
+    default:
+      run.currentStage = "completed"
+      run.status = "completed"
+      break
   }
 
   run.updatedAt = new Date().toISOString()
@@ -1674,6 +1882,8 @@ function createArtifact(
 function normalizeArtifactType(type: string): Artifact["type"] {
   const artifactTypes = new Set<Artifact["type"]>([
     "requirement",
+    "research_prompt",
+    "research_report",
     "plan",
     "plan_review_report",
     "openspec",

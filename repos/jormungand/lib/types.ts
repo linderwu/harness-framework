@@ -64,6 +64,8 @@ export type WorkflowEventStatus =
 
 export type WorkflowEventType =
   | "requirement_intake"
+  | "research_prompt"
+  | "research_execute"
   | "plan_interview"
   | "plan_review"
   | "plan_approval"
@@ -78,6 +80,8 @@ export type WorkflowEventType =
 
 export type ArtifactType =
   | "requirement"
+  | "research_prompt"
+  | "research_report"
   | "plan"
   | "plan_review_report"
   | "openspec"

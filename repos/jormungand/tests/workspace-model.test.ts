@@ -63,7 +63,7 @@ test("project templates expose project types with phase labels", () => {
     ]
   )
 
-  assert.deepEqual(getProjectTemplate("research").phases, ["Brief", "Research Plan", "Evidence", "Synthesis", "Review", "Completed"])
+  assert.deepEqual(getProjectTemplate("research").phases, ["Brief", "Prompt", "Research", "Completed"])
   assert.deepEqual(getProjectTemplate("development").phases, ["Intake", "Plan", "Design", "Build", "Verify", "Completed"])
   assert.deepEqual(getProjectTemplate("testing").phases, ["Goal", "Test Plan", "Cases", "Execute", "Report", "Completed"])
   assert.deepEqual(getProjectTemplate("documentation").phases, ["Brief", "Outline", "Draft", "Review", "Publish", "Completed"])
@@ -276,6 +276,88 @@ test("agent task workflow completes in one agent response without a repository",
     ].join("\n")
   )
   assert.equal(completedRun.approvalGates.length, 0)
+})
+
+test("research workflow generates a prompt and then researches with that prompt", async () => {
+  const project = createProject({
+    name: "Market Map",
+    type: "research",
+    goal: "Research Taiwan EV charging policy.",
+    repository: "linderwu/ev-research",
+    source: "dashboard",
+    contextFiles: []
+  })
+  let run = createWorkflowRun({
+    projectId: project.id,
+    projectName: project.name,
+    projectType: project.type,
+    repository: project.repository,
+    requirement: project.goal,
+    contextFiles: project.contextFiles,
+    selectedAgent: "codex",
+    designApprovalActor: "human",
+    verificationApprovalActor: "human"
+  })
+  const invokedSkillIds: string[] = []
+
+  run = await advanceWorkflow(run, {
+    invokeAgent: async (input) => ({
+      status: "completed",
+      source: "codex-bridge",
+      repository: input.run.repository,
+      body: input.fallbackBody
+    })
+  })
+  run = await advanceWorkflow(run, {
+    invokeAgent: async (input) => {
+      invokedSkillIds.push(input.skill.id)
+      return {
+        status: "completed",
+        source: "codex-bridge",
+        body: [
+          "Repository path: research/prompt.md",
+          "",
+          "Prompt:",
+          `Research ${input.run.requirement} with cited sources.`
+        ].join("\n")
+      }
+    }
+  })
+  run = await advanceWorkflow(run, {
+    invokeAgent: async (input) => {
+      invokedSkillIds.push(input.skill.id)
+      assert.match(input.fallbackBody, /Repository: linderwu\/ev-research/)
+      assert.match(input.fallbackBody, /Research Taiwan EV charging policy/)
+      return {
+        status: "completed",
+        source: "codex-bridge",
+        body: [
+          "Repository path: research/report.md",
+          "",
+          "Report:",
+          "Final research output based on the generated prompt."
+        ].join("\n")
+      }
+    }
+  })
+
+  assert.equal(run.status, "completed")
+  assert.equal(run.currentStage, "completed")
+  assert.deepEqual(invokedSkillIds, ["research.prompt", "research.execute"])
+  assert.equal(run.approvalGates.length, 0)
+  assert.equal(run.artifacts.find((artifact) => artifact.type === "research_prompt")?.title, "Research Prompt")
+  assert.match(
+    run.artifacts.find((artifact) => artifact.type === "research_report")?.body ?? "",
+    /Repository path: research\/report\.md/
+  )
+  assert.deepEqual(
+    run.eventSkills.find((skill) => skill.id === "research.prompt")?.runtimeSkillBundles,
+    ["research-prompt"]
+  )
+  assert.deepEqual(
+    run.eventSkills.find((skill) => skill.id === "research.execute")?.runtimeSkillBundles,
+    ["research-execute"]
+  )
 })
 
 test("agent task workflow publishes completed response records when a publisher is provided", async () => {

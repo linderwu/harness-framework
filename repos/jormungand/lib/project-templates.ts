@@ -14,10 +14,10 @@ export const projectTemplates: Record<ProjectType, ProjectTemplate> = {
   research: {
     type: "research",
     label: "Research",
-    phases: ["Brief", "Research Plan", "Evidence", "Synthesis", "Review", "Completed"],
-    defaultArtifacts: ["requirement", "plan", "finding", "log"],
-    creationPrompts: ["Research question", "Evidence sources", "Synthesis target"],
-    defaultNextAction: "Clarify the research brief."
+    phases: ["Brief", "Prompt", "Research", "Completed"],
+    defaultArtifacts: ["requirement", "research_prompt", "research_report"],
+    creationPrompts: ["Research topic", "Repository", "Research output target"],
+    defaultNextAction: "Generate the research prompt."
   },
   development: {
     type: "development",
