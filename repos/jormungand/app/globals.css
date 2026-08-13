@@ -266,31 +266,55 @@ h2 {
 .modeSurfacePhase { border: 1px solid rgba(103, 232, 249, 0.4); border-radius: 999px; color: #a5f3fc; font-size: 10px; font-weight: 900; padding: 5px 8px; text-transform: uppercase; white-space: nowrap; }
 
 .modeDock {
-  border: 1px solid rgba(103, 232, 249, 0.26);
-  border-radius: 9px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.025)),
+    rgba(2, 10, 20, 0.82);
+  border: 1px solid rgba(148, 163, 184, 0.26);
+  border-radius: 12px;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.12),
+    inset 0 -8px 18px rgba(0, 0, 0, 0.16),
+    0 12px 24px rgba(2, 8, 23, 0.18);
   display: grid;
   gap: 0;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(7, minmax(0, 1fr));
   overflow: visible;
 }
 
 .modeDock button {
   align-items: center;
-  background: rgba(255, 255, 255, 0.055);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.075), rgba(255, 255, 255, 0.025));
   border: 0;
-  border-right: 1px solid rgba(203, 213, 225, 0.16);
+  border-right: 1px solid rgba(148, 163, 184, 0.2);
   border-radius: 0;
   color: #c5d8e8;
   display: flex;
   font-size: 11px;
   font-weight: 800;
-  gap: 6px;
+  gap: 0;
   justify-content: center;
-  min-height: 48px;
+  min-height: 56px;
   padding: 0;
   position: relative;
-  width: 48px;
-  transition: background 160ms ease, border-color 160ms ease, color 160ms ease, transform 160ms ease;
+  width: 56px;
+  transition: background 180ms ease, box-shadow 180ms ease, color 180ms ease, transform 180ms ease;
+}
+
+.modeDock button::before {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  content: "";
+  inset: 8px;
+  pointer-events: none;
+  position: absolute;
+}
+
+.modeDock button svg {
+  filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.42));
+  height: 22px;
+  position: relative;
+  width: 22px;
+  z-index: 1;
 }
 
 .modeDock button span {
@@ -318,7 +342,20 @@ h2 {
 }
 
 .modeDock button:hover,
-.modeDock button.selected { background: rgba(103, 232, 249, 0.16); border-color: #67e8f9; color: #f8fbff; transform: translateY(-1px); }
+.modeDock button.selected {
+  background:
+    linear-gradient(180deg, rgba(103, 232, 249, 0.28), rgba(8, 145, 178, 0.12)),
+    rgba(14, 116, 144, 0.3);
+  box-shadow: inset 0 0 18px rgba(103, 232, 249, 0.14), 0 0 18px rgba(34, 211, 238, 0.16);
+  color: #f8fbff;
+  transform: translateY(-1px);
+}
+
+.modeDock button:hover {
+  background: rgba(103, 232, 249, 0.14);
+  color: #f8fbff;
+  transform: translateY(-1px);
+}
 .modeDock button.selected svg { color: #67e8f9; }
 
 .modeDock button:last-child {
@@ -2217,6 +2254,10 @@ pre {
   .modeDock button {
     min-height: 44px;
     width: 44px;
+  }
+
+  .modeDock {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 
   .projectTypeGrid {
