@@ -26,6 +26,11 @@ const runtimeSkillCacheRoot = path.resolve(
 const activeAgentRuns = new Map()
 const activeWorkflowRuns = new Map()
 const activeIdempotencyKeys = new Map()
+const completedAgentRuns = new Map()
+const completedIdempotencyKeys = new Map()
+const completedAgentRunTtlMs = Number(
+  process.env.CODEX_BRIDGE_COMPLETED_RUN_TTL_MS ?? 3600000
+)
 const ouroborosAgentContract = `Ouroboros Knowledge Protocol:
 - Before substantial work, count important source files and choose an operating level.
 - S (<5 important source files): do not activate full Ouroboros; read code directly.
@@ -77,25 +82,46 @@ const server = http.createServer(async (request, response) => {
       return
     }
 
+    const idempotencyMatch = requestUrl.pathname.match(
+      /^\/agent-runs\/by-idempotency\/(.+)$/
+    )
+
+    if (request.method === "GET" && idempotencyMatch) {
+      const idempotencyKey = decodeURIComponent(idempotencyMatch[1])
+      const activeRunId = activeIdempotencyKeys.get(idempotencyKey)
+      const completedRunId = completedIdempotencyKeys.get(idempotencyKey)
+
+      if (activeRunId) {
+        sendAgentRunStatus(response, activeRunId)
+        return
+      }
+
+      if (completedRunId) {
+        sendCompletedAgentRun(response, completedRunId)
+        return
+      }
+
+      sendJson(response, 404, { error: "agent run not found", idempotencyKey })
+      return
+    }
+
     const agentRunMatch = requestUrl.pathname.match(/^\/agent-runs\/([^/]+)$/)
 
     if (request.method === "GET" && agentRunMatch) {
       const agentRunId = decodeURIComponent(agentRunMatch[1])
-      const activeRun = activeAgentRuns.get(agentRunId)
+      const completedRun = completedAgentRuns.get(agentRunId)
 
-      if (!activeRun) {
-        sendJson(response, 404, { error: "agent run not active" })
+      if (completedRun) {
+        sendCompletedAgentRun(response, agentRunId)
         return
       }
 
-      sendJson(response, 200, {
-        id: agentRunId,
-        workflowRunId: activeRun.workflowRunId,
-        status: "running",
-        startedAt: activeRun.startedAt,
-        statusMessage: "Codex process is still running.",
-        capabilities: bridgeCapabilities()
-      })
+      if (activeAgentRuns.has(agentRunId)) {
+        sendAgentRunStatus(response, agentRunId)
+        return
+      }
+
+      sendJson(response, 404, { error: "agent run not found" })
       return
     }
 
@@ -165,6 +191,7 @@ const server = http.createServer(async (request, response) => {
     const result = await runCodex(
       buildPrompt(payload, contextDir, runtimeSkillBundleResults),
       id,
+      idempotencyKey,
       payload.workflowRunId,
       workspace.path
     ).finally(async () => {
@@ -176,7 +203,7 @@ const server = http.createServer(async (request, response) => {
       }
     })
 
-    sendJson(response, 200, {
+    const responseBody = {
       id,
       idempotencyKey,
       startedAt,
@@ -184,7 +211,10 @@ const server = http.createServer(async (request, response) => {
       capabilities: bridgeCapabilities(),
       runtimeSkillBundleResults,
       ...result
-    })
+    }
+
+    rememberCompletedAgentRun(responseBody)
+    sendJson(response, 200, responseBody)
   } catch (error) {
     sendJson(response, 500, { error: formatError(error) })
   }
@@ -198,7 +228,61 @@ server.listen(port, host, () => {
   }
 })
 
-async function runCodex(prompt, id, workflowRunId, workspacePath) {
+function sendAgentRunStatus(response, agentRunId) {
+  const activeRun = activeAgentRuns.get(agentRunId)
+
+  if (!activeRun) {
+    sendJson(response, 404, { error: "agent run not active" })
+    return
+  }
+
+  sendJson(response, 200, {
+    id: agentRunId,
+    idempotencyKey: activeRun.idempotencyKey,
+    workflowRunId: activeRun.workflowRunId,
+    status: "running",
+    startedAt: activeRun.startedAt,
+    statusMessage: "Codex process is still running.",
+    capabilities: bridgeCapabilities()
+  })
+}
+
+function sendCompletedAgentRun(response, agentRunId) {
+  const completedRun = completedAgentRuns.get(agentRunId)
+
+  if (!completedRun) {
+    sendJson(response, 404, { error: "agent run not found" })
+    return
+  }
+
+  sendJson(response, 200, completedRun)
+}
+
+function rememberCompletedAgentRun(result) {
+  pruneCompletedAgentRuns()
+  completedAgentRuns.set(result.id, result)
+
+  if (result.idempotencyKey) {
+    completedIdempotencyKeys.set(result.idempotencyKey, result.id)
+  }
+}
+
+function pruneCompletedAgentRuns(now = Date.now()) {
+  for (const [id, result] of completedAgentRuns) {
+    const finishedAt = Date.parse(result.finishedAt ?? "")
+
+    if (!Number.isFinite(finishedAt) || now - finishedAt <= completedAgentRunTtlMs) {
+      continue
+    }
+
+    completedAgentRuns.delete(id)
+    if (result.idempotencyKey) {
+      completedIdempotencyKeys.delete(result.idempotencyKey)
+    }
+  }
+}
+
+async function runCodex(prompt, id, idempotencyKey, workflowRunId, workspacePath) {
   const outputFile = path.join(os.tmpdir(), `codex-bridge-${id}.txt`)
   const command = process.env.CODEX_BRIDGE_COMMAND ?? "codex"
   const sandbox = process.env.CODEX_BRIDGE_SANDBOX ?? "workspace-write"
@@ -230,6 +314,7 @@ async function runCodex(prompt, id, workflowRunId, workspacePath) {
   const timer = setTimeout(cancel, timeoutMs)
   activeAgentRuns.set(id, {
     cancel,
+    idempotencyKey,
     startedAt: new Date().toISOString(),
     workflowRunId
   })

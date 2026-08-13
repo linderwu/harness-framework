@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs"
 import test from "node:test"
 
 const codexBridgeSource = readFileSync("scripts/codex-bridge.mjs", "utf8")
+const agentBridgeSource = readFileSync("lib/agent-bridge.ts", "utf8")
 const openClawBridgeSource = readFileSync(
   "scripts/openclaw-bridge.mjs",
   "utf8"
@@ -31,6 +32,15 @@ test("Codex bridge gives Agent Tasks a standalone prompt", () => {
   assert.match(codexBridgeSource, /Do not produce artifact metadata/)
   assert.match(codexBridgeSource, /artifact_type, stage, workflow_run/)
   assert.match(codexBridgeSource, /agent_response/)
+})
+
+test("Codex bridge supports idempotency recovery for long runs", () => {
+  assert.match(codexBridgeSource, /completedAgentRuns/)
+  assert.match(codexBridgeSource, /completedIdempotencyKeys/)
+  assert.match(codexBridgeSource, /agent-runs\\\/by-idempotency/)
+  assert.match(agentBridgeSource, /pollBridgeRunByIdempotencyKey/)
+  assert.match(agentBridgeSource, /response\.status === 524/)
+  assert.match(agentBridgeSource, /encodeURIComponent\(input\.idempotencyKey\)/)
 })
 
 test("OpenClaw bridge accepts the compatibility token and enforces its local skill lock", () => {

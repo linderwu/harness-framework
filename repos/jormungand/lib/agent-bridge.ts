@@ -29,7 +29,7 @@ export interface AgentInvocationInput {
 
 interface BridgeResponse {
   id?: string
-  status?: "completed" | "failed"
+  status?: "completed" | "failed" | "running"
   output?: string
   error?: string
   stderr?: string
@@ -113,6 +113,16 @@ export async function invokeConfiguredAgent(
     const data = (await response.json().catch(() => ({}))) as BridgeResponse
 
     if (!response.ok) {
+      if (response.status === 524 || response.status === 409) {
+        return pollBridgeRunByIdempotencyKey({
+          bridgeUrl,
+          executor: input.executor,
+          idempotencyKey,
+          profileLabel: profile.label,
+          source
+        })
+      }
+
       return {
         status: "failed",
         source,
@@ -125,21 +135,7 @@ export async function invokeConfiguredAgent(
       }
     }
 
-    return {
-      status: data.status === "failed" ? "failed" : "completed",
-      source,
-      externalRunId: data.id,
-      idempotencyKey: data.idempotencyKey ?? idempotencyKey,
-      statusMessage: data.statusMessage,
-      artifacts: data.artifacts,
-      capabilities: data.capabilities,
-      runtimeSkillBundleResults: data.runtimeSkillBundleResults,
-      body:
-        data.output?.trim() ||
-        data.error ||
-        data.stderr ||
-        "Codex bridge completed without a final message."
-    }
+    return bridgeResponseToAgentResult(data, source, idempotencyKey)
   } catch (error) {
     return {
       status: "failed",
@@ -147,6 +143,81 @@ export async function invokeConfiguredAgent(
       body: `${profile.label} bridge is not reachable: ${formatError(error)}`
     }
   }
+}
+
+async function pollBridgeRunByIdempotencyKey(input: {
+  bridgeUrl: string
+  executor: AgentKind
+  idempotencyKey: string
+  profileLabel: string
+  source: AgentArtifactResult["source"]
+}): Promise<AgentArtifactResult> {
+  const timeoutMs = Number(process.env.AGENT_BRIDGE_RECOVERY_TIMEOUT_MS ?? 900000)
+  const pollIntervalMs = Number(
+    process.env.AGENT_BRIDGE_RECOVERY_POLL_INTERVAL_MS ?? 5000
+  )
+  const deadline = Date.now() + timeoutMs
+  let lastStatus = "not found"
+
+  while (Date.now() < deadline) {
+    await sleep(pollIntervalMs)
+
+    const response = await fetch(
+      new URL(
+        `agent-runs/by-idempotency/${encodeURIComponent(input.idempotencyKey)}`,
+        normalizeUrl(input.bridgeUrl)
+      ),
+      {
+        headers: createBridgeHeaders(input.executor, input.idempotencyKey)
+      }
+    ).catch(() => undefined)
+
+    if (!response) {
+      lastStatus = "unreachable"
+      continue
+    }
+
+    const data = (await response.json().catch(() => ({}))) as BridgeResponse
+
+    if (response.ok && data.status !== "running") {
+      return bridgeResponseToAgentResult(data, input.source, input.idempotencyKey)
+    }
+
+    lastStatus = response.ok ? data.status ?? "running" : `HTTP ${response.status}`
+  }
+
+  return {
+    status: "failed",
+    source: input.source,
+    idempotencyKey: input.idempotencyKey,
+    body: `${input.profileLabel} bridge timed out and recovery polling did not return a completed result (${lastStatus}).`
+  }
+}
+
+function bridgeResponseToAgentResult(
+  data: BridgeResponse,
+  source: AgentArtifactResult["source"],
+  idempotencyKey: string
+): AgentArtifactResult {
+  return {
+    status: data.status === "failed" ? "failed" : "completed",
+    source,
+    externalRunId: data.id,
+    idempotencyKey: data.idempotencyKey ?? idempotencyKey,
+    statusMessage: data.statusMessage,
+    artifacts: data.artifacts,
+    capabilities: data.capabilities,
+    runtimeSkillBundleResults: data.runtimeSkillBundleResults,
+    body:
+      data.output?.trim() ||
+      data.error ||
+      data.stderr ||
+      "Codex bridge completed without a final message."
+  }
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 async function invokeIntakeAgent(
