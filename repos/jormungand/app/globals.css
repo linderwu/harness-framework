@@ -2047,7 +2047,30 @@ pre {
 
 .bridgeStatusCard.offline,
 .bridgeStatusCard.stale {
-  border-color: rgba(254, 202, 202, 0.72);
+  background:
+    linear-gradient(135deg, rgba(254, 226, 226, 0.98), rgba(248, 113, 113, 0.9)),
+    #dc2626;
+  border-color: rgba(185, 28, 28, 0.72);
+  box-shadow: 0 16px 34px rgba(185, 28, 28, 0.24);
+  color: #7f1d1d;
+}
+
+.bridgeStatusCard.offline p,
+.bridgeStatusCard.offline small,
+.bridgeStatusCard.stale p,
+.bridgeStatusCard.stale small {
+  color: #991b1b;
+}
+
+.bridgeStatusCard.offline .bridgeStatusCardHeader span,
+.bridgeStatusCard.stale .bridgeStatusCardHeader span {
+  color: #7f1d1d;
+}
+
+.bridgeStatusCard.offline .bridgeAgentRow,
+.bridgeStatusCard.stale .bridgeAgentRow {
+  background: rgba(255, 255, 255, 0.42);
+  border-color: rgba(185, 28, 28, 0.3);
 }
 
 .bridgeStatusCard.checking {
