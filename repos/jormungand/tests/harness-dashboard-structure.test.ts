@@ -129,7 +129,7 @@ test("compose form uses research-specific workflow skills", () => {
   assert.match(dashboard, /assignmentStages\.includes\(stage\)/)
 })
 
-test("compose panel exposes workflow mode switch outside workflow setup", () => {
+test("compose panel exposes all project modes as a global mode surface", () => {
   const composePanel = dashboard.slice(
     dashboard.indexOf('<form className="panel composePanel"'),
     dashboard.indexOf(
@@ -138,9 +138,10 @@ test("compose panel exposes workflow mode switch outside workflow setup", () => 
     )
   )
 
-  assert.match(composePanel, /className="workflowModeSwitch"/)
-  assert.match(composePanel, /Agent Task/)
-  assert.match(composePanel, /Project Workflow/)
-  assert.match(composePanel, /setWorkflowMode\("agent_task"\)/)
-  assert.match(composePanel, /setWorkflowMode\("project_workflow"\)/)
+  assert.match(dashboard, /className="modeEdgeButton modeEdgeButtonLeft"/)
+  assert.match(dashboard, /className="modeEdgeButton modeEdgeButtonRight"/)
+  assert.match(composePanel, /className="modeSurface"/)
+  assert.match(composePanel, /className="modeDock"/)
+  assert.match(composePanel, /projectTypeOptions.map/)
+  assert.match(dashboard, /className=\{`shell mode-\$\{form\.projectType\}`\}/)
 })

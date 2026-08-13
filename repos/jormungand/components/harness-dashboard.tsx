@@ -8,6 +8,7 @@ import {
   Bug,
   Check,
   Code2,
+  ChevronLeft,
   ChevronDown,
   ChevronRight,
   CircleDot,
@@ -174,6 +175,16 @@ const projectTypeVisuals: Record<
     accent: "violet",
     description: "Send a focused instruction to an agent."
   }
+}
+
+const projectModeDescriptions: Record<ProjectType, string> = {
+  research: "Explore evidence and turn uncertainty into a clear report.",
+  development: "Move from idea to verified software with approval gates.",
+  testing: "Design coverage, execute scenarios, and preserve evidence.",
+  documentation: "Shape source material into a reviewed, publishable artifact.",
+  diagnosis: "Trace a failure from symptom to cause and recovery plan.",
+  decision: "Compare options, expose tradeoffs, and record the call.",
+  agent_task: "Send one focused instruction and receive an agent response."
 }
 
 export function HarnessDashboard({
@@ -461,21 +472,6 @@ export function HarnessDashboard({
     }))
   }
 
-  function setWorkflowMode(mode: "agent_task" | "project_workflow") {
-    setForm((currentForm) => ({
-      ...currentForm,
-      projectType:
-        mode === "agent_task"
-          ? "agent_task"
-          : currentForm.projectType === "agent_task"
-            ? "development"
-            : currentForm.projectType,
-      repository: mode === "agent_task" ? "" : currentForm.repository
-    }))
-    setBulkStage("all")
-    setMutationError(undefined)
-  }
-
   function selectProjectType(projectType: ProjectType) {
     const template = getProjectTemplate(projectType)
 
@@ -492,6 +488,17 @@ export function HarnessDashboard({
     }))
     setBulkStage("all")
     setMutationError(template.warning)
+  }
+
+  function cycleProjectType(direction: -1 | 1) {
+    const currentIndex = projectTypeOptions.findIndex(
+      (option) => option.type === form.projectType
+    )
+    const nextIndex =
+      (currentIndex + direction + projectTypeOptions.length) %
+      projectTypeOptions.length
+
+    selectProjectType(projectTypeOptions[nextIndex].type)
   }
 
   function updateSkillAssignment(skillId: string, agent: AgentKind) {
@@ -597,9 +604,30 @@ export function HarnessDashboard({
   }
 
   return (
-    <main className="shell">
+    <main className={`shell mode-${form.projectType}`}>
+      <button
+        aria-label="Previous project mode"
+        className="modeEdgeButton modeEdgeButtonLeft"
+        onClick={() => cycleProjectType(-1)}
+        title="Previous project mode"
+        type="button"
+      >
+        <ChevronLeft size={20} />
+        <span>Previous</span>
+      </button>
+      <button
+        aria-label="Next project mode"
+        className="modeEdgeButton modeEdgeButtonRight"
+        onClick={() => cycleProjectType(1)}
+        title="Next project mode"
+        type="button"
+      >
+        <span>Next</span>
+        <ChevronRight size={20} />
+      </button>
       <header className="topbar">
         <div>
+          <p className="eyebrow modeEyebrow">{getProjectTemplate(form.projectType).label} mode</p>
           <h1>{"Linder's Project Command Center"}</h1>
         </div>
         <button className="iconButton" onClick={refreshWorkspace} title="Refresh">
@@ -614,21 +642,33 @@ export function HarnessDashboard({
             <h2>New Project</h2>
           </div>
 
-          <div className="workflowModeSwitch" aria-label="Workflow mode">
-            <button
-              className={!isAgentTask ? "selected" : ""}
-              onClick={() => setWorkflowMode("project_workflow")}
-              type="button"
-            >
-              Project Workflow
-            </button>
-            <button
-              className={isAgentTask ? "selected" : ""}
-              onClick={() => setWorkflowMode("agent_task")}
-              type="button"
-            >
-              Agent Task
-            </button>
+          <div className="modeSurface" aria-labelledby="mode-surface-heading">
+            <div className="modeSurfaceHeader">
+              <div>
+                <p className="eyebrow">Global mode</p>
+                <h3 id="mode-surface-heading">{getProjectTemplate(form.projectType).label}</h3>
+                <p>{projectModeDescriptions[form.projectType]}</p>
+              </div>
+              <span className="modeSurfacePhase">{getProjectTemplate(form.projectType).phases.length} phases</span>
+            </div>
+            <div className="modeDock" aria-label="Project modes">
+              {projectTypeOptions.map((option) => {
+                const visual = projectTypeVisuals[option.type]
+                const Icon = visual.icon
+                return (
+                  <button
+                    aria-pressed={form.projectType === option.type}
+                    className={form.projectType === option.type ? "selected" : ""}
+                    key={option.type}
+                    onClick={() => selectProjectType(option.type)}
+                    type="button"
+                  >
+                    <Icon size={16} />
+                    {option.label}
+                  </button>
+                )
+              })}
+            </div>
           </div>
 
           <button
@@ -759,53 +799,6 @@ export function HarnessDashboard({
 
                 {openComposeSection === "requirement" ? (
                   <div className="composeSheetBody">
-                    <section className="projectTypeSwitcher" aria-labelledby="project-type-heading">
-                      <div className="projectTypeHeader">
-                        <div>
-                          <p className="eyebrow">Workflow Preset</p>
-                          <h3 id="project-type-heading">Choose your mission</h3>
-                        </div>
-                        <span className={`projectTypeSignal ${projectTypeVisuals[form.projectType].accent}`}>
-                          {getProjectTemplate(form.projectType).label}
-                        </span>
-                      </div>
-                      <div className="projectTypeGrid">
-                        {projectTypeOptions.map((option) => {
-                          const visual = projectTypeVisuals[option.type]
-                          const Icon = visual.icon
-                          const isActive = form.projectType === option.type
-
-                          return (
-                            <button
-                              aria-pressed={isActive}
-                              className={`projectTypeCard ${isActive ? "active" : ""} ${visual.accent}`}
-                              key={option.type}
-                              onClick={() => selectProjectType(option.type)}
-                              type="button"
-                            >
-                              <Icon size={18} />
-                              <strong>{option.label}</strong>
-                              <small>{visual.description}</small>
-                            </button>
-                          )
-                        })}
-                      </div>
-                      <div className="workflowPreview">
-                        <div className="workflowPreviewLabel">
-                          <span>Live workflow</span>
-                          <small>{getProjectTemplate(form.projectType).phases.length} phases</small>
-                        </div>
-                        <div className="workflowPreviewTrack">
-                          {getProjectTemplate(form.projectType).phases.map((phase, index) => (
-                            <span className="workflowPreviewStage" key={phase}>
-                              <i>{index + 1}</i>
-                              {phase}
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                    </section>
-
                     <label>
                       <span>Project</span>
                       <input

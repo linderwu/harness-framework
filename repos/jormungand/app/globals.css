@@ -89,8 +89,42 @@ button {
   overflow: visible;
   padding: 20px 28px;
   position: relative;
+  transition: background 280ms ease;
   z-index: 0;
 }
+
+.shell.mode-research { background: radial-gradient(circle at 12% 16%, rgba(167, 139, 250, 0.28), transparent 35%), rgba(76, 29, 149, 0.12); }
+.shell.mode-development { background: radial-gradient(circle at 12% 16%, rgba(251, 146, 60, 0.26), transparent 35%), rgba(124, 45, 18, 0.12); }
+.shell.mode-testing { background: radial-gradient(circle at 12% 16%, rgba(74, 222, 128, 0.24), transparent 35%), rgba(20, 83, 45, 0.12); }
+.shell.mode-documentation { background: radial-gradient(circle at 12% 16%, rgba(103, 232, 249, 0.25), transparent 35%), rgba(8, 51, 68, 0.12); }
+.shell.mode-diagnosis { background: radial-gradient(circle at 12% 16%, rgba(248, 113, 113, 0.25), transparent 35%), rgba(127, 29, 29, 0.12); }
+.shell.mode-decision { background: radial-gradient(circle at 12% 16%, rgba(147, 197, 253, 0.26), transparent 35%), rgba(30, 58, 138, 0.12); }
+.shell.mode-agent_task { background: radial-gradient(circle at 12% 16%, rgba(196, 181, 253, 0.27), transparent 35%), rgba(76, 29, 149, 0.13); }
+
+.modeEdgeButton {
+  align-items: center;
+  backdrop-filter: blur(14px);
+  background: rgba(8, 24, 40, 0.76);
+  border: 1px solid rgba(103, 232, 249, 0.3);
+  color: #dff8ff;
+  display: inline-flex;
+  gap: 6px;
+  height: 76px;
+  justify-content: center;
+  position: fixed;
+  top: 50%;
+  transform: translateY(-50%);
+  transition: background 180ms ease, border-color 180ms ease, width 180ms ease;
+  width: 34px;
+  z-index: 30;
+}
+
+.modeEdgeButton:hover { background: rgba(8, 48, 68, 0.94); border-color: #67e8f9; width: 86px; }
+.modeEdgeButton span { font-size: 10px; font-weight: 900; max-width: 0; opacity: 0; overflow: hidden; text-transform: uppercase; transition: max-width 180ms ease, opacity 180ms ease; white-space: nowrap; }
+.modeEdgeButton:hover span { max-width: 48px; opacity: 1; }
+.modeEdgeButtonLeft { border-left: 0; border-radius: 0 12px 12px 0; left: 0; }
+.modeEdgeButtonRight { border-radius: 12px 0 0 12px; border-right: 0; right: 0; }
+.modeEyebrow { color: #67e8f9; }
 
 .topbar {
   align-items: center;
@@ -210,6 +244,52 @@ h2 {
 .composePanel .composeLaunchButton small {
   color: #bfd2e5;
 }
+
+.modeSurface {
+  background: rgba(3, 12, 24, 0.3);
+  border: 1px solid rgba(103, 232, 249, 0.24);
+  border-radius: 10px;
+  display: grid;
+  gap: 12px;
+  padding: 13px;
+}
+
+.modeSurfaceHeader {
+  align-items: start;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.modeSurfaceHeader h3 { color: #f8fbff; font-size: 20px; margin: 0; }
+.modeSurfaceHeader p:not(.eyebrow) { color: #b7cde0; font-size: 12px; line-height: 1.4; margin: 5px 0 0; }
+.modeSurfacePhase { border: 1px solid rgba(103, 232, 249, 0.4); border-radius: 999px; color: #a5f3fc; font-size: 10px; font-weight: 900; padding: 5px 8px; text-transform: uppercase; white-space: nowrap; }
+
+.modeDock {
+  display: grid;
+  gap: 5px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.modeDock button {
+  align-items: center;
+  background: rgba(255, 255, 255, 0.055);
+  border: 1px solid rgba(203, 213, 225, 0.18);
+  border-radius: 7px;
+  color: #c5d8e8;
+  display: flex;
+  font-size: 11px;
+  font-weight: 800;
+  gap: 6px;
+  justify-content: center;
+  min-height: 34px;
+  padding: 0 6px;
+  transition: background 160ms ease, border-color 160ms ease, color 160ms ease, transform 160ms ease;
+}
+
+.modeDock button:hover,
+.modeDock button.selected { background: rgba(103, 232, 249, 0.16); border-color: #67e8f9; color: #f8fbff; transform: translateY(-1px); }
+.modeDock button.selected svg { color: #67e8f9; }
 
 .projectTypeSwitcher {
   display: grid;
@@ -2028,6 +2108,10 @@ pre {
     grid-template-columns: repeat(3, minmax(80px, 1fr));
   }
 
+  .modeDock {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
   .projectTypeGrid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
@@ -2077,6 +2161,23 @@ pre {
 
   .runActionRow {
     grid-template-columns: 1fr;
+  }
+
+  .modeDock {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .modeEdgeButton {
+    height: 58px;
+    width: 28px;
+  }
+
+  .modeEdgeButton:hover {
+    width: 34px;
+  }
+
+  .modeEdgeButton span {
+    display: none;
   }
 
   .projectTypeGrid {
