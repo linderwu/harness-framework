@@ -413,7 +413,8 @@ test("agent task workflow rejects metadata-only response envelopes", async () =>
 
   assert.equal(completedRun.status, "failed")
   assert.equal(publishCalls, 0)
-  assert.match(completedRun.artifacts[0].body, /agent_response:/)
+  assert.match(completedRun.artifacts[0].body, /metadata-only envelope/)
+  assert.doesNotMatch(completedRun.artifacts[0].body, /agent_response:/)
   assert.match(completedRun.artifacts[0].body, /\*\*Closeout Status\*\*\nfailed/)
 })
 

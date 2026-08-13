@@ -899,7 +899,9 @@ async function advanceAgentTask(
   if (responseArtifact) {
     responseArtifact.body = formatAgentTaskMixedResponse({
       instruction: run.requirement,
-      rawResponse,
+      rawResponse: invalidResponse
+        ? "Agent response rejected: metadata-only envelope without a response body."
+        : rawResponse,
       closeoutStatus:
         taskResult.status === "failed" || invalidResponse ? "failed" : "complete"
     })
