@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server"
+import { publishAgentTaskResponseRecord } from "@/lib/agent-response-records"
 import { invokeConfiguredAgent } from "@/lib/agent-bridge"
 import { defaultAgentKind, normalizeAgentKind } from "@/lib/agents"
 import { createRuntimeSkillResolver } from "@/lib/runtime-skills"
@@ -82,7 +83,8 @@ export async function POST(request: Request) {
 
   const intakeRun = await advanceWorkflow(run, {
     invokeAgent: invokeConfiguredAgent,
-    resolveRuntimeSkillBundles: createRuntimeSkillResolver()
+    resolveRuntimeSkillBundles: createRuntimeSkillResolver(),
+    publishAgentTaskRecord: publishAgentTaskResponseRecord
   })
 
   await upsertWorkflowRun(intakeRun)

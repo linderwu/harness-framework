@@ -87,6 +87,7 @@ test("agent task response artifact is located by title and type", () => {
 test("agent task record markdown includes metadata, instruction, response, and closeout", () => {
   const markdown = formatAgentTaskRecordMarkdown(run())
 
+  assert.ok(markdown)
   assert.match(markdown, /^# Agent Task Response/)
   assert.match(markdown, /Project: Summarize Notes/)
   assert.match(markdown, /Workflow Run: run-123/)

@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server"
+import { publishAgentTaskResponseRecord } from "@/lib/agent-response-records"
 import { invokeConfiguredAgent } from "@/lib/agent-bridge"
 import { defaultAgentKind, normalizeAgentKind } from "@/lib/agents"
+import { createRuntimeSkillResolver } from "@/lib/runtime-skills"
 import { getProject, upsertWorkflowRun } from "@/lib/store"
 import { advanceWorkflow, createWorkflowRun } from "@/lib/workflow"
 import type { AgentKind, ApprovalActorType } from "@/lib/types"
@@ -35,7 +37,9 @@ export async function POST(
     verificationApprovalActor: body.verificationApprovalActor ?? "verification_subagent"
   })
   const intakeRun = await advanceWorkflow(run, {
-    invokeAgent: invokeConfiguredAgent
+    invokeAgent: invokeConfiguredAgent,
+    resolveRuntimeSkillBundles: createRuntimeSkillResolver(),
+    publishAgentTaskRecord: publishAgentTaskResponseRecord
   })
 
   await upsertWorkflowRun(intakeRun)
