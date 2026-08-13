@@ -898,7 +898,7 @@ async function advanceAgentTask(
   if (responseArtifact) {
     responseArtifact.body = formatAgentTaskMixedResponse({
       instruction: run.requirement,
-      rawResponse: taskResult.body,
+      rawResponse: getAgentTaskRawResponseBody(taskResult),
       closeoutStatus: taskResult.status === "failed" ? "failed" : "complete"
     })
   }
@@ -979,6 +979,17 @@ function formatAgentTaskMixedResponse(input: {
     "**Closeout Status**",
     input.closeoutStatus
   ].join("\n")
+}
+
+function getAgentTaskRawResponseBody(taskResult: AgentArtifactResult) {
+  const responseArtifact = (taskResult.artifacts ?? []).find(
+    (artifact) => artifact.title === "Agent Response" && artifact.body.trim()
+  )
+  const firstArtifact = responseArtifact ?? (taskResult.artifacts ?? []).find(
+    (artifact) => artifact.body.trim()
+  )
+
+  return firstArtifact?.body.trim() ?? taskResult.body
 }
 
 export function decideApprovalGate(

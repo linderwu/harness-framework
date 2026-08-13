@@ -323,6 +323,50 @@ test("agent task workflow publishes completed response records when a publisher 
   assert.match(completedRun.events[0].note ?? "", /Agent response record published/)
 })
 
+test("agent task workflow records full artifact content over a short final message", async () => {
+  const project = createProject({
+    name: "Full Artifact Response",
+    type: "agent_task",
+    goal: "Research the full answer.",
+    repository: "",
+    source: "dashboard",
+    contextFiles: []
+  })
+  const run = createWorkflowRun({
+    projectId: project.id,
+    projectName: project.name,
+    projectType: project.type,
+    repository: project.repository,
+    requirement: project.goal,
+    contextFiles: project.contextFiles,
+    selectedAgent: "codex",
+    designApprovalActor: "human",
+    verificationApprovalActor: "human"
+  })
+
+  const completedRun = await advanceWorkflow(run, {
+    invokeAgent: async () => ({
+      status: "completed",
+      source: "codex-bridge",
+      body: "Saved artifact.",
+      artifacts: [
+        {
+          type: "log",
+          title: "Agent Response",
+          body: "Full report with findings, evidence, and conclusions."
+        }
+      ]
+    })
+  })
+
+  assert.equal(completedRun.status, "completed")
+  assert.match(
+    completedRun.artifacts[0].body,
+    /Full report with findings, evidence, and conclusions\./
+  )
+  assert.doesNotMatch(completedRun.artifacts[0].body, /Raw Agent Response\nSaved artifact\./)
+})
+
 test("agent task workflow keeps completed response when record publishing fails", async () => {
   const project = createProject({
     name: "Record Failure",
