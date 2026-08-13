@@ -34,12 +34,31 @@ export function getAgentTaskResponseArtifact(run: WorkflowRun) {
 }
 
 function getAgentTaskRecordBasePath(run: WorkflowRun) {
+  const recordDate = getRecordDateParts(run).join("-")
+  return `${getRecordDatePath(run)}/${slugifyRecordTitle(run.projectName)}-${recordDate}`
+}
+
+function getRecordDatePath(run: WorkflowRun) {
+  return `records/${getRecordDateParts(run).join("/")}`
+}
+
+function getRecordDateParts(run: WorkflowRun) {
   const date = new Date(run.updatedAt || run.createdAt)
   const year = String(date.getUTCFullYear())
   const month = String(date.getUTCMonth() + 1).padStart(2, "0")
   const day = String(date.getUTCDate()).padStart(2, "0")
 
-  return `records/${year}/${month}/${day}/${run.id}`
+  return [year, month, day]
+}
+
+function slugifyRecordTitle(title: string) {
+  const slug = title
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+
+  return slug || "agent-task"
 }
 
 export function createAgentTaskRecords(
@@ -57,7 +76,7 @@ export function createAgentTaskRecords(
 
   return [
     {
-      path: `${basePath}/original-instruction.md`,
+      path: `${basePath}-original-instruction.md`,
       content: [
         "# Original Instruction",
         "",
@@ -70,7 +89,7 @@ export function createAgentTaskRecords(
       message: `Record Agent Task original instruction for ${run.projectName}`
     },
     {
-      path: `${basePath}/raw-agent-response.md`,
+      path: `${basePath}-raw-agent-response.md`,
       content: [
         "# Raw Agent Response",
         "",
@@ -122,7 +141,7 @@ export function createAgentTaskRecord(
   run: WorkflowRun
 ): AgentTaskRecord | undefined {
   return createAgentTaskRecords(run)?.find((record) =>
-    record.path.endsWith("/raw-agent-response.md")
+    record.path.endsWith("-raw-agent-response.md")
   )
 }
 
