@@ -650,8 +650,23 @@ function buildPrompt(payload, contextDir, runtimeSkillBundleResults = []) {
     "Runtime skill bundles:",
     runtimeSkillSummary || "No runtime skill bundles installed.",
     "",
-    "Return a concise final message that the harness can store as this event artifact."
+    formatFinalInstruction(payload)
   ].join("\n")
+}
+
+function formatFinalInstruction(payload) {
+  const skill = payload.skill ?? {}
+
+  if (skill.id === "agent_task.response") {
+    return [
+      "Return the complete answer body for the user's instruction.",
+      "Do not return only artifact metadata.",
+      "Do not replace the answer with fields such as artifact_type, stage, workflow_run, idempotency_key, or original_instruction.",
+      "The harness will store your final message as the raw Agent Response artifact."
+    ].join("\n")
+  }
+
+  return "Return a concise final message that the harness can store as this event artifact."
 }
 
 function formatBytes(value) {
