@@ -628,7 +628,7 @@ export function HarnessDashboard({
       <header className="topbar">
         <div>
           <p className="eyebrow modeEyebrow">{getProjectTemplate(form.projectType).label} mode</p>
-          <h1>{"Linder's Project Command Center"}</h1>
+          <h1>{"Jormungand"}</h1>
         </div>
         <button className="iconButton" onClick={refreshWorkspace} title="Refresh">
           <RefreshCw size={18} />
