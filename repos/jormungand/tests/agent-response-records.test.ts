@@ -1,8 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import {
-  formatAgentTaskRecordMarkdown,
-  getAgentTaskRecordPath,
+  createAgentTaskRecords,
   getAgentTaskResponseArtifact,
   publishAgentTaskResponseRecord
 } from "../lib/agent-response-records"
@@ -70,10 +69,13 @@ function run(overrides: Partial<WorkflowRun> = {}): WorkflowRun {
   }
 }
 
-test("agent task record path is deterministic from run updated date and id", () => {
-  assert.equal(
-    getAgentTaskRecordPath(run()),
-    "records/2026/08/13/run-123.md"
+test("agent task record paths split instruction and raw response documents by run", () => {
+  assert.deepEqual(
+    createAgentTaskRecords(run())?.map((record) => record.path),
+    [
+      "records/2026/08/13/run-123/original-instruction.md",
+      "records/2026/08/13/run-123/raw-agent-response.md"
+    ]
   )
 })
 
@@ -84,37 +86,36 @@ test("agent task response artifact is located by title and type", () => {
   assert.equal(artifact?.title, "Agent Response")
 })
 
-test("agent task record markdown includes metadata, instruction, response, and closeout", () => {
-  const markdown = formatAgentTaskRecordMarkdown(run())
+test("agent task record markdown splits original instruction and raw response", () => {
+  const records = createAgentTaskRecords(run())
 
-  assert.ok(markdown)
-  assert.match(markdown, /^# Agent Task Response/)
-  assert.match(markdown, /Project: Summarize Notes/)
-  assert.match(markdown, /Workflow Run: run-123/)
-  assert.match(markdown, /Project ID: project-123/)
-  assert.match(markdown, /Selected Agent: codex/)
-  assert.match(markdown, /Source: dashboard/)
-  assert.match(markdown, /Repository: linderwu\/source-repo/)
-  assert.match(markdown, /Status: completed/)
-  assert.match(markdown, /Created: 2026-08-13T10:00:00.000Z/)
-  assert.match(markdown, /Updated: 2026-08-13T10:12:00.000Z/)
-  assert.match(markdown, /## Original Instruction\n\nSummarize today's notes\./)
-  assert.match(markdown, /## Raw Agent Response\n\nAction 1: follow up with the team\./)
-  assert.match(markdown, /## Closeout Status\n\ncomplete/)
+  assert.ok(records)
+  assert.equal(records.length, 2)
+  assert.match(records[0].content, /^# Original Instruction/)
+  assert.match(records[0].content, /Project: Summarize Notes/)
+  assert.match(records[0].content, /Workflow Run: run-123/)
+  assert.match(records[0].content, /## Original Instruction\n\nSummarize today's notes\./)
+  assert.doesNotMatch(records[0].content, /Raw Agent Response/)
+  assert.match(records[1].content, /^# Raw Agent Response/)
+  assert.match(records[1].content, /Project: Summarize Notes/)
+  assert.match(records[1].content, /Workflow Run: run-123/)
+  assert.match(records[1].content, /## Raw Agent Response\n\nAction 1: follow up with the team\./)
+  assert.match(records[1].content, /## Closeout Status\n\ncomplete/)
+  assert.doesNotMatch(records[1].content, /\*\*Original Instruction\*\*/)
 })
 
 test("non-agent-task runs are not formatted as agent task records", () => {
   assert.equal(
-    formatAgentTaskRecordMarkdown(run({ projectType: "development" })),
+    createAgentTaskRecords(run({ projectType: "development" })),
     undefined
   )
 })
 
 test("runs without an Agent Response artifact are not formatted", () => {
-  assert.equal(formatAgentTaskRecordMarkdown(run({ artifacts: [] })), undefined)
+  assert.equal(createAgentTaskRecords(run({ artifacts: [] })), undefined)
 })
 
-test("publishing an agent task record uses the configured repository and deterministic path", async () => {
+test("publishing an agent task record writes instruction and raw response documents", async () => {
   const calls: Array<{
     repository: string
     path: string
@@ -135,12 +136,24 @@ test("publishing an agent task record uses the configured repository and determi
   })
 
   assert.equal(result.status, "published")
-  assert.equal(calls.length, 1)
+  assert.equal(calls.length, 2)
   assert.equal(calls[0].repository, "jormungand-record")
-  assert.equal(calls[0].path, "records/2026/08/13/run-123.md")
+  assert.equal(
+    calls[0].path,
+    "records/2026/08/13/run-123/original-instruction.md"
+  )
+  assert.equal(
+    calls[1].path,
+    "records/2026/08/13/run-123/raw-agent-response.md"
+  )
   assert.match(
     calls[0].message,
-    /Record Agent Task response for Summarize Notes/
+    /Record Agent Task original instruction for Summarize Notes/
   )
-  assert.match(calls[0].content, /# Agent Task Response/)
+  assert.match(
+    calls[1].message,
+    /Record Agent Task raw response for Summarize Notes/
+  )
+  assert.match(calls[0].content, /# Original Instruction/)
+  assert.match(calls[1].content, /# Raw Agent Response/)
 })

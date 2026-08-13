@@ -8,6 +8,7 @@ import type { Artifact, WorkflowRun } from "./types"
 export interface AgentTaskRecord {
   path: string
   content: string
+  message: string
 }
 
 export interface AgentTaskRecordPublishOptions {
@@ -16,7 +17,7 @@ export interface AgentTaskRecordPublishOptions {
 }
 
 export type AgentTaskRecordPublishResult =
-  | GitHubFileUpsertResult
+  | (GitHubFileUpsertResult & { files?: GitHubFileUpsertResult[] })
   | {
       status: "skipped"
       reason: "not_agent_task" | "missing_response_artifact"
@@ -32,16 +33,18 @@ export function getAgentTaskResponseArtifact(run: WorkflowRun) {
   )
 }
 
-export function getAgentTaskRecordPath(run: WorkflowRun) {
+function getAgentTaskRecordBasePath(run: WorkflowRun) {
   const date = new Date(run.updatedAt || run.createdAt)
   const year = String(date.getUTCFullYear())
   const month = String(date.getUTCMonth() + 1).padStart(2, "0")
   const day = String(date.getUTCDate()).padStart(2, "0")
 
-  return `records/${year}/${month}/${day}/${run.id}.md`
+  return `records/${year}/${month}/${day}/${run.id}`
 }
 
-export function formatAgentTaskRecordMarkdown(run: WorkflowRun) {
+export function createAgentTaskRecords(
+  run: WorkflowRun
+): AgentTaskRecord[] | undefined {
   const artifact = getAgentTaskResponseArtifact(run)
 
   if (!artifact) {
@@ -49,10 +52,55 @@ export function formatAgentTaskRecordMarkdown(run: WorkflowRun) {
   }
 
   const sections = parseMixedResponseArtifact(artifact)
+  const basePath = getAgentTaskRecordBasePath(run)
+  const metadata = formatRecordMetadata(run)
 
   return [
-    "# Agent Task Response",
-    "",
+    {
+      path: `${basePath}/original-instruction.md`,
+      content: [
+        "# Original Instruction",
+        "",
+        ...metadata,
+        "",
+        "## Original Instruction",
+        "",
+        sections.originalInstruction || run.requirement
+      ].join("\n"),
+      message: `Record Agent Task original instruction for ${run.projectName}`
+    },
+    {
+      path: `${basePath}/raw-agent-response.md`,
+      content: [
+        "# Raw Agent Response",
+        "",
+        ...metadata,
+        "",
+        "## Raw Agent Response",
+        "",
+        sections.rawAgentResponse || artifact.body,
+        "",
+        "## Closeout Status",
+        "",
+        sections.closeoutStatus || inferCloseoutStatus(run)
+      ].join("\n"),
+      message: `Record Agent Task raw response for ${run.projectName}`
+    }
+  ]
+}
+
+export function formatAgentTaskRecordMarkdown(run: WorkflowRun) {
+  const records = createAgentTaskRecords(run)
+
+  if (!records) {
+    return undefined
+  }
+
+  return records.map((record) => record.content).join("\n\n")
+}
+
+function formatRecordMetadata(run: WorkflowRun) {
+  return [
     `Project: ${run.projectName}`,
     `Workflow Run: ${run.id}`,
     `Project ID: ${run.projectId}`,
@@ -61,37 +109,21 @@ export function formatAgentTaskRecordMarkdown(run: WorkflowRun) {
     run.repository ? `Repository: ${run.repository}` : undefined,
     `Status: ${run.status}`,
     `Created: ${run.createdAt}`,
-    `Updated: ${run.updatedAt}`,
-    "",
-    "## Original Instruction",
-    "",
-    sections.originalInstruction || run.requirement,
-    "",
-    "## Raw Agent Response",
-    "",
-    sections.rawAgentResponse || artifact.body,
-    "",
-    "## Closeout Status",
-    "",
-    sections.closeoutStatus || inferCloseoutStatus(run)
+    `Updated: ${run.updatedAt}`
   ]
     .filter((line): line is string => line !== undefined)
-    .join("\n")
+}
+
+export function getAgentTaskRecordPath(run: WorkflowRun) {
+  return `${getAgentTaskRecordBasePath(run)}/raw-agent-response.md`
 }
 
 export function createAgentTaskRecord(
   run: WorkflowRun
 ): AgentTaskRecord | undefined {
-  const content = formatAgentTaskRecordMarkdown(run)
-
-  if (!content) {
-    return undefined
-  }
-
-  return {
-    path: getAgentTaskRecordPath(run),
-    content
-  }
+  return createAgentTaskRecords(run)?.find((record) =>
+    record.path.endsWith("/raw-agent-response.md")
+  )
 }
 
 export async function publishAgentTaskResponseRecord(
@@ -102,9 +134,9 @@ export async function publishAgentTaskResponseRecord(
     return { status: "skipped", reason: "not_agent_task" }
   }
 
-  const record = createAgentTaskRecord(run)
+  const records = createAgentTaskRecords(run)
 
-  if (!record) {
+  if (!records) {
     return { status: "skipped", reason: "missing_response_artifact" }
   }
 
@@ -114,12 +146,29 @@ export async function publishAgentTaskResponseRecord(
     "jormungand-record"
   const upsertFile = options.upsertFile ?? upsertGitHubFile
 
-  return upsertFile({
-    repository,
-    path: record.path,
-    content: record.content,
-    message: `Record Agent Task response for ${run.projectName}`
-  })
+  const results = []
+
+  for (const record of records) {
+    results.push(
+      await upsertFile({
+        repository,
+        path: record.path,
+        content: record.content,
+        message: record.message
+      })
+    )
+  }
+
+  const changedResult =
+    results.find((result) => result.status === "published") ?? results[0]
+
+  return {
+    ...changedResult,
+    status: results.some((result) => result.status === "published")
+      ? "published"
+      : "unchanged",
+    files: results
+  }
 }
 
 function parseMixedResponseArtifact(artifact: Artifact) {
