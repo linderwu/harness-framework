@@ -266,26 +266,30 @@ h2 {
 .modeSurfacePhase { border: 1px solid rgba(103, 232, 249, 0.4); border-radius: 999px; color: #a5f3fc; font-size: 10px; font-weight: 900; padding: 5px 8px; text-transform: uppercase; white-space: nowrap; }
 
 .modeDock {
+  border: 1px solid rgba(103, 232, 249, 0.26);
+  border-radius: 9px;
   display: grid;
-  gap: 5px;
+  gap: 0;
   grid-template-columns: repeat(4, minmax(0, 1fr));
+  overflow: visible;
 }
 
 .modeDock button {
   align-items: center;
   background: rgba(255, 255, 255, 0.055);
-  border: 1px solid rgba(203, 213, 225, 0.18);
-  border-radius: 7px;
+  border: 0;
+  border-right: 1px solid rgba(203, 213, 225, 0.16);
+  border-radius: 0;
   color: #c5d8e8;
   display: flex;
   font-size: 11px;
   font-weight: 800;
   gap: 6px;
   justify-content: center;
-  min-height: 34px;
+  min-height: 48px;
   padding: 0;
   position: relative;
-  width: 34px;
+  width: 48px;
   transition: background 160ms ease, border-color 160ms ease, color 160ms ease, transform 160ms ease;
 }
 
@@ -316,6 +320,10 @@ h2 {
 .modeDock button:hover,
 .modeDock button.selected { background: rgba(103, 232, 249, 0.16); border-color: #67e8f9; color: #f8fbff; transform: translateY(-1px); }
 .modeDock button.selected svg { color: #67e8f9; }
+
+.modeDock button:last-child {
+  border-right: 0;
+}
 
 .projectTypeSwitcher {
   display: grid;
@@ -2204,6 +2212,11 @@ pre {
 
   .modeEdgeButton span {
     display: none;
+  }
+
+  .modeDock button {
+    min-height: 44px;
+    width: 44px;
   }
 
   .projectTypeGrid {
