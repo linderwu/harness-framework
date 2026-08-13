@@ -34,12 +34,11 @@ export function getAgentTaskResponseArtifact(run: WorkflowRun) {
 }
 
 function getAgentTaskRecordBasePath(run: WorkflowRun) {
-  const recordDate = getRecordDateParts(run).join("-")
-  return `${getRecordDatePath(run)}/${slugifyRecordTitle(run.projectName)}-${recordDate}`
+  return `record/${slugifyRecordTitle(run.projectName)}`
 }
 
-function getRecordDatePath(run: WorkflowRun) {
-  return `records/${getRecordDateParts(run).join("/")}`
+function getRecordTimestamp(run: WorkflowRun) {
+  return getRecordDateParts(run).join("-")
 }
 
 function getRecordDateParts(run: WorkflowRun) {
@@ -47,8 +46,10 @@ function getRecordDateParts(run: WorkflowRun) {
   const year = String(date.getUTCFullYear())
   const month = String(date.getUTCMonth() + 1).padStart(2, "0")
   const day = String(date.getUTCDate()).padStart(2, "0")
+  const hour = String(date.getUTCHours()).padStart(2, "0")
+  const minute = String(date.getUTCMinutes()).padStart(2, "0")
 
-  return [year, month, day]
+  return [year, month, day, hour, minute]
 }
 
 function slugifyRecordTitle(title: string) {
@@ -72,11 +73,12 @@ export function createAgentTaskRecords(
 
   const sections = parseMixedResponseArtifact(artifact)
   const basePath = getAgentTaskRecordBasePath(run)
+  const timestamp = getRecordTimestamp(run)
   const metadata = formatRecordMetadata(run)
 
   return [
     {
-      path: `${basePath}-original-instruction.md`,
+      path: `${basePath}/original-instruction-${timestamp}.md`,
       content: [
         "# Original Instruction",
         "",
@@ -89,7 +91,7 @@ export function createAgentTaskRecords(
       message: `Record Agent Task original instruction for ${run.projectName}`
     },
     {
-      path: `${basePath}-raw-agent-response.md`,
+      path: `${basePath}/raw-agent-response-${timestamp}.md`,
       content: [
         "# Raw Agent Response",
         "",
@@ -141,7 +143,7 @@ export function createAgentTaskRecord(
   run: WorkflowRun
 ): AgentTaskRecord | undefined {
   return createAgentTaskRecords(run)?.find((record) =>
-    record.path.endsWith("-raw-agent-response.md")
+    record.path.includes("/raw-agent-response-")
   )
 }
 

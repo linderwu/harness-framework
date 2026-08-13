@@ -73,8 +73,8 @@ test("agent task record paths split instruction and raw response documents by ru
   assert.deepEqual(
     createAgentTaskRecords(run())?.map((record) => record.path),
     [
-      "records/2026/08/13/summarize-notes-2026-08-13-original-instruction.md",
-      "records/2026/08/13/summarize-notes-2026-08-13-raw-agent-response.md"
+      "record/summarize-notes/original-instruction-2026-08-13-10-12.md",
+      "record/summarize-notes/raw-agent-response-2026-08-13-10-12.md"
     ]
   )
 })
@@ -140,11 +140,11 @@ test("publishing an agent task record writes instruction and raw response docume
   assert.equal(calls[0].repository, "jormungand-record")
   assert.equal(
     calls[0].path,
-    "records/2026/08/13/summarize-notes-2026-08-13-original-instruction.md"
+    "record/summarize-notes/original-instruction-2026-08-13-10-12.md"
   )
   assert.equal(
     calls[1].path,
-    "records/2026/08/13/summarize-notes-2026-08-13-raw-agent-response.md"
+    "record/summarize-notes/raw-agent-response-2026-08-13-10-12.md"
   )
   assert.match(
     calls[0].message,
