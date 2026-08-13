@@ -2048,15 +2048,17 @@ function AgentBridgeRow({
     .reverse()
     .find((agentRun) => agentRun.agent === agent)
   const profile = agentProfiles.find((candidate) => candidate.id === agent)
+  const status = latestAgentRun?.status ?? "idle"
+  const statusLabel = status === "failed" ? "FAIL" : status.toUpperCase()
 
   if (!profile) {
     return null
   }
 
   return (
-    <div className="bridgeAgentRow">
+    <div className={`bridgeAgentRow status-${status}`} role="status">
       <AgentOptionLabel agent={profile} />
-      <small>{latestAgentRun?.status ?? "idle"}</small>
+      <strong className="bridgeAgentStatus">{statusLabel}</strong>
     </div>
   )
 }
