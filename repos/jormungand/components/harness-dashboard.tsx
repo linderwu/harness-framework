@@ -66,6 +66,7 @@ import {
 import {
   actorLabels,
   createDefaultEventSkills,
+  createResearchEventSkills,
   eventTypeLabels,
   stageLabels
 } from "@/lib/workflow"
@@ -88,6 +89,21 @@ const defaultEventSkills = createDefaultEventSkills()
 const defaultSkillAssignments = Object.fromEntries(
   defaultEventSkills.map((skill) => [skill.id, defaultAgentKind])
 ) as Record<string, AgentKind>
+
+function getAssignableEventSkills(projectType: ProjectType) {
+  if (projectType === "agent_task") {
+    return []
+  }
+
+  if (projectType === "research") {
+    return createResearchEventSkills().filter(
+      (skill) => skill.id !== "intake.requirement" && skill.id !== "closeout.archive"
+    )
+  }
+
+  return defaultEventSkills
+}
+
 const maxContextFileBytes = 2 * 1024 * 1024
 const maxContextTotalBytes = 5 * 1024 * 1024
 const bridgeHealthPollIntervalMs = 10_000
@@ -184,19 +200,28 @@ export function HarnessDashboard({
     [selectedProject, selectedProjectRuns]
   )
   const isAgentTask = form.projectType === "agent_task"
+  const assignmentSkills = useMemo(
+    () => getAssignableEventSkills(form.projectType),
+    [form.projectType]
+  )
+  const assignmentStages = useMemo(
+    () => Array.from(new Set(assignmentSkills.map((skill) => skill.stage))),
+    [assignmentSkills]
+  )
+  const hasApprovalPolicies = form.projectType === "development"
   const overrideCount = useMemo(
     () =>
-      defaultEventSkills.filter(
+      assignmentSkills.filter(
         (skill) =>
           (form.skillAssignments[skill.id] ?? form.selectedAgent) !==
           form.selectedAgent
       ).length,
-    [form.selectedAgent, form.skillAssignments]
+    [assignmentSkills, form.selectedAgent, form.skillAssignments]
   )
   const visibleAssignmentSkills = useMemo(() => {
     const query = skillSearch.trim().toLowerCase()
 
-    return defaultEventSkills.filter((skill) => {
+    return assignmentSkills.filter((skill) => {
       const executor = form.skillAssignments[skill.id] ?? form.selectedAgent
       const isOverride = executor !== form.selectedAgent
       const matchesQuery =
@@ -208,6 +233,7 @@ export function HarnessDashboard({
       return matchesQuery && (!showOverridesOnly || isOverride)
     })
   }, [
+    assignmentSkills,
     form.selectedAgent,
     form.skillAssignments,
     showOverridesOnly,
@@ -375,7 +401,7 @@ export function HarnessDashboard({
       ...currentForm,
       selectedAgent,
       skillAssignments: Object.fromEntries(
-        defaultEventSkills.map((skill) => {
+        getAssignableEventSkills(currentForm.projectType).map((skill) => {
           const currentAgent =
             currentForm.skillAssignments[skill.id] ??
             currentForm.selectedAgent
@@ -420,7 +446,7 @@ export function HarnessDashboard({
     setForm((currentForm) => ({
       ...currentForm,
       skillAssignments: Object.fromEntries(
-        defaultEventSkills.map((skill) => {
+        getAssignableEventSkills(currentForm.projectType).map((skill) => {
           const currentAgent =
             currentForm.skillAssignments[skill.id] ??
             currentForm.selectedAgent
@@ -436,7 +462,10 @@ export function HarnessDashboard({
     setForm((currentForm) => ({
       ...currentForm,
       skillAssignments: Object.fromEntries(
-        defaultEventSkills.map((skill) => [skill.id, currentForm.selectedAgent])
+        getAssignableEventSkills(currentForm.projectType).map((skill) => [
+          skill.id,
+          currentForm.selectedAgent
+        ])
       ) as Record<string, AgentKind>
     }))
   }
@@ -571,14 +600,22 @@ export function HarnessDashboard({
             <SlidersHorizontal size={18} />
             <span>
               <strong>
-                {isAgentTask ? "Agent" : "Agent / Skills / Approval Policies"}
+                {isAgentTask
+                  ? "Agent"
+                  : hasApprovalPolicies
+                    ? "Agent / Skills / Approval Policies"
+                    : "Agent / Skills"}
               </strong>
               <small>
                 {isAgentTask
                   ? getAgentLabel(form.selectedAgent)
-                  : `${getAgentLabel(
-                      form.selectedAgent
-                    )} - design and verification gates`}
+                  : hasApprovalPolicies
+                    ? `${getAgentLabel(
+                        form.selectedAgent
+                      )} - design and verification gates`
+                    : `${getAgentLabel(
+                        form.selectedAgent
+                      )} - ${assignmentSkills.length} workflow skills`}
               </small>
             </span>
             <ChevronRight size={18} />
@@ -643,7 +680,9 @@ export function HarnessDashboard({
                           : "Project / Repository / Requirement"
                         : isAgentTask
                           ? "Agent"
-                          : "Agent / Skills / Approval Policies"}
+                          : hasApprovalPolicies
+                            ? "Agent / Skills / Approval Policies"
+                            : "Agent / Skills"}
                     </h2>
                   </div>
                   <button
@@ -673,7 +712,12 @@ export function HarnessDashboard({
                             repository:
                               projectType === "agent_task"
                                 ? ""
-                                : form.repository
+                                : form.repository,
+                            skillAssignments: Object.fromEntries(
+                              getAssignableEventSkills(projectType).map(
+                                (skill) => [skill.id, form.selectedAgent]
+                              )
+                            ) as Record<string, AgentKind>
                           })
                           setBulkStage("all")
                           setMutationError(template.warning)
@@ -847,7 +891,7 @@ export function HarnessDashboard({
                           >
                             <option value="all">All stages</option>
                             {orderedStages
-                              .filter((stage) => stage !== "completed")
+                              .filter((stage) => assignmentStages.includes(stage))
                               .map((stage) => (
                                 <option key={stage} value={stage}>
                                   {stageLabels[stage]}
@@ -954,6 +998,7 @@ export function HarnessDashboard({
                         )}
                       </div>
 
+                      {hasApprovalPolicies ? (
                       <div className="policyGrid assignmentPolicyGrid">
                         <fieldset>
                           <legend>Design Approval Policy</legend>
@@ -975,6 +1020,7 @@ export function HarnessDashboard({
                           />
                         </fieldset>
                       </div>
+                      ) : null}
                     </section>
                     )}
                   </div>

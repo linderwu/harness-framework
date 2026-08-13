@@ -118,6 +118,17 @@ test("compose form gives agent task projects a one-step instruction flow", () =>
   assert.match(dashboard, /!\s*isAgentTask \? \(\s*<label>\s*<span>Repository<\/span>/)
 })
 
+test("compose form uses research-specific workflow skills", () => {
+  assert.match(dashboard, /createResearchEventSkills/)
+  assert.match(dashboard, /function getAssignableEventSkills\(projectType: ProjectType\)/)
+  assert.match(dashboard, /projectType === "research"/)
+  assert.match(dashboard, /skill\.id !== "intake\.requirement" && skill\.id !== "closeout\.archive"/)
+  assert.match(dashboard, /const hasApprovalPolicies = form\.projectType === "development"/)
+  assert.match(dashboard, /"Agent \/ Skills"/)
+  assert.match(dashboard, /\{hasApprovalPolicies \? \(/)
+  assert.match(dashboard, /assignmentStages\.includes\(stage\)/)
+})
+
 test("compose panel exposes workflow mode switch outside workflow setup", () => {
   const composePanel = dashboard.slice(
     dashboard.indexOf('<form className="panel composePanel"'),
