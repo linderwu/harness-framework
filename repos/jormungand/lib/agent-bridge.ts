@@ -42,6 +42,8 @@ interface BridgeResponse {
 
 const bridgeProtocolV2 = "harness-agent-bridge/v0.2"
 const bridgeProtocolV3 = "harness-agent-bridge/v0.3"
+const openClawA2AControlMessage =
+  process.env.OPENCLAW_A2A_CONTROL_MESSAGE ?? "/stop"
 
 export async function invokeConfiguredAgent(
   input: AgentInvocationInput
@@ -266,17 +268,21 @@ async function sendConfiguredAgentControl(
   run: WorkflowRun,
   action: "cancel" | "stop"
 ) {
+  const profile = getAgentProfile(run.selectedAgent)
   const bridgeUrl = getAgentBridgeUrl(run.selectedAgent)
 
-  if (!bridgeUrl) {
+  if (bridgeUrl) {
+    await fetch(new URL(`workflow-runs/${run.id}/${action}`, normalizeUrl(bridgeUrl)), {
+      method: "POST",
+      headers: createBridgeHeaders(run.selectedAgent),
+      signal: AbortSignal.timeout(2000)
+    }).catch(() => undefined)
     return
   }
 
-  await fetch(new URL(`workflow-runs/${run.id}/${action}`, normalizeUrl(bridgeUrl)), {
-    method: "POST",
-    headers: createBridgeHeaders(run.selectedAgent),
-    signal: AbortSignal.timeout(2000)
-  }).catch(() => undefined)
+  if (profile.family === "openclaw") {
+    await sendOpenClawA2AControl(run)
+  }
 }
 
 function normalizeUrl(value: string) {
@@ -350,6 +356,27 @@ async function invokeOpenClawA2A(
       body: `${profile.label} A2A command failed: ${formatError(error)}`
     }
   }
+}
+
+async function sendOpenClawA2AControl(run: WorkflowRun) {
+  const command = getOpenClawA2ACommand(run.selectedAgent)
+
+  if (!command) {
+    return
+  }
+
+  const profile = getAgentProfile(run.selectedAgent)
+  const sessionKey = getOpenClawA2ASessionKey(run.selectedAgent)
+  const model = process.env.OPENCLAW_A2A_MODEL ?? "minimax/MiniMax-M2.7"
+  const protocol = resolveOpenClawA2AProtocol()
+
+  await runCommandWithStdin(command, openClawA2AControlMessage, {
+    OPENCLAW_A2A_AGENT: profile.mainAgent ?? "rowlet",
+    OPENCLAW_A2A_CONTROL_MESSAGE: openClawA2AControlMessage,
+    OPENCLAW_A2A_MODEL: model,
+    OPENCLAW_A2A_PROTOCOL: protocol,
+    OPENCLAW_A2A_SESSION_KEY: sessionKey
+  }).catch(() => undefined)
 }
 
 async function runCommandWithStdin(

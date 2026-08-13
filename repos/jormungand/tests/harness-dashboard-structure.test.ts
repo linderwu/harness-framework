@@ -94,6 +94,23 @@ test("bridge status polling and stale thresholds match the accepted design", () 
   assert.match(dashboard, /const bridgeOfflineFailureThreshold = 2/)
 })
 
+test("agent run rows expose a stop button for active task runs", () => {
+  const runDetail = functionBody("RunDetail")
+
+  assert.match(runDetail, /onStopRun/)
+  assert.match(runDetail, /isActiveAgentRunStatus\(agentRun\.status\)/)
+  assert.match(runDetail, /title="Stop task"/)
+  assert.match(runDetail, /Stop task/)
+})
+
+test("run detail exposes cancel run for nonterminal selected runs", () => {
+  const runDetail = functionBody("RunDetail")
+
+  assert.match(runDetail, /onCancelRun/)
+  assert.match(runDetail, /isCancelableStatus\(run\.status\)/)
+  assert.match(runDetail, /title="Cancel run"/)
+})
+
 test("compose form gives agent task projects a one-step instruction flow", () => {
   assert.match(dashboard, /const isAgentTask = form\.projectType === "agent_task"/)
   assert.match(dashboard, /isAgentTask \? "Instruction" : "Requirement"/)

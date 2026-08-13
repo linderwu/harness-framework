@@ -103,6 +103,13 @@ openclaw agent \
 Use `OPENCLAW_BRIDGE_URL` for an HTTP request/response bridge. Use
 `OPENCLAW_A2A_COMMAND` when you want the persistent session-based A2A transport.
 
+When the dashboard stops or cancels a workflow run through A2A command mode, it
+invokes the same command with a standalone `/stop` message by default. The
+message is sent with the same `OPENCLAW_A2A_SESSION_KEY`, so OpenClaw targets
+the active run for that session. Override the message with
+`OPENCLAW_A2A_CONTROL_MESSAGE` only if the local adapter expects a different
+abort phrase.
+
 The longer-term production direction is a native OpenClaw A2A HTTP endpoint instead of
 the included bridge or stdin command adapter. That endpoint should publish an Agent Card at
 `/.well-known/agent-card.json`, declare JSON-RPC transport, accept

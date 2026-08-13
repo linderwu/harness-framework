@@ -872,6 +872,13 @@ textarea:focus {
   background: #842626;
 }
 
+.compactPanelButton {
+  font-size: 12px;
+  min-height: 30px;
+  padding: 0 10px;
+  white-space: nowrap;
+}
+
 .primaryButton:disabled,
 .stopButton:disabled,
 .dangerButton:disabled {
@@ -1440,17 +1447,18 @@ small,
   align-items: center;
   border-bottom: 1px solid #edf3f8;
   display: flex;
+  gap: 8px;
   justify-content: space-between;
   min-height: 38px;
 }
 
 .gateRow div,
-.agentRow {
+.agentRunInfo {
   gap: 4px;
 }
 
 .gateRow div,
-.agentRow {
+.agentRunInfo {
   display: grid;
 }
 

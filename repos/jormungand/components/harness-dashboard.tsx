@@ -1013,6 +1013,8 @@ export function HarnessDashboard({
               onStartRun={startProjectRun}
               onAdvance={advanceRun}
               onDecideGate={decideGate}
+              onCancelRun={cancelRun}
+              onStopRun={stopRun}
             />
           ) : (
             <div className="panel emptyState">
@@ -1259,7 +1261,9 @@ function ProjectDetail({
   isMutating,
   onStartRun,
   onAdvance,
-  onDecideGate
+  onDecideGate,
+  onCancelRun,
+  onStopRun
 }: {
   overview: ProjectOverview
   selectedRun?: WorkflowRun
@@ -1267,6 +1271,8 @@ function ProjectDetail({
   onStartRun: (project: Project) => void
   onAdvance: (runId: string) => void
   onDecideGate: (gate: ApprovalGate, decision: ApprovalDecision) => void
+  onCancelRun: (run: WorkflowRun) => void
+  onStopRun: (runId: string) => void
 }) {
   const { project } = overview
 
@@ -1378,6 +1384,8 @@ function ProjectDetail({
           isMutating={isMutating}
           run={selectedRun}
           onDecideGate={onDecideGate}
+          onCancelRun={onCancelRun}
+          onStopRun={onStopRun}
         />
       ) : (
         <section className="panel emptyState">
@@ -1392,11 +1400,15 @@ function ProjectDetail({
 function RunDetail({
   isMutating,
   run,
-  onDecideGate
+  onDecideGate,
+  onCancelRun,
+  onStopRun
 }: {
   isMutating: boolean
   run: WorkflowRun
   onDecideGate: (gate: ApprovalGate, decision: ApprovalDecision) => void
+  onCancelRun: (run: WorkflowRun) => void
+  onStopRun: (runId: string) => void
 }) {
   const pendingGate = run.approvalGates.find((gate) => gate.status === "pending")
   const pendingApprovalSkillId = pendingGate
@@ -1446,6 +1458,16 @@ function RunDetail({
           <div className="panelHeader">
             <UserCheck size={18} />
             <h2>Agent Runs</h2>
+            <button
+              className="dangerButton compactPanelButton"
+              disabled={isMutating || !isCancelableStatus(run.status)}
+              onClick={() => onCancelRun(run)}
+              title="Cancel run"
+              type="button"
+            >
+              <Trash2 size={15} />
+              Cancel Run
+            </button>
           </div>
           <div className="agentList">
             {run.agentRuns.length === 0 ? (
@@ -1453,10 +1475,26 @@ function RunDetail({
             ) : (
               run.agentRuns.map((agentRun) => (
                 <div className="agentRow" key={agentRun.id}>
-                  <strong>{stageLabels[agentRun.stage]}</strong>
-                  <small>
-                    {getAgentLabel(agentRun.agent)} - {agentRun.status}
-                  </small>
+                  <span className="agentRunInfo">
+                    <strong>{stageLabels[agentRun.stage]}</strong>
+                    <small>
+                      {getAgentLabel(agentRun.agent)} - {agentRun.status}
+                    </small>
+                  </span>
+                  {isActiveAgentRunStatus(agentRun.status) ? (
+                    <button
+                      className="stopButton compactPanelButton"
+                      disabled={isMutating}
+                      onClick={() => onStopRun(run.id)}
+                      title="Stop task"
+                      type="button"
+                    >
+                      <Square size={14} />
+                      Stop task
+                    </button>
+                  ) : (
+                    <StatusPill status={agentRun.status} />
+                  )}
                 </div>
               ))
             )}
@@ -2317,9 +2355,17 @@ function isStoppableStatus(status: WorkflowRun["status"]) {
 }
 
 function isCancelableStatus(status: WorkflowRun["status"]) {
-  return status !== "completed"
+  return status !== "completed" && status !== "failed" && status !== "cancelled"
 }
 
 function isTerminalStatus(status: WorkflowRun["status"]) {
   return status === "completed" || status === "failed" || status === "cancelled"
+}
+
+function isActiveAgentRunStatus(status: WorkflowRun["status"]) {
+  return (
+    status === "pending" ||
+    status === "running" ||
+    status === "waiting_for_approval"
+  )
 }
