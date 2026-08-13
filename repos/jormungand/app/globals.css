@@ -283,8 +283,34 @@ h2 {
   gap: 6px;
   justify-content: center;
   min-height: 34px;
-  padding: 0 6px;
+  padding: 0;
+  position: relative;
+  width: 34px;
   transition: background 160ms ease, border-color 160ms ease, color 160ms ease, transform 160ms ease;
+}
+
+.modeDock button span {
+  background: rgba(8, 24, 40, 0.96);
+  border: 1px solid rgba(103, 232, 249, 0.42);
+  border-radius: 6px;
+  color: #f8fbff;
+  font-size: 10px;
+  left: 50%;
+  opacity: 0;
+  padding: 5px 7px;
+  pointer-events: none;
+  position: absolute;
+  top: calc(100% + 8px);
+  transform: translate(-50%, -4px);
+  transition: opacity 150ms ease, transform 150ms ease;
+  white-space: nowrap;
+  z-index: 40;
+}
+
+.modeDock button:hover span,
+.modeDock button:focus-visible span {
+  opacity: 1;
+  transform: translate(-50%, 0);
 }
 
 .modeDock button:hover,

@@ -143,5 +143,6 @@ test("compose panel exposes all project modes as a global mode surface", () => {
   assert.match(composePanel, /className="modeSurface"/)
   assert.match(composePanel, /className="modeDock"/)
   assert.match(composePanel, /projectTypeOptions.map/)
+  assert.match(composePanel, /aria-label=\{option\.label\}/)
   assert.match(dashboard, /className=\{`shell mode-\$\{form\.projectType\}`\}/)
 })

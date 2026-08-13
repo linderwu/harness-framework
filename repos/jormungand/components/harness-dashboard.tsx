@@ -657,6 +657,7 @@ export function HarnessDashboard({
                 const Icon = visual.icon
                 return (
                   <button
+                    aria-label={option.label}
                     aria-pressed={form.projectType === option.type}
                     className={form.projectType === option.type ? "selected" : ""}
                     key={option.type}
@@ -664,7 +665,7 @@ export function HarnessDashboard({
                     type="button"
                   >
                     <Icon size={16} />
-                    {option.label}
+                    <span>{option.label}</span>
                   </button>
                 )
               })}
