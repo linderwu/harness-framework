@@ -659,9 +659,15 @@ function formatFinalInstruction(payload) {
 
   if (skill.id === "agent_task.response") {
     return [
+      "Complete the requested task now, using the original requirement as the work request.",
       "Return the complete answer body for the user's instruction.",
+      "Your final message must contain the full report or completed answer, not a status update.",
       "Do not return only artifact metadata.",
+      "Do not merely confirm or preserve the instruction.",
       "Do not replace the answer with fields such as artifact_type, stage, workflow_run, idempotency_key, or original_instruction.",
+      "Do not say that the instruction was preserved; perform the instruction and include the result.",
+      "Do not write the answer only to a file; include it in the final message.",
+      "The final message itself is the artifact content that will be published to raw-agent-response.",
       "The harness will store your final message as the raw Agent Response artifact."
     ].join("\n")
   }

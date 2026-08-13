@@ -28,6 +28,11 @@ test("Codex bridge asks Agent Tasks for a complete answer body", () => {
   assert.match(codexBridgeSource, /skill\.id === "agent_task\.response"/)
   assert.match(codexBridgeSource, /Return the complete answer body/)
   assert.match(codexBridgeSource, /Do not return only artifact metadata/)
+  assert.match(codexBridgeSource, /Complete the requested task now/)
+  assert.match(codexBridgeSource, /Do not merely confirm or preserve the instruction/)
+  assert.match(codexBridgeSource, /must contain the full report/)
+  assert.match(codexBridgeSource, /Do not write the answer only to a file/)
+  assert.match(codexBridgeSource, /final message itself is the artifact content/)
 })
 
 test("OpenClaw bridge accepts the compatibility token and enforces its local skill lock", () => {
