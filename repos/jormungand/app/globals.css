@@ -211,6 +211,174 @@ h2 {
   color: #bfd2e5;
 }
 
+.projectTypeSwitcher {
+  display: grid;
+  gap: 12px;
+}
+
+.projectTypeHeader {
+  align-items: end;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.projectTypeHeader h3 {
+  color: #f8fbff;
+  font-size: 16px;
+  margin: 0;
+}
+
+.projectTypeSignal {
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  padding: 5px 8px;
+  text-transform: uppercase;
+}
+
+.projectTypeGrid {
+  display: grid;
+  gap: 7px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.projectTypeCard {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(203, 213, 225, 0.2);
+  border-radius: 8px;
+  color: #d5e5f4;
+  display: grid;
+  gap: 6px;
+  min-height: 92px;
+  padding: 10px 8px;
+  text-align: left;
+  transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease,
+    background 160ms ease;
+}
+
+.projectTypeCard:hover,
+.projectTypeCard.active {
+  background: rgba(255, 255, 255, 0.13);
+  border-color: #67e8f9;
+  box-shadow: 0 0 22px rgba(34, 211, 238, 0.16);
+  transform: translateY(-2px);
+}
+
+.projectTypeCard svg {
+  color: #67e8f9;
+}
+
+.projectTypeCard strong {
+  color: #f8fbff;
+  font-size: 12px;
+}
+
+.projectTypeCard small {
+  color: #a9bfd4;
+  font-size: 10px;
+  line-height: 1.35;
+}
+
+.projectTypeCard.violet svg,
+.projectTypeSignal.violet {
+  color: #c4b5fd;
+}
+
+.projectTypeCard.orange svg,
+.projectTypeSignal.orange {
+  color: #fdba74;
+}
+
+.projectTypeCard.green svg,
+.projectTypeSignal.green {
+  color: #86efac;
+}
+
+.projectTypeCard.cyan svg,
+.projectTypeSignal.cyan {
+  color: #67e8f9;
+}
+
+.projectTypeCard.red svg,
+.projectTypeSignal.red {
+  color: #fca5a5;
+}
+
+.projectTypeCard.blue svg,
+.projectTypeSignal.blue {
+  color: #93c5fd;
+}
+
+.workflowPreview {
+  background: rgba(3, 12, 24, 0.28);
+  border: 1px solid rgba(103, 232, 249, 0.16);
+  border-radius: 8px;
+  display: grid;
+  gap: 9px;
+  padding: 10px;
+}
+
+.workflowPreviewLabel {
+  align-items: center;
+  color: #8faac1;
+  display: flex;
+  font-size: 10px;
+  font-weight: 900;
+  justify-content: space-between;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.workflowPreviewLabel small {
+  color: #67e8f9;
+  font-size: 10px;
+}
+
+.workflowPreviewTrack {
+  align-items: center;
+  display: flex;
+  gap: 5px;
+  overflow: hidden;
+}
+
+.workflowPreviewStage {
+  align-items: center;
+  color: #e5f4ff;
+  display: inline-flex;
+  flex: 1 1 0;
+  font-size: 10px;
+  font-weight: 800;
+  gap: 5px;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.workflowPreviewStage:not(:last-child)::after {
+  background: rgba(103, 232, 249, 0.34);
+  content: "";
+  height: 1px;
+  margin-left: auto;
+  width: 12px;
+}
+
+.workflowPreviewStage i {
+  align-items: center;
+  background: #164e63;
+  border: 1px solid rgba(103, 232, 249, 0.5);
+  border-radius: 50%;
+  color: #a5f3fc;
+  display: inline-flex;
+  flex: 0 0 20px;
+  font-size: 10px;
+  font-style: normal;
+  height: 20px;
+  justify-content: center;
+  width: 20px;
+}
+
 .workflowModeSwitch {
   background: rgba(6, 18, 32, 0.34);
   border: 1px solid rgba(203, 213, 225, 0.2);
@@ -1860,6 +2028,10 @@ pre {
     grid-template-columns: repeat(3, minmax(80px, 1fr));
   }
 
+  .projectTypeGrid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
   .assignmentToolbar {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -1905,6 +2077,23 @@ pre {
 
   .runActionRow {
     grid-template-columns: 1fr;
+  }
+
+  .projectTypeGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .workflowPreviewTrack {
+    align-items: start;
+    flex-direction: column;
+  }
+
+  .workflowPreviewStage {
+    flex: 0 0 auto;
+  }
+
+  .workflowPreviewStage:not(:last-child)::after {
+    display: none;
   }
 
   .composeOverlay {

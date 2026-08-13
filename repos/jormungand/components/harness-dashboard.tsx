@@ -4,7 +4,10 @@ import Image from "next/image"
 import { createPortal } from "react-dom"
 import {
   Bot,
+  BookOpenText,
+  Bug,
   Check,
+  Code2,
   ChevronDown,
   ChevronRight,
   CircleDot,
@@ -131,6 +134,47 @@ interface AgentHealthResponse {
 
 const sampleRequirement =
   "Build a Jormungandr dashboard that can select Codex/OpenClaw agents and control design/verification with approval gates."
+
+const projectTypeVisuals: Record<
+  ProjectType,
+  { icon: typeof ClipboardList; accent: string; description: string }
+> = {
+  research: {
+    icon: Search,
+    accent: "violet",
+    description: "Collect evidence and produce a research report."
+  },
+  development: {
+    icon: Code2,
+    accent: "orange",
+    description: "Ship a feature from intake through verification."
+  },
+  testing: {
+    icon: Check,
+    accent: "green",
+    description: "Plan, execute, and document test coverage."
+  },
+  documentation: {
+    icon: BookOpenText,
+    accent: "cyan",
+    description: "Draft, review, and publish clear documentation."
+  },
+  diagnosis: {
+    icon: Bug,
+    accent: "red",
+    description: "Reproduce, diagnose, and verify a problem."
+  },
+  decision: {
+    icon: GitBranch,
+    accent: "blue",
+    description: "Compare options and record a confident decision."
+  },
+  agent_task: {
+    icon: Bot,
+    accent: "violet",
+    description: "Send a focused instruction to an agent."
+  }
+}
 
 export function HarnessDashboard({
   initialState
@@ -432,6 +476,24 @@ export function HarnessDashboard({
     setMutationError(undefined)
   }
 
+  function selectProjectType(projectType: ProjectType) {
+    const template = getProjectTemplate(projectType)
+
+    setForm((currentForm) => ({
+      ...currentForm,
+      projectType,
+      repository: projectType === "agent_task" ? "" : currentForm.repository,
+      skillAssignments: Object.fromEntries(
+        getAssignableEventSkills(projectType).map((skill) => [
+          skill.id,
+          currentForm.selectedAgent
+        ])
+      ) as Record<string, AgentKind>
+    }))
+    setBulkStage("all")
+    setMutationError(template.warning)
+  }
+
   function updateSkillAssignment(skillId: string, agent: AgentKind) {
     setForm({
       ...form,
@@ -697,39 +759,52 @@ export function HarnessDashboard({
 
                 {openComposeSection === "requirement" ? (
                   <div className="composeSheetBody">
-                    <label>
-                      <span>Project Type</span>
-                      <select
-                        className="plainSelect"
-                        value={form.projectType}
-                        onChange={(event) => {
-                          const projectType = event.target.value as ProjectType
-                          const template = getProjectTemplate(projectType)
+                    <section className="projectTypeSwitcher" aria-labelledby="project-type-heading">
+                      <div className="projectTypeHeader">
+                        <div>
+                          <p className="eyebrow">Workflow Preset</p>
+                          <h3 id="project-type-heading">Choose your mission</h3>
+                        </div>
+                        <span className={`projectTypeSignal ${projectTypeVisuals[form.projectType].accent}`}>
+                          {getProjectTemplate(form.projectType).label}
+                        </span>
+                      </div>
+                      <div className="projectTypeGrid">
+                        {projectTypeOptions.map((option) => {
+                          const visual = projectTypeVisuals[option.type]
+                          const Icon = visual.icon
+                          const isActive = form.projectType === option.type
 
-                          setForm({
-                            ...form,
-                            projectType,
-                            repository:
-                              projectType === "agent_task"
-                                ? ""
-                                : form.repository,
-                            skillAssignments: Object.fromEntries(
-                              getAssignableEventSkills(projectType).map(
-                                (skill) => [skill.id, form.selectedAgent]
-                              )
-                            ) as Record<string, AgentKind>
-                          })
-                          setBulkStage("all")
-                          setMutationError(template.warning)
-                        }}
-                      >
-                        {projectTypeOptions.map((option) => (
-                          <option key={option.type} value={option.type}>
-                            {option.label}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
+                          return (
+                            <button
+                              aria-pressed={isActive}
+                              className={`projectTypeCard ${isActive ? "active" : ""} ${visual.accent}`}
+                              key={option.type}
+                              onClick={() => selectProjectType(option.type)}
+                              type="button"
+                            >
+                              <Icon size={18} />
+                              <strong>{option.label}</strong>
+                              <small>{visual.description}</small>
+                            </button>
+                          )
+                        })}
+                      </div>
+                      <div className="workflowPreview">
+                        <div className="workflowPreviewLabel">
+                          <span>Live workflow</span>
+                          <small>{getProjectTemplate(form.projectType).phases.length} phases</small>
+                        </div>
+                        <div className="workflowPreviewTrack">
+                          {getProjectTemplate(form.projectType).phases.map((phase, index) => (
+                            <span className="workflowPreviewStage" key={phase}>
+                              <i>{index + 1}</i>
+                              {phase}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    </section>
 
                     <label>
                       <span>Project</span>
