@@ -367,6 +367,95 @@ test("agent task workflow records full artifact content over a short final messa
   assert.doesNotMatch(completedRun.artifacts[0].body, /Raw Agent Response\nSaved artifact\./)
 })
 
+test("agent task workflow rejects metadata-only response envelopes", async () => {
+  const project = createProject({
+    name: "Metadata Envelope",
+    type: "agent_task",
+    goal: "Research the full answer.",
+    repository: "",
+    source: "dashboard",
+    contextFiles: []
+  })
+  const run = createWorkflowRun({
+    projectId: project.id,
+    projectName: project.name,
+    projectType: project.type,
+    repository: project.repository,
+    requirement: project.goal,
+    contextFiles: project.contextFiles,
+    selectedAgent: "codex",
+    designApprovalActor: "human",
+    verificationApprovalActor: "human"
+  })
+  let publishCalls = 0
+
+  const completedRun = await advanceWorkflow(run, {
+    invokeAgent: async () => ({
+      status: "completed",
+      source: "codex-bridge",
+      body: [
+        "artifact_type: agent_task.response",
+        "project: Metadata Envelope",
+        "workflow_run: run-1",
+        "stage: intake",
+        "status: completed",
+        "",
+        "original_instruction: Research the full answer.",
+        "",
+        "agent_response:"
+      ].join("\n")
+    }),
+    publishAgentTaskRecord: async () => {
+      publishCalls += 1
+      return { status: "published" }
+    }
+  })
+
+  assert.equal(completedRun.status, "failed")
+  assert.equal(publishCalls, 0)
+  assert.match(completedRun.artifacts[0].body, /agent_response:/)
+  assert.match(completedRun.artifacts[0].body, /\*\*Closeout Status\*\*\nfailed/)
+})
+
+test("agent task workflow extracts populated response envelopes", async () => {
+  const project = createProject({
+    name: "Populated Envelope",
+    type: "agent_task",
+    goal: "Research the full answer.",
+    repository: "",
+    source: "dashboard",
+    contextFiles: []
+  })
+  const run = createWorkflowRun({
+    projectId: project.id,
+    projectName: project.name,
+    projectType: project.type,
+    repository: project.repository,
+    requirement: project.goal,
+    contextFiles: project.contextFiles,
+    selectedAgent: "codex",
+    designApprovalActor: "human",
+    verificationApprovalActor: "human"
+  })
+
+  const completedRun = await advanceWorkflow(run, {
+    invokeAgent: async () => ({
+      status: "completed",
+      source: "codex-bridge",
+      body: [
+        "artifact_type: agent_task.response",
+        "workflow_run: run-1",
+        "agent_response:",
+        "Full report body."
+      ].join("\n")
+    })
+  })
+
+  assert.equal(completedRun.status, "completed")
+  assert.match(completedRun.artifacts[0].body, /Raw Agent Response\*\*\nFull report body\./)
+  assert.doesNotMatch(completedRun.artifacts[0].body, /artifact_type:/)
+})
+
 test("agent task workflow keeps completed response when record publishing fails", async () => {
   const project = createProject({
     name: "Record Failure",

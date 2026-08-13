@@ -379,22 +379,20 @@ export function createAgentTaskEventSkills(): WorkflowEventSkill[] {
       eventType: "closeout",
       stage: "intake",
       name: "Agent Task Response",
-      purpose: "Run one user instruction and display the full agent response while preserving structured closeout fields.",
+      purpose: "Run one user instruction and display the full agent response.",
       trigger: "A dashboard agent task is started.",
       allowedActors: ["codex", ...openClawAgentKinds],
       inputs: ["user instruction", "optional context files"],
-      outputs: ["mixed-mode agent response artifact", "completed task run"],
+      outputs: ["completed agent response", "completed task run"],
       constraints: [
         "Do not require a repository.",
         "Do not open planning, design, implementation, or verification gates.",
-        "Preserve the original instruction with the completed response.",
-        "Display the full raw agent response and also provide structured fields for dashboard indexing."
+        "Complete the instruction and return the response body."
       ],
-      gates: ["Task is complete when the mixed-mode agent response is captured."],
+      gates: ["Task is complete when the response body is captured."],
       knowledgeSources: ["dashboard instruction", "attached context files"],
       verificationRules: [
-        "Agent response artifact is non-empty.",
-        "Artifact contains Original Instruction, Raw Agent Response, Agent Response, and Closeout Status sections."
+        "Agent response body is non-empty."
       ]
     }
   ]
@@ -894,21 +892,27 @@ async function advanceAgentTask(
     options.resolveRuntimeSkillBundles
   )
   const responseArtifact = run.artifacts[artifactStartIndex]
+  const rawResponse = getAgentTaskRawResponseBody(taskResult)
+  const invalidResponse =
+    taskResult.status !== "failed" && isAgentTaskMetadataOnlyResponse(rawResponse)
 
   if (responseArtifact) {
     responseArtifact.body = formatAgentTaskMixedResponse({
       instruction: run.requirement,
-      rawResponse: getAgentTaskRawResponseBody(taskResult),
-      closeoutStatus: taskResult.status === "failed" ? "failed" : "complete"
+      rawResponse,
+      closeoutStatus:
+        taskResult.status === "failed" || invalidResponse ? "failed" : "complete"
     })
   }
 
-  if (taskResult.status !== "failed") {
+  if (taskResult.status !== "failed" && !invalidResponse) {
     run.currentStage = "completed"
     run.status = "completed"
+  } else if (invalidResponse) {
+    run.status = "failed"
   }
 
-  if (taskResult.status !== "failed" && options.publishAgentTaskRecord) {
+  if (taskResult.status !== "failed" && !invalidResponse && options.publishAgentTaskRecord) {
     await publishCompletedAgentTaskRecord(run, options.publishAgentTaskRecord)
   }
 
@@ -988,8 +992,40 @@ function getAgentTaskRawResponseBody(taskResult: AgentArtifactResult) {
   const firstArtifact = responseArtifact ?? (taskResult.artifacts ?? []).find(
     (artifact) => artifact.body.trim()
   )
+  const rawBody = firstArtifact?.body.trim() ?? taskResult.body
 
-  return firstArtifact?.body.trim() ?? taskResult.body
+  return extractAgentTaskResponseField(rawBody) || rawBody
+}
+
+function isAgentTaskMetadataOnlyResponse(body: string) {
+  const normalized = body.trim()
+
+  if (!normalized) {
+    return true
+  }
+
+  const hasMetadataFields =
+    /\bartifact_type\s*:/i.test(normalized) &&
+    /\bworkflow_run\s*:/i.test(normalized)
+  const agentResponseMatch = normalized.match(/\bagent_response\s*:\s*([\s\S]*)/i)
+  const agentResponseBody = agentResponseMatch?.[1]
+    ?.replace(/\*\*Closeout Status\*\*[\s\S]*$/i, "")
+    .trim()
+
+  return hasMetadataFields && (!agentResponseMatch || !agentResponseBody)
+}
+
+function extractAgentTaskResponseField(body: string) {
+  const normalized = body.trim()
+  const hasMetadataFields =
+    /\bartifact_type\s*:/i.test(normalized) &&
+    /\bworkflow_run\s*:/i.test(normalized)
+  const agentResponseMatch = normalized.match(/\bagent_response\s*:\s*([\s\S]*)/i)
+  const agentResponseBody = agentResponseMatch?.[1]
+    ?.replace(/\*\*Closeout Status\*\*[\s\S]*$/i, "")
+    .trim()
+
+  return hasMetadataFields ? agentResponseBody ?? "" : ""
 }
 
 export function decideApprovalGate(
