@@ -3,7 +3,8 @@ import test from "node:test"
 import {
   formatAgentTaskRecordMarkdown,
   getAgentTaskRecordPath,
-  getAgentTaskResponseArtifact
+  getAgentTaskResponseArtifact,
+  publishAgentTaskResponseRecord
 } from "../lib/agent-response-records"
 import type { WorkflowRun } from "../lib/types"
 
@@ -110,4 +111,35 @@ test("non-agent-task runs are not formatted as agent task records", () => {
 
 test("runs without an Agent Response artifact are not formatted", () => {
   assert.equal(formatAgentTaskRecordMarkdown(run({ artifacts: [] })), undefined)
+})
+
+test("publishing an agent task record uses the configured repository and deterministic path", async () => {
+  const calls: Array<{
+    repository: string
+    path: string
+    content: string
+    message: string
+  }> = []
+
+  const result = await publishAgentTaskResponseRecord(run(), {
+    upsertFile: async (input) => {
+      calls.push(input)
+      return {
+        status: "published",
+        repository: "linderwu/jormungand-record",
+        path: input.path,
+        htmlUrl: `https://github.com/linderwu/jormungand-record/blob/main/${input.path}`
+      }
+    }
+  })
+
+  assert.equal(result.status, "published")
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0].repository, "jormungand-record")
+  assert.equal(calls[0].path, "records/2026/08/13/run-123.md")
+  assert.match(
+    calls[0].message,
+    /Record Agent Task response for Summarize Notes/
+  )
+  assert.match(calls[0].content, /# Agent Task Response/)
 })

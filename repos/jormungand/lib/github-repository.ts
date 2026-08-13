@@ -1,5 +1,5 @@
 import { spawn } from "child_process"
-import { ouroborosAgentContract } from "@/lib/ouroboros-agent-contract"
+import { ouroborosAgentContract } from "./ouroboros-agent-contract"
 
 interface GitHubRepositoryRef {
   owner?: string
@@ -12,6 +12,33 @@ interface GitHubApiRepository {
   owner?: {
     login?: string
   }
+}
+
+interface GitHubContentResponse {
+  content?: {
+    html_url?: string
+  }
+}
+
+interface GitHubFileResponse {
+  sha?: string
+  content?: {
+    html_url?: string
+  }
+}
+
+export interface GitHubFileUpsertInput {
+  repository: string
+  path: string
+  content: string
+  message: string
+}
+
+export interface GitHubFileUpsertResult {
+  status: "published" | "unchanged"
+  repository: string
+  path: string
+  htmlUrl?: string
 }
 
 export class GitHubRepositoryError extends Error {
@@ -38,6 +65,19 @@ export async function ensureGitHubRepository(repository: string) {
   }
 
   return ensureRepositoryWithCli(repo)
+}
+
+export async function upsertGitHubFile(
+  input: GitHubFileUpsertInput
+): Promise<GitHubFileUpsertResult> {
+  const fullName = await ensureGitHubRepository(input.repository)
+  const token = process.env.GITHUB_TOKEN ?? process.env.GH_TOKEN
+
+  if (token) {
+    return upsertGitHubFileWithApi({ ...input, repository: fullName }, token)
+  }
+
+  return upsertGitHubFileWithCli({ ...input, repository: fullName })
 }
 
 function parseRepositoryRef(value: string): GitHubRepositoryRef | undefined {
@@ -211,6 +251,90 @@ function githubFetch(url: string, token: string, init: RequestInit = {}) {
   })
 }
 
+async function upsertGitHubFileWithApi(
+  input: GitHubFileUpsertInput,
+  token: string
+): Promise<GitHubFileUpsertResult> {
+  const current = await githubFetch(
+    `https://api.github.com/repos/${input.repository}/contents/${encodeGitHubPath(input.path)}`,
+    token
+  )
+  let sha: string | undefined
+  let htmlUrl: string | undefined
+
+  if (current.ok) {
+    const data = (await current.json()) as GitHubFileResponse
+    sha = data.sha
+    htmlUrl = data.content?.html_url
+  } else if (current.status !== 404) {
+    throw new GitHubRepositoryError(
+      `Could not check ${input.path} in ${input.repository}: HTTP ${current.status}.`,
+      current.status
+    )
+  }
+
+  if (sha && (await remoteFileMatches(input, token))) {
+    return {
+      status: "unchanged",
+      repository: input.repository,
+      path: input.path,
+      htmlUrl
+    }
+  }
+
+  const response = await githubFetch(
+    `https://api.github.com/repos/${input.repository}/contents/${encodeGitHubPath(input.path)}`,
+    token,
+    {
+      method: "PUT",
+      body: JSON.stringify({
+        message: input.message,
+        content: Buffer.from(input.content, "utf8").toString("base64"),
+        sha
+      })
+    }
+  )
+
+  if (!response.ok) {
+    const details = await response.text().catch(() => "")
+    throw new GitHubRepositoryError(
+      `Could not write ${input.path} in ${input.repository}: HTTP ${response.status}${details ? ` ${details}` : ""}`,
+      response.status
+    )
+  }
+
+  const data = (await response.json()) as GitHubContentResponse
+
+  return {
+    status: "published",
+    repository: input.repository,
+    path: input.path,
+    htmlUrl: data.content?.html_url
+  }
+}
+
+async function remoteFileMatches(input: GitHubFileUpsertInput, token: string) {
+  const response = await githubFetch(
+    `https://raw.githubusercontent.com/${input.repository}/HEAD/${input.path}`,
+    token,
+    {
+      headers: {
+        Accept: "text/plain"
+      }
+    }
+  )
+
+  if (!response.ok) {
+    return false
+  }
+
+  return (await response.text()) === input.content
+}
+
+function encodeGitHubPath(filePath: string) {
+  return filePath.split("/").map(encodeURIComponent).join("/")
+}
+
 function formatRepositoryFullName(repo: GitHubApiRepository) {
   if (repo.full_name) {
     return repo.full_name
@@ -245,6 +369,69 @@ async function ensureRepositoryWithCli(repo: GitHubRepositoryRef) {
   await runGh(["repo", "create", fullName, visibility, "--add-readme"])
   await seedRepositoryAgentContractWithCli(fullName)
   return fullName
+}
+
+async function upsertGitHubFileWithCli(
+  input: GitHubFileUpsertInput
+): Promise<GitHubFileUpsertResult> {
+  const current = await runCommand("gh", [
+    "api",
+    `repos/${input.repository}/contents/${input.path}`,
+    "--jq",
+    ".sha"
+  ])
+  const sha = current.exitCode === 0 ? current.stdout.trim() : undefined
+
+  if (sha && (await remoteFileMatchesWithCli(input))) {
+    return {
+      status: "unchanged",
+      repository: input.repository,
+      path: input.path,
+      htmlUrl: `https://github.com/${input.repository}/blob/HEAD/${input.path}`
+    }
+  }
+
+  const args = [
+    "api",
+    "-X",
+    "PUT",
+    `repos/${input.repository}/contents/${input.path}`,
+    "-f",
+    `message=${input.message}`,
+    "-f",
+    `content=${Buffer.from(input.content, "utf8").toString("base64")}`
+  ]
+
+  if (sha) {
+    args.push("-f", `sha=${sha}`)
+  }
+
+  await runGh(args)
+
+  return {
+    status: "published",
+    repository: input.repository,
+    path: input.path,
+    htmlUrl: `https://github.com/${input.repository}/blob/HEAD/${input.path}`
+  }
+}
+
+async function remoteFileMatchesWithCli(input: GitHubFileUpsertInput) {
+  const response = await runCommand("gh", [
+    "api",
+    `repos/${input.repository}/contents/${input.path}`,
+    "--jq",
+    ".content"
+  ])
+
+  if (response.exitCode !== 0) {
+    return false
+  }
+
+  const normalized = response.stdout.replace(/\s/g, "")
+  const current = Buffer.from(normalized, "base64").toString("utf8")
+
+  return current === input.content
 }
 
 async function seedRepositoryAgentContract(fullName: string, token: string) {

@@ -1,9 +1,26 @@
+import {
+  upsertGitHubFile,
+  type GitHubFileUpsertInput,
+  type GitHubFileUpsertResult
+} from "./github-repository"
 import type { Artifact, WorkflowRun } from "./types"
 
 export interface AgentTaskRecord {
   path: string
   content: string
 }
+
+export interface AgentTaskRecordPublishOptions {
+  repository?: string
+  upsertFile?: (input: GitHubFileUpsertInput) => Promise<GitHubFileUpsertResult>
+}
+
+export type AgentTaskRecordPublishResult =
+  | GitHubFileUpsertResult
+  | {
+      status: "skipped"
+      reason: "not_agent_task" | "missing_response_artifact"
+    }
 
 export function getAgentTaskResponseArtifact(run: WorkflowRun) {
   if (run.projectType !== "agent_task") {
@@ -75,6 +92,34 @@ export function createAgentTaskRecord(
     path: getAgentTaskRecordPath(run),
     content
   }
+}
+
+export async function publishAgentTaskResponseRecord(
+  run: WorkflowRun,
+  options: AgentTaskRecordPublishOptions = {}
+): Promise<AgentTaskRecordPublishResult> {
+  if (run.projectType !== "agent_task") {
+    return { status: "skipped", reason: "not_agent_task" }
+  }
+
+  const record = createAgentTaskRecord(run)
+
+  if (!record) {
+    return { status: "skipped", reason: "missing_response_artifact" }
+  }
+
+  const repository =
+    options.repository ??
+    process.env.JORMUNGAND_RECORD_REPOSITORY ??
+    "jormungand-record"
+  const upsertFile = options.upsertFile ?? upsertGitHubFile
+
+  return upsertFile({
+    repository,
+    path: record.path,
+    content: record.content,
+    message: `Record Agent Task response for ${run.projectName}`
+  })
 }
 
 function parseMixedResponseArtifact(artifact: Artifact) {
