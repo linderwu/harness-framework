@@ -26,6 +26,7 @@ const runtimeSkillLock = loadRuntimeSkillLock()
 const activeRuns = new Map()
 const activeWorkflowRuns = new Map()
 const activeIdempotencyKeys = new Map()
+const completedIdempotencyRuns = new Map()
 
 if (!isLoopbackHost(host) && !token) {
   throw new Error("OPENCLAW_BRIDGE_TOKEN is required for non-loopback binding")
@@ -66,6 +67,33 @@ const server = http.createServer(async (request, response) => {
       return
     }
 
+    const idempotencyMatch = requestUrl.pathname.match(
+      /^\/agent-runs\/by-idempotency\/(.+)$/
+    )
+
+    if (request.method === "GET" && idempotencyMatch) {
+      const idempotencyKey = decodeURIComponent(idempotencyMatch[1])
+      const activeRunId = activeIdempotencyKeys.get(idempotencyKey)
+      const completedRun = completedIdempotencyRuns.get(idempotencyKey)
+
+      if (activeRunId) {
+        sendJson(response, 200, {
+          id: activeRunId,
+          idempotencyKey,
+          status: "running"
+        })
+        return
+      }
+
+      if (completedRun) {
+        sendJson(response, 200, completedRun)
+        return
+      }
+
+      sendJson(response, 404, { error: "agent run not found", idempotencyKey })
+      return
+    }
+
     if (request.method !== "POST" || requestUrl.pathname !== "/agent-runs") {
       sendJson(response, 404, { error: "not found" })
       return
@@ -101,7 +129,7 @@ const server = http.createServer(async (request, response) => {
     )
 
     if (failedRuntimeBundle) {
-      sendJson(response, 200, {
+      const failedResponse = {
         id,
         idempotencyKey,
         startedAt,
@@ -111,7 +139,9 @@ const server = http.createServer(async (request, response) => {
         statusMessage: `Runtime skill installation failed: ${failedRuntimeBundle.errorCode}.`,
         capabilities: bridgeCapabilities(),
         runtimeSkillBundleResults
-      })
+      }
+      rememberCompletedRun(idempotencyKey, failedResponse)
+      sendJson(response, 200, failedResponse)
       return
     }
 
@@ -146,7 +176,7 @@ const server = http.createServer(async (request, response) => {
       }
     })
 
-    sendJson(response, 200, {
+    const completedResponse = {
       id,
       idempotencyKey,
       startedAt,
@@ -154,7 +184,9 @@ const server = http.createServer(async (request, response) => {
       capabilities: bridgeCapabilities(),
       runtimeSkillBundleResults,
       ...result
-    })
+    }
+    rememberCompletedRun(idempotencyKey, completedResponse)
+    sendJson(response, 200, completedResponse)
   } catch (error) {
     sendJson(response, 500, { error: formatError(error) })
   }
@@ -521,7 +553,14 @@ function buildOpenClawMessage(payload, context) {
 function normalizeOpenClawAgent(mainAgent, executor) {
   const value = mainAgent || String(executor ?? "").replace(/^openclaw\./, "")
 
-  return ["rowlet", "roaringmoon", "charizard", "mrmime"].includes(value)
+  return [
+    "rowlet",
+    "roaringmoon",
+    "charizard",
+    "mrmime",
+    "mrmine",
+    "gengar"
+  ].includes(value)
     ? value
     : "rowlet"
 }
@@ -575,9 +614,21 @@ function bridgeCapabilities() {
     "cancel",
     "stop",
     "idempotency-key",
+    "idempotency-recovery",
     "text-output",
     "runtime-skill-bundles"
   ]
+}
+
+function rememberCompletedRun(idempotencyKey, result) {
+  if (!idempotencyKey) {
+    return
+  }
+
+  completedIdempotencyRuns.set(idempotencyKey, result)
+  while (completedIdempotencyRuns.size > 100) {
+    completedIdempotencyRuns.delete(completedIdempotencyRuns.keys().next().value)
+  }
 }
 
 function isLoopbackHost(value) {

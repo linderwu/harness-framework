@@ -35,6 +35,24 @@ export const agentProfiles = [
     label: "Charizard",
     family: "openclaw",
     mainAgent: "charizard"
+  },
+  {
+    id: "openclaw.mrmime",
+    label: "Mr. Mime",
+    family: "openclaw",
+    mainAgent: "mrmime"
+  },
+  {
+    id: "openclaw.mrmine",
+    label: "Mr. Mine",
+    family: "openclaw",
+    mainAgent: "mrmine"
+  },
+  {
+    id: "openclaw.gengar",
+    label: "Gengar",
+    family: "openclaw",
+    mainAgent: "gengar"
   }
 ] as const satisfies readonly AgentProfile[]
 

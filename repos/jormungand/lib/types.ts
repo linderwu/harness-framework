@@ -34,7 +34,13 @@ export type ProjectStatus =
   | "cancelled"
   | "completed"
 
-export type OpenClawMainAgent = "rowlet" | "roaringmoon" | "charizard"
+export type OpenClawMainAgent =
+  | "rowlet"
+  | "roaringmoon"
+  | "charizard"
+  | "mrmime"
+  | "mrmine"
+  | "gengar"
 
 export type AgentKind =
   | "codex"

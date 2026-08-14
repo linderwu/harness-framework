@@ -9,7 +9,15 @@ test("manual is not offered as an executor profile", () => {
   )
   assert.deepEqual(
     agentProfiles.map((agent) => agent.family),
-    ["codex", "openclaw", "openclaw", "openclaw"]
+    [
+      "codex",
+      "openclaw",
+      "openclaw",
+      "openclaw",
+      "openclaw",
+      "openclaw",
+      "openclaw"
+    ]
   )
 })
 

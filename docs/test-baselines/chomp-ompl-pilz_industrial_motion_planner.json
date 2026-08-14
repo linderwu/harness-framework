@@ -1,0 +1,81 @@
+{
+  "capturedAt": "2026-08-14",
+  "source": "https://jormungand.zeabur.app/",
+  "projectName": "study & tell the difference between of them chomp ompl pilz_industrial_motion_planner",
+  "projectType": "research",
+  "repository": "linderwu/motion_planning_pipelines_study",
+  "requirement": "study & tell the difference between of them chomp ompl pilz_industrial_motion_planner",
+  "status": "failed",
+  "stage": "plan",
+  "progress": {
+    "brief": 100,
+    "prompt": 68,
+    "research": 0,
+    "completed": 0
+  },
+  "contextFiles": [],
+  "approvalGates": [],
+  "artifacts": [
+    {
+      "title": "Research Intake",
+      "stage": "intake",
+      "type": "requirement",
+      "body": "Project: study & tell the difference between of them chomp ompl pilz_industrial_motion_planner\nRepository ready: linderwu/motion_planning_pipelines_study\nRequirement: study & tell the difference between of them chomp ompl pilz_industrial_motion_planner"
+    },
+    {
+      "title": "Research Prompt",
+      "stage": "plan",
+      "type": "research_prompt",
+      "body": "Rowlet bridge timed out and recovery polling did not return a completed result (HTTP 404)."
+    }
+  ],
+  "agentRuns": [
+    {
+      "stage": "intake",
+      "agent": "codex",
+      "status": "completed"
+    },
+    {
+      "stage": "plan",
+      "skill": "research_prompt",
+      "agent": "openclaw.rowlet",
+      "status": "failed",
+      "error": "Rowlet bridge timed out and recovery polling did not return a completed result (HTTP 404)."
+    }
+  ],
+  "skillChain": [
+    {
+      "id": "research.intake",
+      "name": "Research Intake Skill",
+      "stage": "intake",
+      "executor": "codex",
+      "status": "completed"
+    },
+    {
+      "id": "research.prompt",
+      "name": "Research Prompt Generation Skill",
+      "stage": "plan",
+      "executor": "openclaw.rowlet",
+      "status": "failed"
+    },
+    {
+      "id": "research.execution",
+      "name": "Research Execution Skill",
+      "stage": "implementation",
+      "executor": "openclaw.charizard",
+      "status": "pending"
+    },
+    {
+      "id": "research.closeout",
+      "name": "Research Closeout Skill",
+      "stage": "completed",
+      "executor": "codex",
+      "status": "pending"
+    }
+  ],
+  "baselineNotes": [
+    "The app showed no attached context files.",
+    "The existing run was created as Research but later research execution was assigned to Charizard.",
+    "The project/run id was not exposed in the visible project detail UI."
+  ]
+}

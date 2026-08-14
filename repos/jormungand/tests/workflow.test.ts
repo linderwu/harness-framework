@@ -3,7 +3,8 @@ import test from "node:test"
 import {
   advanceWorkflow,
   createWorkflowRun,
-  decideApprovalGate
+  decideApprovalGate,
+  getDefaultSkillExecutor
 } from "../lib/workflow"
 import type { RuntimeSkillResolver } from "../lib/workflow"
 import type { ApprovalGate, WorkflowRun } from "../lib/types"
@@ -89,6 +90,17 @@ test("non-human design approval remains pending until an explicit decision", asy
   assert.equal(designGate.actorType, "independent_agent")
   assert.equal(designGate.status, "pending")
   assert.equal(designGate.decidedAt, undefined)
+})
+
+test("research prompt and execution default to Rowlet", () => {
+  assert.equal(
+    getDefaultSkillExecutor("research.prompt", "openclaw.charizard"),
+    "openclaw.rowlet"
+  )
+  assert.equal(
+    getDefaultSkillExecutor("research.execute", "openclaw.charizard"),
+    "openclaw.rowlet"
+  )
 })
 
 test("design changes requested creates a revised OpenSpec artifact and a new gate", async () => {

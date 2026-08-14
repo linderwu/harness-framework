@@ -494,6 +494,10 @@ export function getDefaultSkillExecutor(
   skillId: string,
   selectedAgent: AgentKind
 ): AgentKind {
+  if (skillId === "research.prompt" || skillId === "research.execute") {
+    return "openclaw.rowlet"
+  }
+
   if (
     skillId === "plan.review" ||
     skillId === "implementation.code_review" ||
