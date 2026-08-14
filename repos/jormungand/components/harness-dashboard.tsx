@@ -36,8 +36,7 @@ import {
   useLayoutEffect,
   useMemo,
   useRef,
-  useState,
-  useEffect
+  useState
 } from "react"
 import type { CSSProperties } from "react"
 import {
@@ -46,7 +45,6 @@ import {
   getAgentLabel,
   type AgentProfile
 } from "@/lib/agents"
-import { formatQuotaValue, type AgentQuota } from "@/lib/agent-quota"
 import type {
   AgentKind,
   ApprovalActorType,
@@ -207,8 +205,6 @@ export function HarnessDashboard({
   const [isLoading, setIsLoading] = useState(false)
   const [isMutating, setIsMutating] = useState(false)
   const [mutationError, setMutationError] = useState<string | undefined>()
-  const [agentQuotas, setAgentQuotas] = useState<AgentQuota[]>([])
-  const [quotaError, setQuotaError] = useState<string | undefined>()
   const [openComposeSection, setOpenComposeSection] = useState<
     "requirement" | "automation" | undefined
   >()
@@ -333,26 +329,6 @@ export function HarnessDashboard({
     })
     setIsLoading(false)
   }
-
-  async function refreshAgentQuotas() {
-    try {
-      const response = await fetch("/api/agent-quotas", { cache: "no-store" })
-      if (!response.ok) throw new Error("Unable to load agent quota")
-      setAgentQuotas((await response.json()) as AgentQuota[])
-      setQuotaError(undefined)
-    } catch (error) {
-      setQuotaError(error instanceof Error ? error.message : String(error))
-    }
-  }
-
-  useEffect(() => {
-    const initialRefresh = window.setTimeout(() => void refreshAgentQuotas(), 0)
-    const interval = window.setInterval(() => void refreshAgentQuotas(), 60_000)
-    return () => {
-      window.clearTimeout(initialRefresh)
-      window.clearInterval(interval)
-    }
-  }, [])
 
   async function createProject(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -658,22 +634,6 @@ export function HarnessDashboard({
           <RefreshCw size={18} />
         </button>
       </header>
-
-      <section className="quotaSection" aria-labelledby="quota-heading">
-        <div className="sectionHeading">
-          <div>
-            <p className="eyebrow">Model capacity</p>
-            <h2 id="quota-heading">Agent weekly health</h2>
-          </div>
-          <small>{quotaError ?? "Refreshes every minute"}</small>
-        </div>
-        <div className="quotaGrid">
-          {agentProfiles.map((agent) => {
-            const quota = agentQuotas.find((item) => item.agentId === agent.id)
-            return <AgentQuotaCard agent={agent} quota={quota} key={agent.id} />
-          })}
-        </div>
-      </section>
 
       <section className="layoutGrid">
         <form className="panel composePanel" onSubmit={createProject}>
@@ -2285,69 +2245,6 @@ function AgentSelect({
         : null}
     </span>
   )
-}
-
-function AgentQuotaCard({
-  agent,
-  quota
-}: {
-  agent: AgentProfile
-  quota?: AgentQuota
-}) {
-  const percentage = quota?.remainingPercent ?? 0
-  const status = quota?.status ?? "unavailable"
-  const statusLabel = {
-    healthy: "Healthy",
-    warning: "Low",
-    critical: "Critical",
-    exhausted: "Exhausted",
-    stale: "Stale",
-    unavailable: "Not synced"
-  }[status]
-
-  return (
-    <article className={`quotaCard ${status}`}>
-      <div className="quotaCardHeader">
-        <div>
-          <strong>{agent.label}</strong>
-          <small>{quota?.model ?? "Waiting for model data"}</small>
-        </div>
-        <span className="quotaStatus">{statusLabel}</span>
-      </div>
-      <div className="quotaValueRow">
-        <strong>{quota ? `${Math.round(percentage)}%` : "--"}</strong>
-        <small>
-          {quota
-            ? `${formatQuotaValue(quota.weeklyRemaining, quota.unit)} remaining`
-            : "Quota unavailable"}
-        </small>
-      </div>
-      <div
-        aria-label={`${agent.label} weekly quota remaining`}
-        aria-valuemax={100}
-        aria-valuemin={0}
-        aria-valuenow={quota ? percentage : 0}
-        className="quotaProgress"
-        role="progressbar"
-      >
-        <span style={{ width: `${percentage}%` }} />
-      </div>
-      <small className="quotaMeta">
-        {quota
-          ? `${formatQuotaValue(quota.weeklyUsed, quota.unit)} used · resets ${formatResetTime(quota.resetAt)}`
-          : "Connect a provider to load weekly usage"}
-      </small>
-    </article>
-  )
-}
-
-function formatResetTime(value: string) {
-  return new Intl.DateTimeFormat("en-US", {
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit"
-  }).format(new Date(value))
 }
 
 function AgentOptionLabel({ agent }: { agent: AgentProfile }) {
