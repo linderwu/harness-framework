@@ -123,7 +123,7 @@ printf '%s' '__LOCK_B64__' | base64 -d > "$config_dir/skill.lock.json"
 bridge_token=$(printf '%s' '__TOKEN_B64__' | base64 -d)
 {
   printf 'OPENCLAW_BRIDGE_TOKEN=%s\n' "$bridge_token"
-  printf 'OPENCLAW_BRIDGE_PORT=4178\n'
+  printf 'OPENCLAW_BRIDGE_PORT=4188\n'
   printf 'OPENCLAW_RUNTIME_SKILL_LOCK=%s\n' "$config_dir/skill.lock.json"
 } > "$config_dir/openclaw-bridge.env"
 chmod 600 "$config_dir/openclaw-bridge.env" "$config_dir/skill.lock.json"
@@ -132,7 +132,7 @@ systemctl --user daemon-reload
 systemctl --user restart jormungandr-openclaw-bridge.service
 sleep 3
 systemctl --user is-active jormungandr-openclaw-bridge.service
-curl -fsS -H "Authorization: Bearer $bridge_token" http://127.0.0.1:4178/health
+curl -fsS -H "Authorization: Bearer $bridge_token" http://127.0.0.1:4188/health
 printf '\n'
 '@
   $remoteScript = $remoteScript.Replace("__BRIDGE_B64__", $bridgeB64)
@@ -186,7 +186,7 @@ if systemctl is-active --quiet openclaw-bridge.service; then
 fi
 drop_in="$HOME/.config/systemd/user/jormungandr-openclaw-bridge.service.d"
 mkdir -p "$drop_in"
-printf '%s\n' '[Service]' 'Environment=OPENCLAW_BRIDGE_PORT=4178' > "$drop_in/formal-domain.conf"
+printf '%s\n' '[Service]' 'Environment=OPENCLAW_BRIDGE_PORT=4188' > "$drop_in/formal-domain.conf"
 systemctl --user daemon-reload
 systemctl --user restart jormungandr-openclaw-bridge.service
 sleep 4
@@ -195,7 +195,7 @@ if [ "$(systemctl --user is-active jormungandr-openclaw-bridge.service)" != "act
   exit 1
 fi
 printf 'BRIDGE_SERVICE=active\n'
-curl -fsS -H "Authorization: Bearer $bridge_token" http://127.0.0.1:4178/health
+curl -fsS -H "Authorization: Bearer $bridge_token" http://127.0.0.1:4188/health
 printf '\n'
 '@
   $remoteScript = $remoteScript.Replace("__TOKEN_B64__", $tokenB64)
@@ -210,7 +210,7 @@ bridge_token=$(printf '%s' '__TOKEN_B64__' | base64 -d)
 bridge_status=$(systemctl --user is-active jormungandr-openclaw-bridge.service 2>/dev/null || true)
 printf 'BRIDGE_SERVICE=%s\n' "$bridge_status"
 printf 'LOCAL_HEALTH='
-curl -fsS -H "Authorization: Bearer $bridge_token" http://127.0.0.1:4178/health || true
+curl -fsS -H "Authorization: Bearer $bridge_token" http://127.0.0.1:4188/health || true
 printf '\n'
 docker ps --filter 'name=^/cloudflared$' --format 'CLOUDFLARED={{.Status}}'
 '@
