@@ -5,6 +5,7 @@ import type {
   WorkflowRun,
   WorkflowStage
 } from "@/lib/types"
+import { randomUUID } from "node:crypto"
 import {
   createOpenClawA2AEnvelope,
   extractA2AResponseText,
@@ -31,6 +32,7 @@ interface BridgeResponse {
   error?: string
   stderr?: string
   statusMessage?: string
+  failureKind?: "session-takeover" | "agent-exit"
   idempotencyKey?: string
   artifacts?: Array<{ type: string; title: string; body: string }>
   capabilities?: string[]
@@ -112,10 +114,12 @@ export async function invokeConfiguredAgent(
       artifacts: data.artifacts,
       capabilities: data.capabilities,
       body:
-        data.output?.trim() ||
-        data.error ||
-        data.stderr ||
-        "Codex bridge completed without a final message."
+        [
+          data.status === "failed" ? data.statusMessage : undefined,
+          data.output?.trim() || data.error || data.stderr
+        ]
+          .filter(Boolean)
+          .join("\n") || "Codex bridge completed without a final message."
     }
   } catch (error) {
     return {
@@ -195,7 +199,7 @@ async function invokeOpenClawA2A(
   idempotencyKey: string
 ): Promise<AgentArtifactResult> {
   const profile = getAgentProfile(input.executor)
-  const sessionKey = getOpenClawA2ASessionKey(input.executor)
+  const sessionKey = getOpenClawA2ASessionKey(input.executor, idempotencyKey)
   const model = process.env.OPENCLAW_A2A_MODEL ?? getDefaultOpenClawA2AModel(input.executor)
   const protocol = resolveOpenClawA2AProtocol()
   const envelope = createOpenClawA2AEnvelope(
@@ -353,12 +357,13 @@ function getOpenClawA2ACommand(agent: AgentKind) {
   return process.env.OPENCLAW_A2A_COMMAND
 }
 
-function getOpenClawA2ASessionKey(agent: AgentKind) {
+function getOpenClawA2ASessionKey(agent: AgentKind, idempotencyKey: string) {
   const profile = getAgentProfile(agent)
-  return (
+  const base =
     process.env.OPENCLAW_A2A_SESSION_KEY ??
     `agent:${profile.mainAgent ?? "rowlet"}:a2a-codex`
-  )
+  const event = idempotencyKey.replace(/[^a-zA-Z0-9_.-]/g, "-").slice(0, 80)
+  return `${base}-${event}-${randomUUID()}`.slice(0, 220)
 }
 
 function getDefaultOpenClawA2AModel(agent: AgentKind) {

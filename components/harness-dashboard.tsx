@@ -1115,9 +1115,12 @@ function RunDetail({
                 <div className="skillChain">
                   {run.eventSkills.map((skill) => {
                     const matchingEvents = run.events.filter(
-                      (event) => event.skillId === skill.id
+                      (event) =>
+                        event.workflowRunId === run.id && event.skillId === skill.id
                     )
-                    const latestEvent = matchingEvents[matchingEvents.length - 1]
+                    const latestEvent = [...matchingEvents].sort((a, b) =>
+                      a.createdAt.localeCompare(b.createdAt)
+                    )[matchingEvents.length - 1]
                     const executor =
                       run.skillAssignments[skill.id] ?? run.selectedAgent
                     const isPendingApprovalSkill =

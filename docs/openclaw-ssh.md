@@ -13,12 +13,7 @@ OPENCLAW_CONTAINER=openclaw
 ## A2A Sessions
 
 ```txt
-rowlet      -> agent:rowlet:a2a-codex
-roaringmoon -> agent:roaringmoon:a2a-codex
-charizard   -> agent:charizard:a2a-codex
-mrmime      -> agent:mrmime:a2a-codex
-mrmine      -> agent:mrmine:a2a-codex
-gengar      -> agent:gengar:a2a-codex
+Each invocation uses `agent:<agent>:a2a-codex-<event>-<attempt>`.
 ```
 
 Default models verified on 2026-07-19:

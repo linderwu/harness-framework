@@ -57,7 +57,7 @@ The app passes these environment variables to the command:
 ```txt
 OPENCLAW_A2A_AGENT=rowlet|roaringmoon|charizard|mrmime|mrmine|gengar
 OPENCLAW_A2A_MODEL=minimax/MiniMax-M2.7
-OPENCLAW_A2A_SESSION_KEY=agent:<agent>:a2a-codex
+OPENCLAW_A2A_SESSION_KEY=agent:<agent>:a2a-codex-<event>-<attempt>
 OPENCLAW_A2A_PROTOCOL=legacy-clawcodex-v0.1
 ```
 
@@ -136,7 +136,7 @@ Authorization: Bearer $OPENCLAW_BRIDGE_TOKEN
 The bridge runs:
 
 ```sh
-docker exec openclaw openclaw agent --agent <agent> --model <model> --session-key agent:<agent>:harness-<workflowRunId> --message <A2A envelope> --json
+docker exec openclaw openclaw agent --agent <agent> --model <model> --session-key agent:<agent>:harness-<workflowRunId>-<event>-<attempt> --message <A2A envelope> --json
 ```
 
 Do not expose the bridge without a token. Keep `OPENCLAW_BRIDGE_HOST=127.0.0.1`

@@ -62,7 +62,7 @@ if (-not $model) {
 
 $sessionKey = $env:OPENCLAW_A2A_SESSION_KEY
 if (-not $sessionKey) {
-  $sessionKey = "agent:${agent}:a2a-codex"
+  $sessionKey = "agent:${agent}:a2a-codex-$([guid]::NewGuid().ToString('N'))"
 }
 
 $timeoutSeconds = $env:OPENCLAW_A2A_AGENT_TIMEOUT_SECONDS

@@ -1,7 +1,7 @@
 import http from "node:http"
 import { spawn } from "node:child_process"
 import { readFileSync } from "node:fs"
-import { randomUUID } from "node:crypto"
+import { createHash, randomUUID } from "node:crypto"
 
 const host = process.env.OPENCLAW_BRIDGE_HOST ?? "127.0.0.1"
 const port = Number(process.env.OPENCLAW_BRIDGE_PORT ?? 4188)
@@ -11,6 +11,7 @@ const defaultModel = process.env.OPENCLAW_A2A_MODEL ?? "minimax-portal/MiniMax-M
 const siteAuth = loadSiteAuth()
 const activeRuns = new Map()
 const activeWorkflowRuns = new Map()
+const sessionQueues = new Map()
 
 const server = http.createServer(async (request, response) => {
   try {
@@ -60,7 +61,12 @@ const server = http.createServer(async (request, response) => {
       payload.idempotencyKey || request.headers["idempotency-key"] || id
     const mainAgent = normalizeOpenClawAgent(payload.mainAgent, payload.executor)
     const model = resolveModel(mainAgent)
-    const sessionKey = `agent:${mainAgent}:harness-${payload.workflowRunId ?? id}`
+    const sessionKey = createSessionKey({
+      mainAgent,
+      workflowRunId: payload.workflowRunId,
+      idempotencyKey,
+      id
+    })
     const message = buildOpenClawMessage(payload, {
       id,
       idempotencyKey,
@@ -68,14 +74,16 @@ const server = http.createServer(async (request, response) => {
       model,
       sessionKey
     })
-    const result = await runOpenClawAgent({
-      id,
-      workflowRunId: payload.workflowRunId,
-      mainAgent,
-      model,
-      sessionKey,
-      message
-    })
+    const result = await enqueueSessionRun(sessionKey, () =>
+      runOpenClawAgent({
+        id,
+        workflowRunId: payload.workflowRunId,
+        mainAgent,
+        model,
+        sessionKey,
+        message
+      })
+    )
 
     sendJson(response, 200, {
       id,
@@ -165,11 +173,60 @@ async function runOpenClawAgent({
     status: exitCode === 0 ? "completed" : "failed",
     output: extractOpenClawText(stdout).trim() || tail(stdout, 8000),
     stderr: tail(stderr, 8000),
-    statusMessage:
+    statusMessage: formatRunStatus({
+      exitCode,
+      mainAgent,
+      stdout,
+      stderr
+    }),
+    failureKind:
       exitCode === 0
-        ? `${mainAgent} completed through OpenClaw bridge.`
-        : `${mainAgent} exited with status ${exitCode}.`
+        ? undefined
+        : isSessionTakeover(stdout, stderr)
+          ? "session-takeover"
+          : "agent-exit"
   }
+}
+
+function enqueueSessionRun(sessionKey, run) {
+  const previous = sessionQueues.get(sessionKey) ?? Promise.resolve()
+  const current = previous.catch(() => undefined).then(run)
+  sessionQueues.set(sessionKey, current)
+  return current.finally(() => {
+    if (sessionQueues.get(sessionKey) === current) {
+      sessionQueues.delete(sessionKey)
+    }
+  })
+}
+
+function createSessionKey({ mainAgent, workflowRunId, idempotencyKey, id }) {
+  const workflow = sanitizeSessionPart(workflowRunId ?? id)
+  const rawInvocation = `${idempotencyKey || "event"}-${id}`
+  const invocation = sanitizeSessionPart(rawInvocation).slice(0, 64)
+  const digest = createHash("sha256").update(rawInvocation).digest("hex").slice(0, 12)
+  return `agent:${mainAgent}:harness-${workflow}-${invocation}-${digest}`.slice(0, 220)
+}
+
+function sanitizeSessionPart(value) {
+  return String(value).replace(/[^a-zA-Z0-9_.-]/g, "-").slice(0, 120)
+}
+
+function isSessionTakeover(stdout, stderr) {
+  return /EmbeddedAttemptSessionTakeoverError|session file changed while embedded prompt lock was released/i.test(
+    `${stdout}\n${stderr}`
+  )
+}
+
+function formatRunStatus({ exitCode, mainAgent, stdout, stderr }) {
+  if (exitCode === 0) {
+    return `${mainAgent} completed through OpenClaw bridge.`
+  }
+
+  if (isSessionTakeover(stdout, stderr)) {
+    return `${mainAgent} hit an OpenClaw session takeover race (exit ${exitCode}); the session was isolated by invocation key. Retry this invocation after checking concurrent writers.`
+  }
+
+  return `${mainAgent} exited with status ${exitCode}.`
 }
 
 function loadSiteAuth() {
