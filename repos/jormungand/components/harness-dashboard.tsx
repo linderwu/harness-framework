@@ -28,10 +28,12 @@ import {
   UserCheck,
   Wifi,
   WifiOff,
-  X
+  X,
+  type LucideProps
 } from "lucide-react"
 import {
   ChangeEvent,
+  ComponentType,
   FormEvent,
   useLayoutEffect,
   useMemo,
@@ -136,12 +138,39 @@ interface AgentHealthResponse {
 const sampleRequirement =
   "Build a Jormungandr dashboard that can select Arceus/OpenClaw agents and control design/verification with approval gates."
 
+function DragonHeadIcon({ size = 24 }: LucideProps) {
+  return (
+    <svg
+      aria-hidden="true"
+      fill="none"
+      height={size}
+      viewBox="0 0 32 32"
+      width={size}
+    >
+      <path
+        d="M5 22c1-4 1-8 4-12l4 3 3-7 3 6 6-2-2 6 5 2-6 3-2 5-5-3-5 2-2-3H5Z"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      />
+      <path
+        d="M17 16c2-1 4-1 6 0M11 20c2 1 5 1 8 0"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeWidth="2"
+      />
+      <circle cx="20.5" cy="13.5" fill="currentColor" r="1.5" />
+    </svg>
+  )
+}
+
 const projectTypeVisuals: Record<
   ProjectType,
-  { icon: typeof ClipboardList; accent: string; description: string }
+  { icon: ComponentType<LucideProps>; accent: string; description: string }
 > = {
   research: {
-    icon: Search,
+    icon: DragonHeadIcon,
     accent: "violet",
     description: "Collect evidence and produce a research report."
   },
