@@ -28,7 +28,10 @@ silently creating simulated artifacts. Set `HARNESS_ALLOW_SIMULATED_AGENTS=1`
 only when you intentionally want local demo artifacts instead of a real agent
 run.
 
-OpenClaw profiles use ids such as `openclaw.rowlet`, `openclaw.roaringmoon`, and `openclaw.charizard`. When one is assigned, the Next.js API calls `OPENCLAW_BRIDGE_URL` and includes `mainAgent` in the payload.
+OpenClaw profiles use ids such as `openclaw.rowlet`, `openclaw.roaringmoon`,
+`openclaw.charizard`, `openclaw.mrmime`, `openclaw.mrmine`, and
+`openclaw.gengar`. When one is assigned, the Next.js
+API calls `OPENCLAW_BRIDGE_URL` and includes `mainAgent` in the payload.
 
 ## OpenClaw A2A Command
 
@@ -52,7 +55,7 @@ transport while OpenClaw does not yet expose a native public A2A server.
 The app passes these environment variables to the command:
 
 ```txt
-OPENCLAW_A2A_AGENT=rowlet|roaringmoon|charizard
+OPENCLAW_A2A_AGENT=rowlet|roaringmoon|charizard|mrmime|mrmine|gengar
 OPENCLAW_A2A_MODEL=minimax/MiniMax-M2.7
 OPENCLAW_A2A_SESSION_KEY=agent:<agent>:a2a-codex
 OPENCLAW_A2A_PROTOCOL=legacy-clawcodex-v0.1
@@ -78,6 +81,66 @@ openclaw agent \
 
 Use `OPENCLAW_BRIDGE_URL` for an HTTP request/response bridge. Use
 `OPENCLAW_A2A_COMMAND` when you want the persistent session-based A2A transport.
+
+## OpenClaw Bridge On 192.168.28.128
+
+Use this when the Zeabur app needs to call OpenClaw. Zeabur cannot run the local
+PowerShell `OPENCLAW_A2A_COMMAND`, so it needs a public HTTPS URL that forwards
+to an HTTP bridge on the OpenClaw VM.
+
+On `192.168.28.128`:
+
+```sh
+cd /path/to/harness-framework
+export OPENCLAW_BRIDGE_HOST=127.0.0.1
+export OPENCLAW_BRIDGE_PORT=4188
+export OPENCLAW_BRIDGE_TOKEN='<same secret configured in Zeabur OPENCLAW_BRIDGE_TOKEN>'
+export OPENCLAW_CONTAINER=openclaw
+npm run openclaw-bridge
+```
+
+Health check from the VM:
+
+```sh
+curl http://127.0.0.1:4188/health
+```
+
+Expose it with a tunnel. Cloudflare Tunnel shape:
+
+```sh
+cloudflared tunnel --url http://127.0.0.1:4188
+```
+
+ngrok shape:
+
+```sh
+ngrok http 4188
+```
+
+Set the Zeabur app environment variables:
+
+```txt
+OPENCLAW_BRIDGE_URL=https://your-openclaw-bridge-domain.example
+OPENCLAW_BRIDGE_TOKEN=<same secret as OPENCLAW_BRIDGE_TOKEN on the VM>
+```
+
+Then redeploy/restart the Zeabur app. Workflow events assigned to
+`openclaw.rowlet`, `openclaw.roaringmoon`, `openclaw.charizard`,
+`openclaw.mrmime`, `openclaw.mrmine`, or `openclaw.gengar` will call:
+
+```txt
+POST $OPENCLAW_BRIDGE_URL/agent-runs
+Authorization: Bearer $OPENCLAW_BRIDGE_TOKEN
+```
+
+The bridge runs:
+
+```sh
+docker exec openclaw openclaw agent --agent <agent> --model <model> --session-key agent:<agent>:harness-<workflowRunId> --message <A2A envelope> --json
+```
+
+Do not expose the bridge without a token. Keep `OPENCLAW_BRIDGE_HOST=127.0.0.1`
+when using a tunnel so the bridge is not directly reachable on the LAN.
 
 The future production direction is a real OpenClaw A2A HTTP endpoint instead of
 the stdin command adapter. That endpoint should publish an Agent Card at

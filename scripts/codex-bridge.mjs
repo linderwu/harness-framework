@@ -138,9 +138,12 @@ async function runCodex(prompt, id, workflowRunId) {
   const command = process.env.CODEX_BRIDGE_COMMAND ?? "codex"
   const sandbox = process.env.CODEX_BRIDGE_SANDBOX ?? "workspace-write"
   const serviceTier = process.env.CODEX_BRIDGE_SERVICE_TIER ?? "fast"
+  const model = process.env.CODEX_BRIDGE_MODEL ?? "gpt-5.5"
   const timeoutMs = Number(process.env.CODEX_BRIDGE_TIMEOUT_MS ?? 900000)
   const args = [
     "exec",
+    "--model",
+    model,
     "-c",
     `service_tier="${serviceTier}"`,
     "-C",

@@ -9,8 +9,8 @@ export interface AgentProfile {
   mainAgent?: OpenClawMainAgent
 }
 
-export const defaultAgentKind: AgentKind = "codex"
 export const defaultOpenClawAgentKind: AgentKind = "openclaw.rowlet"
+export const defaultAgentKind: AgentKind = defaultOpenClawAgentKind
 
 export const agentProfiles = [
   {
@@ -35,6 +35,24 @@ export const agentProfiles = [
     label: "Charizard",
     family: "openclaw",
     mainAgent: "charizard"
+  },
+  {
+    id: "openclaw.mrmime",
+    label: "Mr. Mime",
+    family: "openclaw",
+    mainAgent: "mrmime"
+  },
+  {
+    id: "openclaw.mrmine",
+    label: "Mr. Mine",
+    family: "openclaw",
+    mainAgent: "mrmine"
+  },
+  {
+    id: "openclaw.gengar",
+    label: "Gengar",
+    family: "openclaw",
+    mainAgent: "gengar"
   },
   {
     id: "manual",

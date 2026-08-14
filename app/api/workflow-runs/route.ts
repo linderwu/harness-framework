@@ -6,7 +6,8 @@ import { listWorkflowRuns, upsertWorkflowRun } from "@/lib/store"
 import type {
   AgentKind,
   ApprovalActorType,
-  ProjectContextFile
+  ProjectContextFile,
+  ProjectType
 } from "@/lib/types"
 
 const maxContextFileBytes = 2 * 1024 * 1024
@@ -19,6 +20,7 @@ export async function GET() {
 export async function POST(request: Request) {
   const body = (await request.json()) as {
     projectName?: string
+    projectType?: ProjectType
     repository?: string
     requirement?: string
     contextFiles?: ProjectContextFile[]
@@ -56,6 +58,7 @@ export async function POST(request: Request) {
 
   const run = createWorkflowRun({
     projectName: body.projectName,
+    projectType: body.projectType ?? "build",
     repository: body.repository ?? "",
     requirement: body.requirement,
     contextFiles,

@@ -12,6 +12,9 @@ import {
   FileUp,
   FolderUp,
   GitBranch,
+  Hammer,
+  FlaskConical,
+  Bug,
   Play,
   RefreshCw,
   RotateCcw,
@@ -43,6 +46,7 @@ import type {
   ApprovalActorType,
   ApprovalGate,
   ProjectContextFile,
+  ProjectType,
   WorkflowRun,
   WorkflowStage
 } from "@/lib/types"
@@ -73,9 +77,63 @@ const defaultSkillAssignments = Object.fromEntries(
 ) as Record<string, AgentKind>
 const maxContextFileBytes = 2 * 1024 * 1024
 const maxContextTotalBytes = 5 * 1024 * 1024
+type ApprovalDecision = "approved" | "rejected" | "changes_requested"
 
 const sampleRequirement =
   "Build a Jormungandr dashboard that can select Codex/OpenClaw agents and control design/verification with approval gates."
+
+const projectTypePresets: Record<
+  ProjectType,
+  {
+    label: string
+    description: string
+    hint: string
+    stages: WorkflowStage[]
+    icon: typeof Hammer
+    accent: string
+  }
+> = {
+  build: {
+    label: "Build",
+    description: "Ship a new feature from idea to verified code.",
+    hint: "Describe the feature, users, and expected behavior.",
+    stages: ["intake", "plan", "design", "implementation", "verification"],
+    icon: Hammer,
+    accent: "orange"
+  },
+  research: {
+    label: "Research",
+    description: "Collect evidence, compare options, and produce a report.",
+    hint: "Describe the question, scope, and evidence you need.",
+    stages: ["intake", "plan", "design", "verification"],
+    icon: FlaskConical,
+    accent: "violet"
+  },
+  fix: {
+    label: "Fix",
+    description: "Reproduce a bug, patch it, and prove the regression is gone.",
+    hint: "Describe the symptom, reproduction steps, and expected result.",
+    stages: ["intake", "plan", "implementation", "verification"],
+    icon: Bug,
+    accent: "red"
+  },
+  refactor: {
+    label: "Refactor",
+    description: "Improve structure and maintain behavior with confidence.",
+    hint: "Describe the code area, target outcome, and constraints.",
+    stages: ["intake", "plan", "design", "implementation", "verification"],
+    icon: RotateCcw,
+    accent: "cyan"
+  },
+  audit: {
+    label: "Audit",
+    description: "Inspect risk, security, and quality before sign-off.",
+    hint: "Describe the system, audit scope, and risk areas.",
+    stages: ["intake", "plan", "verification"],
+    icon: ShieldCheck,
+    accent: "green"
+  }
+}
 
 export function HarnessDashboard({
   initialRuns
@@ -94,10 +152,12 @@ export function HarnessDashboard({
   >()
   const [skillSearch, setSkillSearch] = useState("")
   const [showOverridesOnly, setShowOverridesOnly] = useState(false)
+  const [projectType, setProjectType] = useState<ProjectType>("build")
   const [bulkStage, setBulkStage] = useState<WorkflowStage | "all">("all")
   const [bulkAgent, setBulkAgent] = useState<AgentKind>(defaultAgentKind)
   const [form, setForm] = useState({
     projectName: "Jormungandr MVP",
+    projectType: "build" as ProjectType,
     repository: "",
     requirement: sampleRequirement,
     contextFiles: [] as ProjectContextFile[],
@@ -248,6 +308,11 @@ export function HarnessDashboard({
     }))
   }
 
+  function selectProjectType(nextProjectType: ProjectType) {
+    setProjectType(nextProjectType)
+    setForm((currentForm) => ({ ...currentForm, projectType: nextProjectType }))
+  }
+
   function updateSkillAssignment(skillId: string, agent: AgentKind) {
     setForm({
       ...form,
@@ -355,6 +420,53 @@ export function HarnessDashboard({
             <CircleDot size={18} />
             <h2>New Workflow Run</h2>
           </div>
+
+          <section className="projectTypeSwitcher" aria-labelledby="project-type-heading">
+            <div className="projectTypeHeader">
+              <div>
+                <p className="eyebrow">Workflow Preset</p>
+                <h3 id="project-type-heading">Choose your mission</h3>
+              </div>
+              <span className={`projectTypeSignal ${projectTypePresets[projectType].accent}`}>
+                {projectTypePresets[projectType].label}
+              </span>
+            </div>
+            <div className="projectTypeGrid">
+              {(Object.keys(projectTypePresets) as ProjectType[]).map((type) => {
+                const preset = projectTypePresets[type]
+                const Icon = preset.icon
+                const isActive = type === projectType
+
+                return (
+                  <button
+                    aria-pressed={isActive}
+                    className={`projectTypeCard ${isActive ? "active" : ""} ${preset.accent}`}
+                    key={type}
+                    onClick={() => selectProjectType(type)}
+                    type="button"
+                  >
+                    <Icon size={18} />
+                    <strong>{preset.label}</strong>
+                    <small>{preset.description}</small>
+                  </button>
+                )
+              })}
+            </div>
+            <div className="workflowPreview">
+              <div className="workflowPreviewLabel">
+                <span>Live workflow</span>
+                <small>{projectTypePresets[projectType].stages.length} stages</small>
+              </div>
+              <div className="workflowPreviewTrack">
+                {projectTypePresets[projectType].stages.map((stage, index) => (
+                  <span className="workflowPreviewStage" key={stage}>
+                    <i>{index + 1}</i>
+                    {stageLabels[stage]}
+                  </span>
+                ))}
+              </div>
+            </div>
+          </section>
 
           <button
             className="composeLaunchButton"
@@ -514,6 +626,7 @@ export function HarnessDashboard({
                         </span>
                       </span>
                       <textarea
+                        placeholder={projectTypePresets[projectType].hint}
                         value={form.requirement}
                         onChange={(event) =>
                           setForm({ ...form, requirement: event.target.value })
@@ -803,12 +916,12 @@ function RunDetail({
   run: WorkflowRun
   isMutating: boolean
   onAdvance: (runId: string) => void
-  onDecideGate: (
-    gate: ApprovalGate,
-    decision: "approved" | "rejected" | "changes_requested"
-  ) => void
+  onDecideGate: (gate: ApprovalGate, decision: ApprovalDecision) => void
 }) {
   const pendingGate = run.approvalGates.find((gate) => gate.status === "pending")
+  const pendingApprovalSkillId = pendingGate
+    ? `${pendingGate.stage}.approval`
+    : undefined
   const [openDetailSection, setOpenDetailSection] = useState<
     "skills" | "artifacts" | undefined
   >()
@@ -819,6 +932,7 @@ function RunDetail({
         <div>
           <p className="eyebrow">{run.repository || "No repository"}</p>
           <h2>{run.projectName}</h2>
+          <p className="runTypeBadge">{projectTypePresets[run.projectType ?? "build"].label} workflow</p>
           <p className="requirement">{run.requirement}</p>
           <p className="muted">
             v{run.version} - event log {run.eventLogStatus}
@@ -911,29 +1025,11 @@ function RunDetail({
           </div>
 
           {pendingGate ? (
-            <div className="gateActions">
-              <button
-                className="iconTextButton approve"
-                onClick={() => onDecideGate(pendingGate, "approved")}
-              >
-                <Check size={16} />
-                Approve
-              </button>
-              <button
-                className="iconTextButton request"
-                onClick={() => onDecideGate(pendingGate, "changes_requested")}
-              >
-                <RefreshCw size={16} />
-                Changes
-              </button>
-              <button
-                className="iconTextButton reject"
-                onClick={() => onDecideGate(pendingGate, "rejected")}
-              >
-                <X size={16} />
-                Reject
-              </button>
-            </div>
+            <GateDecisionButtons
+              gate={pendingGate}
+              isMutating={isMutating}
+              onDecideGate={onDecideGate}
+            />
           ) : null}
         </div>
 
@@ -1024,20 +1120,39 @@ function RunDetail({
                     const latestEvent = matchingEvents[matchingEvents.length - 1]
                     const executor =
                       run.skillAssignments[skill.id] ?? run.selectedAgent
+                    const isPendingApprovalSkill =
+                      Boolean(pendingGate) && skill.id === pendingApprovalSkillId
 
                     return (
-                      <article className="skillCard" key={skill.id}>
+                      <article
+                        className={
+                          isPendingApprovalSkill
+                            ? "skillCard pendingGateSkill"
+                            : "skillCard"
+                        }
+                        key={skill.id}
+                      >
                         <div className="skillCardHeader">
-                          <div>
+                          <div className="skillCardTitle">
                             <strong>{skill.name}</strong>
                             <small>
                               {eventTypeLabels[skill.eventType]} -{" "}
                               {stageLabels[skill.stage]}
                             </small>
                           </div>
-                          <StatusPill
-                            status={latestEvent?.status ?? "pending"}
-                          />
+                          <div className="skillCardStatusColumn">
+                            <StatusPill
+                              status={latestEvent?.status ?? "pending"}
+                            />
+                            {isPendingApprovalSkill && pendingGate ? (
+                              <GateDecisionButtons
+                                className="skillGateActions"
+                                gate={pendingGate}
+                                isMutating={isMutating}
+                                onDecideGate={onDecideGate}
+                              />
+                            ) : null}
+                          </div>
                         </div>
                         <p>{skill.purpose}</p>
                         <div className="skillMetaGrid">
@@ -1476,6 +1591,52 @@ function SkillMeta({ title, values }: { title: string; values: string[] }) {
           <li key={value}>{value}</li>
         ))}
       </ul>
+    </div>
+  )
+}
+
+function GateDecisionButtons({
+  className,
+  gate,
+  isMutating,
+  onDecideGate
+}: {
+  className?: string
+  gate: ApprovalGate
+  isMutating: boolean
+  onDecideGate: (gate: ApprovalGate, decision: ApprovalDecision) => void
+}) {
+  const classes = ["gateActions", className].filter(Boolean).join(" ")
+
+  return (
+    <div className={classes}>
+      <button
+        className="iconTextButton approve"
+        disabled={isMutating}
+        onClick={() => onDecideGate(gate, "approved")}
+        type="button"
+      >
+        <Check size={16} />
+        Approve
+      </button>
+      <button
+        className="iconTextButton request"
+        disabled={isMutating}
+        onClick={() => onDecideGate(gate, "changes_requested")}
+        type="button"
+      >
+        <RefreshCw size={16} />
+        Changes
+      </button>
+      <button
+        className="iconTextButton reject"
+        disabled={isMutating}
+        onClick={() => onDecideGate(gate, "rejected")}
+        type="button"
+      >
+        <X size={16} />
+        Reject
+      </button>
     </div>
   )
 }

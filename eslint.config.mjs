@@ -7,6 +7,7 @@ const eslintConfig = [
       "node_modules/**",
       ".next/**",
       ".agents/**",
+      ".logs/**",
       "data/harness-state.json"
     ]
   },

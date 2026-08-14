@@ -5,6 +5,8 @@
   "scripts": {
     "dev": "next dev",
     "codex-bridge": "node scripts/codex-bridge.mjs",
+    "openclaw-bridge": "node scripts/openclaw-bridge.mjs",
+    "openclaw-bridge:remote": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start-openclaw-bridge.ps1",
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",

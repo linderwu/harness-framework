@@ -7,6 +7,7 @@ import type {
   AgentRunSource,
   ExecutionMode,
   ProjectContextFile,
+  ProjectType,
   WorkflowEvent,
   WorkflowEventSkill,
   WorkflowEventType,
@@ -103,15 +104,24 @@ export function createDefaultEventSkills(): WorkflowEventSkill[] {
       inputs: ["requirement artifact", "repository context", "omx_wiki pages"],
       outputs: ["plan artifact", "acceptance criteria", "risk list"],
       constraints: [
+        "Use `superpowers:writing-plans` when the executor has that skill available.",
+        "If the executor does not have that skill, follow the embedded Superpowers plan fallback contract supplied by the harness prompt.",
         "Ask or answer requirement questions before design starts.",
         "No implementation details may be committed in this event.",
-        "Acceptance criteria must be testable."
+        "Acceptance criteria must be testable.",
+        "The plan must include Goal, Architecture, Tech Stack, file map, bite-sized task checklist, exact commands, expected verification output, and no TBD/TODO placeholders."
       ],
       gates: ["PlanApproval must approve before design starts."],
-      knowledgeSources: ["standard-dev-workflow", "omx_wiki", "GitHub issues"],
+      knowledgeSources: [
+        "superpowers:writing-plans",
+        "standard-dev-workflow",
+        "omx_wiki",
+        "GitHub issues"
+      ],
       verificationRules: [
         "Plan includes acceptance criteria.",
-        "Plan names verification expectations."
+        "Plan names verification expectations.",
+        "Plan follows the Superpowers writing-plans structure or the harness fallback contract."
       ]
     },
     {
@@ -126,11 +136,17 @@ export function createDefaultEventSkills(): WorkflowEventSkill[] {
       outputs: ["plan review report", "blocking findings"],
       constraints: [
         "Review the plan before implementation details are accepted.",
+        "Verify that the plan follows `superpowers:writing-plans` or the embedded fallback contract.",
         "Flag vague acceptance criteria and missing user scenarios.",
+        "Flag missing file map, bite-sized task checklist, exact commands, expected verification output, or TBD/TODO placeholders.",
         "Use severity labels and include `Blocking findings: yes` when HIGH or CRITICAL issues remain."
       ],
       gates: ["Blocking plan review findings return the run to planning."],
-      knowledgeSources: ["standard-dev-workflow", "omx_wiki/project-context"],
+      knowledgeSources: [
+        "superpowers:writing-plans",
+        "standard-dev-workflow",
+        "omx_wiki/project-context"
+      ],
       verificationRules: [
         "Review report includes severity counts.",
         "Blocking findings are explicit."
@@ -329,19 +345,12 @@ export function getDefaultSkillExecutor(
   skillId: string,
   selectedAgent: AgentKind
 ): AgentKind {
-  if (
-    skillId === "plan.review" ||
-    skillId === "implementation.code_review" ||
-    skillId === "verification.implementation_review"
-  ) {
-    return "codex"
-  }
-
   return selectedAgent
 }
 
 export function createWorkflowRun(input: {
   projectName: string
+  projectType: ProjectType
   repository: string
   requirement: string
   contextFiles?: ProjectContextFile[]
@@ -396,6 +405,7 @@ export function createWorkflowRun(input: {
     version: 1,
     id,
     projectName: input.projectName,
+    projectType: input.projectType,
     repository: input.repository,
     requirement: input.requirement,
     contextFiles: input.contextFiles ?? [],

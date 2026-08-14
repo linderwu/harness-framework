@@ -196,7 +196,7 @@ async function invokeOpenClawA2A(
 ): Promise<AgentArtifactResult> {
   const profile = getAgentProfile(input.executor)
   const sessionKey = getOpenClawA2ASessionKey(input.executor)
-  const model = process.env.OPENCLAW_A2A_MODEL ?? "minimax/MiniMax-M2.7"
+  const model = process.env.OPENCLAW_A2A_MODEL ?? getDefaultOpenClawA2AModel(input.executor)
   const protocol = resolveOpenClawA2AProtocol()
   const envelope = createOpenClawA2AEnvelope(
     {
@@ -359,6 +359,16 @@ function getOpenClawA2ASessionKey(agent: AgentKind) {
     process.env.OPENCLAW_A2A_SESSION_KEY ??
     `agent:${profile.mainAgent ?? "rowlet"}:a2a-codex`
   )
+}
+
+function getDefaultOpenClawA2AModel(agent: AgentKind) {
+  const profile = getAgentProfile(agent)
+
+  if (profile.mainAgent === "charizard") {
+    return "minimax-portal/MiniMax-M3"
+  }
+
+  return "minimax-portal/MiniMax-M2.7"
 }
 
 function getBridgeSource(agent: AgentKind): AgentArtifactResult["source"] {

@@ -4,6 +4,7 @@ data/harness-state.json
 .env
 .env.local
 .secrets/
+.logs/
 npm-debug.log*
 tsconfig.tsbuildinfo
 .agents/

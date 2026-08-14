@@ -74,6 +74,8 @@ interface WorkflowEvent {
 
 2. `plan.interview`
    - Clarifies scope, risks, acceptance criteria, and non-goals.
+   - Uses `superpowers:writing-plans` when the executor has it available.
+   - Falls back to the harness-supplied Superpowers plan contract when the executor does not have that skill installed.
    - Uses `standard-dev-workflow`, `omx_wiki`, and GitHub issue context.
    - Writes the plan artifact.
 
@@ -149,6 +151,9 @@ Supported MVP executors:
 - `openclaw.rowlet`
 - `openclaw.roaringmoon`
 - `openclaw.charizard`
+- `openclaw.mrmime`
+- `openclaw.mrmine`
+- `openclaw.gengar`
 - `manual`
 
 The dashboard lets the user set a default development agent, then override the executor for each individual skill. Runtime events and agent run records must use the assigned executor, not the workflow-level default.
@@ -180,6 +185,18 @@ routes the workflow back to the stage that can fix the issue:
 
 The next agent run receives prior artifacts, including the review report, so the
 fix loop has the same context a human reviewer would hand back.
+
+## Superpowers Skill Availability
+
+The harness can require a Superpowers-style planning contract, but it cannot
+magically install `superpowers:writing-plans` into every external executor. Local
+Codex agents with that skill available should invoke it. Executors without the
+skill still receive an embedded fallback contract in the event prompt: Goal,
+Architecture, Tech Stack, exact file map, bite-sized checkbox tasks, exact
+commands, expected verification output, no placeholders, and a self-review.
+
+`plan.review` treats missing Superpowers structure or fallback-contract gaps as
+review findings.
 
 ## Concurrency Policy
 

@@ -17,7 +17,15 @@ export type WorkflowStage =
 
 export type ExecutionMode = "manual" | "agent" | "hybrid"
 
-export type OpenClawMainAgent = "rowlet" | "roaringmoon" | "charizard"
+export type ProjectType = "build" | "research" | "fix" | "refactor" | "audit"
+
+export type OpenClawMainAgent =
+  | "rowlet"
+  | "roaringmoon"
+  | "charizard"
+  | "mrmime"
+  | "mrmine"
+  | "gengar"
 
 export type AgentKind =
   | "codex"
@@ -205,6 +213,7 @@ export interface WorkflowRun {
   version: number
   id: string
   projectName: string
+  projectType: ProjectType
   repository: string
   requirement: string
   contextFiles: ProjectContextFile[]
