@@ -134,7 +134,7 @@ interface AgentHealthResponse {
 }
 
 const sampleRequirement =
-  "Build a Jormungandr dashboard that can select Codex/OpenClaw agents and control design/verification with approval gates."
+  "Build a Jormungandr dashboard that can select Arceus/OpenClaw agents and control design/verification with approval gates."
 
 const projectTypeVisuals: Record<
   ProjectType,
@@ -2098,7 +2098,7 @@ function AgentSelect({
     agentProfiles.find((agent) => agent.id === value) ?? agentProfiles[0]
   const agentGroups = [
     {
-      label: "Codex",
+      label: "Arceus",
       agents: agentProfiles.filter((agent) => agent.family === "codex")
     },
     {
@@ -2257,6 +2257,20 @@ function AgentOptionLabel({ agent }: { agent: AgentProfile }) {
 }
 
 function AgentIcon({ agent }: { agent: AgentProfile }) {
+  if (agent.id === "codex") {
+    return (
+      <span className="agentSpriteMark" aria-hidden="true">
+        <Image
+          alt=""
+          height={24}
+          src="/agents/arceus.jpg"
+          unoptimized
+          width={30}
+        />
+      </span>
+    )
+  }
+
   if (agent.id === "openclaw.rowlet") {
     return (
       <span className="agentMark" aria-hidden="true">

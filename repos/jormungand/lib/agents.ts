@@ -15,7 +15,7 @@ export const defaultOpenClawAgentKind: AgentKind = "openclaw.rowlet"
 export const agentProfiles = [
   {
     id: "codex",
-    label: "Codex",
+    label: "Arceus",
     family: "codex"
   },
   {
