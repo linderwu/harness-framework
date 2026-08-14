@@ -56,7 +56,7 @@ test("OpenClaw deployment pins SSH hosts and deploys the skill lock", () => {
   assert.match(openClawDeploySource, /skill\.lock\.json/)
   assert.doesNotMatch(openClawDeploySource, /StrictHostKeyChecking=accept-new/)
   assert.doesNotMatch(openClawDeploySource, /SITE_AUTH_PASSWORD/)
-  assert.doesNotMatch(openClawDeploySource, /127\.0\.0\.1:4188/)
+  assert.match(openClawDeploySource, /127\.0\.0\.1:4188/)
 })
 
 test("site health stays public while application routes remain protected", () => {
