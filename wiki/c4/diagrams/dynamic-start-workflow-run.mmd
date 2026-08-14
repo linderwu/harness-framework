@@ -1,0 +1,17 @@
+flowchart LR
+  %% Dynamic: Start Workflow Run
+  operator["Operator<br/>Submits requirement and policy."]
+  dashboard["Harness Dashboard<br/>Collects run request."]
+  api["Workflow Route<br/>POST /api/workflow-runs."]
+  engine["Workflow Engine<br/>Creates and advances run."]
+  resolver["Runtime Skill Resolver<br/>Resolves runtime bundles."]
+  bridge["Agent Bridge<br/>Invokes configured executor."]
+  store["Workspace Store<br/>Persists run and artifacts."]
+  codex["Configured Codex/OpenClaw Bridge<br/>Authenticated v0.3 agent run with verified runtime skills."]
+  operator -->|"1. request"| dashboard
+  dashboard -->|"2. POST"| api
+  api -->|"3. create/advance"| engine
+  engine -->|"4. resolve skills"| resolver
+  engine -->|"5. invoke"| bridge
+  bridge -->|"6. agent-runs"| codex
+  engine -->|"7. persist"| store

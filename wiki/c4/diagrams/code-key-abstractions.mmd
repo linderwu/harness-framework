@@ -1,0 +1,14 @@
+flowchart LR
+  %% Code-level Key Abstractions
+  workflowrun["WorkflowRun<br/>Run state, stages, events, artifacts, gates, revisions."]
+  workfloweventskill["WorkflowEventSkill<br/>Skill contract for event-driven workflow steps."]
+  approvalgate["ApprovalGate<br/>Human or agent review gate for stage advancement."]
+  agentinput["AgentInvocationInput<br/>Payload sent to configured agent executors."]
+  agentresult["AgentArtifactResult<br/>Agent output normalized into artifacts and audit metadata."]
+  resolution["RuntimeSkillResolution<br/>Runtime skill bundle resolution status."]
+  workflowrun -->|"contains event skills"| workfloweventskill
+  workflowrun -->|"contains gates"| approvalgate
+  workfloweventskill -->|"drives invocation"| agentinput
+  agentinput -->|"returns"| agentresult
+  workfloweventskill -->|"may require bundles"| resolution
+  agentresult -->|"records artifacts"| workflowrun

@@ -1,0 +1,23 @@
+flowchart LR
+  %% API Route Components
+  dashboard["Harness Dashboard<br/>Browser UI."]
+  boundary["Site Auth And Liveness<br/>Defaults site auth to all routes while allowing public GET /health."]
+  projects["Project Routes<br/>Create/list projects and project-scoped runs."]
+  workflow["Workflow Run Routes<br/>Create/read/advance/stop/cancel workflow runs."]
+  approval["Approval Gate Routes<br/>Apply approval decisions."]
+  health["Protected Agent Health<br/>Probe authenticated Codex/OpenClaw bridge health."]
+  store["Workspace Store<br/>JSON-backed persistence."]
+  engine["Workflow Engine<br/>Creates/advances runs and decides gates."]
+  codex["Codex Bridge<br/>Authenticated v0.3 health endpoint."]
+  openclaw["OpenClaw Bridge<br/>Authenticated v0.3 health endpoint."]
+  dashboard -->|"authenticated"| boundary
+  boundary -->|"projects"| projects
+  boundary -->|"runs"| workflow
+  boundary -->|"gates"| approval
+  boundary -->|"health"| health
+  projects -->|"read/write"| store
+  workflow -->|"advance"| engine
+  workflow -->|"persist"| store
+  approval -->|"decide"| engine
+  health -->|"bearer"| codex
+  health -->|"bearer"| openclaw

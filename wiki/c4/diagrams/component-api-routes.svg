@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1380" height="890" viewBox="0 0 1380 890" role="img" aria-labelledby="title desc">
+  <title id="title">API Route Components</title>
+  <desc id="desc">Evidence-backed from repos/jormungand/proxy.ts and repos/jormungand/app/**/route.ts.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#344054" />
+    </marker>
+  </defs>
+  <style>
+    svg { background: #ffffff; font-family: Arial, Helvetica, sans-serif; }
+    .diagram-title { fill: #101828; font-size: 24px; font-weight: 700; }
+    .diagram-meta { fill: #667085; font-size: 13px; }
+    .node { stroke: #344054; stroke-width: 1.2; }
+    .node-title { fill: #101828; font-size: 14px; font-weight: 700; }
+    .node-desc { fill: #344054; font-size: 12px; }
+    .edge { stroke: #344054; stroke-width: 1.4; marker-end: url(#arrow); }
+    .edge-label { fill: #475467; font-size: 12px; paint-order: stroke; stroke: #ffffff; stroke-width: 4px; stroke-linejoin: round; }
+  </style>
+  <rect class="canvas-background" width="100%" height="100%" fill="#ffffff" />
+  <text class="diagram-title" x="32" y="36">API Route Components</text>
+  <text class="diagram-meta" x="32" y="58">Component - Evidence-backed from repos/jormungand/proxy.ts and repos/jormungand/app/**/route.ts.</text>
+  <g class="edges">
+    <line class="edge" x1="260" y1="335" x2="360" y2="340" />
+    <text class="edge-label" x="310" y="331.5">authenticated</text>
+    <line class="edge" x1="600" y1="340" x2="720" y2="90" />
+    <text class="edge-label" x="660" y="209">projects</text>
+    <line class="edge" x1="600" y1="340" x2="720" y2="260" />
+    <text class="edge-label" x="660" y="294">runs</text>
+    <line class="edge" x1="600" y1="340" x2="720" y2="430" />
+    <text class="edge-label" x="660" y="379">gates</text>
+    <line class="edge" x1="600" y1="340" x2="720" y2="600" />
+    <text class="edge-label" x="660" y="464">health</text>
+    <line class="edge" x1="960" y1="90" x2="1080" y2="85" />
+    <text class="edge-label" x="1020" y="81.5">read/write</text>
+    <line class="edge" x1="960" y1="260" x2="1080" y2="355" />
+    <text class="edge-label" x="1020" y="301.5">advance</text>
+    <line class="edge" x1="960" y1="260" x2="1080" y2="85" />
+    <text class="edge-label" x="1020" y="166.5">persist</text>
+    <line class="edge" x1="960" y1="430" x2="1080" y2="355" />
+    <text class="edge-label" x="1020" y="386.5">decide</text>
+    <line class="edge" x1="960" y1="600" x2="1080" y2="555" />
+    <text class="edge-label" x="1020" y="571.5">bearer</text>
+    <line class="edge" x1="960" y1="600" x2="1080" y2="735" />
+    <text class="edge-label" x="1020" y="661.5">bearer</text>
+  </g>
+  <g class="nodes">
+    <rect class="node container" x="40" y="280" width="220" height="110" rx="8" fill="#e6f4ea" />
+    <text class="node-title" x="56" y="308">Harness Dashboard</text>
+    <text class="node-desc" x="56" y="332">Browser UI.</text>
+    <rect class="node component" x="360" y="280" width="240" height="120" rx="8" fill="#eef0ff" />
+    <text class="node-title" x="376" y="308">Site Auth And Liveness</text>
+    <text class="node-desc" x="376" y="332">Defaults site auth to all routes</text>
+    <text class="node-desc" x="376" y="348">while allowing public GET /health.</text>
+    <rect class="node component" x="720" y="30" width="240" height="120" rx="8" fill="#eef0ff" />
+    <text class="node-title" x="736" y="58">Project Routes</text>
+    <text class="node-desc" x="736" y="82">Create/list projects and</text>
+    <text class="node-desc" x="736" y="98">project-scoped runs.</text>
+    <rect class="node component" x="720" y="200" width="240" height="120" rx="8" fill="#eef0ff" />
+    <text class="node-title" x="736" y="228">Workflow Run Routes</text>
+    <text class="node-desc" x="736" y="252">Create/read/advance/stop/cancel</text>
+    <text class="node-desc" x="736" y="268">workflow runs.</text>
+    <rect class="node component" x="720" y="370" width="240" height="120" rx="8" fill="#eef0ff" />
+    <text class="node-title" x="736" y="398">Approval Gate Routes</text>
+    <text class="node-desc" x="736" y="422">Apply approval decisions.</text>
+    <rect class="node component" x="720" y="540" width="240" height="120" rx="8" fill="#eef0ff" />
+    <text class="node-title" x="736" y="568">Protected Agent Health</text>
+    <text class="node-desc" x="736" y="592">Probe authenticated Codex/OpenClaw</text>
+    <text class="node-desc" x="736" y="608">bridge health.</text>
+    <rect class="node storage" x="1080" y="30" width="220" height="110" rx="8" fill="#f5e6ff" />
+    <text class="node-title" x="1096" y="58">Workspace Store</text>
+    <text class="node-desc" x="1096" y="82">JSON-backed persistence.</text>
+    <rect class="node container" x="1080" y="300" width="220" height="110" rx="8" fill="#e6f4ea" />
+    <text class="node-title" x="1096" y="328">Workflow Engine</text>
+    <text class="node-desc" x="1096" y="352">Creates/advances runs and decides</text>
+    <text class="node-desc" x="1096" y="368">gates.</text>
+    <rect class="node external" x="1080" y="500" width="220" height="110" rx="8" fill="#ffe3d8" />
+    <text class="node-title" x="1096" y="528">Codex Bridge</text>
+    <text class="node-desc" x="1096" y="552">Authenticated v0.3 health</text>
+    <text class="node-desc" x="1096" y="568">endpoint.</text>
+    <rect class="node external" x="1080" y="680" width="220" height="110" rx="8" fill="#ffe3d8" />
+    <text class="node-title" x="1096" y="708">OpenClaw Bridge</text>
+    <text class="node-desc" x="1096" y="732">Authenticated v0.3 health</text>
+    <text class="node-desc" x="1096" y="748">endpoint.</text>
+  </g>
+</svg>

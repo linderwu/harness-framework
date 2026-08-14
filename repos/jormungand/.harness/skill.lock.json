@@ -1,0 +1,32 @@
+{
+  "schemaVersion": "runtime-skills-lock/v1",
+  "lockedBundles": [
+    {
+      "id": "superpowers-full",
+      "version": "1.0.0",
+      "sourceUrl": "https://github.com/linderwu/harness-framework/releases/download/skills-v1.0.0/superpowers-full-1.0.0.tgz",
+      "checksum": {
+        "algorithm": "sha256",
+        "value": "c9b1d3ece463869d22d8c560b50a3082e5dede290126b84c07461869b509ee8d"
+      }
+    },
+    {
+      "id": "research-prompt",
+      "version": "1.0.0",
+      "sourceUrl": "https://github.com/linderwu/research-prompt/archive/refs/tags/v1.0.0.tar.gz",
+      "checksum": {
+        "algorithm": "sha256",
+        "value": "f4b4e37912dc185d94937daa2a6010350356349b6b5987a7435ef9dd0272f24e"
+      }
+    },
+    {
+      "id": "research-execute",
+      "version": "1.0.0",
+      "sourceUrl": "https://github.com/linderwu/research-execute/archive/refs/tags/v1.0.0.tar.gz",
+      "checksum": {
+        "algorithm": "sha256",
+        "value": "84b77c21e779830946b5a27461e9b17b8b651d47f4309d2421bd019875b4a81b"
+      }
+    }
+  ]
+}

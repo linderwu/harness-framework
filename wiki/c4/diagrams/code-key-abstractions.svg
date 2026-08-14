@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1480" height="440" viewBox="0 0 1480 440" role="img" aria-labelledby="title desc">
+  <title id="title">Code-level Key Abstractions</title>
+  <desc id="desc">Evidence-backed from graphify report and repos/jormungand/lib/types.ts plus repos/jormungand/lib/workflow.ts symbol names.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#344054" />
+    </marker>
+  </defs>
+  <style>
+    svg { background: #ffffff; font-family: Arial, Helvetica, sans-serif; }
+    .diagram-title { fill: #101828; font-size: 24px; font-weight: 700; }
+    .diagram-meta { fill: #667085; font-size: 13px; }
+    .node { stroke: #344054; stroke-width: 1.2; }
+    .node-title { fill: #101828; font-size: 14px; font-weight: 700; }
+    .node-desc { fill: #344054; font-size: 12px; }
+    .edge { stroke: #344054; stroke-width: 1.4; marker-end: url(#arrow); }
+    .edge-label { fill: #475467; font-size: 12px; paint-order: stroke; stroke: #ffffff; stroke-width: 4px; stroke-linejoin: round; }
+  </style>
+  <rect class="canvas-background" width="100%" height="100%" fill="#ffffff" />
+  <text class="diagram-title" x="32" y="36">Code-level Key Abstractions</text>
+  <text class="diagram-meta" x="32" y="58">Code - Evidence-backed from graphify report and repos/jormungand/lib/types.ts plus repos/jormungand/lib/workflow.ts symbol names.</text>
+  <g class="edges">
+    <line class="edge" x1="320" y1="180" x2="420" y2="100" />
+    <text class="edge-label" x="370" y="134">contains event skills</text>
+    <line class="edge" x1="320" y1="180" x2="420" y2="280" />
+    <text class="edge-label" x="370" y="224">contains gates</text>
+    <line class="edge" x1="680" y1="100" x2="780" y2="100" />
+    <text class="edge-label" x="730" y="94">drives invocation</text>
+    <line class="edge" x1="910" y1="160" x2="910" y2="220" />
+    <text class="edge-label" x="910" y="184">returns</text>
+    <line class="edge" x1="680" y1="100" x2="1140" y2="190" />
+    <text class="edge-label" x="910" y="139">may require bundles</text>
+    <line class="edge" x1="780" y1="280" x2="320" y2="180" />
+    <text class="edge-label" x="550" y="224">records artifacts</text>
+  </g>
+  <g class="nodes">
+    <rect class="node code" x="60" y="120" width="260" height="120" rx="8" fill="#f7f7f7" />
+    <text class="node-title" x="76" y="148">WorkflowRun</text>
+    <text class="node-desc" x="76" y="172">Run state, stages, events,</text>
+    <text class="node-desc" x="76" y="188">artifacts, gates, revisions.</text>
+    <rect class="node code" x="420" y="40" width="260" height="120" rx="8" fill="#f7f7f7" />
+    <text class="node-title" x="436" y="68">WorkflowEventSkill</text>
+    <text class="node-desc" x="436" y="92">Skill contract for event-driven</text>
+    <text class="node-desc" x="436" y="108">workflow steps.</text>
+    <rect class="node code" x="420" y="220" width="260" height="120" rx="8" fill="#f7f7f7" />
+    <text class="node-title" x="436" y="248">ApprovalGate</text>
+    <text class="node-desc" x="436" y="272">Human or agent review gate for</text>
+    <text class="node-desc" x="436" y="288">stage advancement.</text>
+    <rect class="node code" x="780" y="40" width="260" height="120" rx="8" fill="#f7f7f7" />
+    <text class="node-title" x="796" y="68">AgentInvocationInput</text>
+    <text class="node-desc" x="796" y="92">Payload sent to configured agent</text>
+    <text class="node-desc" x="796" y="108">executors.</text>
+    <rect class="node code" x="780" y="220" width="260" height="120" rx="8" fill="#f7f7f7" />
+    <text class="node-title" x="796" y="248">AgentArtifactResult</text>
+    <text class="node-desc" x="796" y="272">Agent output normalized into</text>
+    <text class="node-desc" x="796" y="288">artifacts and audit metadata.</text>
+    <rect class="node code" x="1140" y="130" width="260" height="120" rx="8" fill="#f7f7f7" />
+    <text class="node-title" x="1156" y="158">RuntimeSkillResolution</text>
+    <text class="node-desc" x="1156" y="182">Runtime skill bundle resolution</text>
+    <text class="node-desc" x="1156" y="198">status.</text>
+  </g>
+</svg>

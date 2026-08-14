@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1490" height="560" viewBox="0 0 1490 560" role="img" aria-labelledby="title desc">
+  <title id="title">Container</title>
+  <desc id="desc">Evidence-backed from repos/jormungand/app/page.tsx, repos/jormungand/app/api/** routes, and repos/jormungand/lib/*.ts.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#344054" />
+    </marker>
+  </defs>
+  <style>
+    svg { background: #ffffff; font-family: Arial, Helvetica, sans-serif; }
+    .diagram-title { fill: #101828; font-size: 24px; font-weight: 700; }
+    .diagram-meta { fill: #667085; font-size: 13px; }
+    .node { stroke: #344054; stroke-width: 1.2; }
+    .node-title { fill: #101828; font-size: 14px; font-weight: 700; }
+    .node-desc { fill: #344054; font-size: 12px; }
+    .edge { stroke: #344054; stroke-width: 1.4; marker-end: url(#arrow); }
+    .edge-label { fill: #475467; font-size: 12px; paint-order: stroke; stroke: #ffffff; stroke-width: 4px; stroke-linejoin: round; }
+  </style>
+  <rect class="canvas-background" width="100%" height="100%" fill="#ffffff" />
+  <text class="diagram-title" x="32" y="36">Container</text>
+  <text class="diagram-meta" x="32" y="58">Container - Evidence-backed from repos/jormungand/app/page.tsx, repos/jormungand/app/api/** routes, and repos/jormungand/lib/*.ts.</text>
+  <g class="edges">
+    <line class="edge" x1="250" y1="285" x2="300" y2="125" />
+    <text class="edge-label" x="275" y="199">operates</text>
+    <line class="edge" x1="410" y1="180" x2="410" y2="250" />
+    <text class="edge-label" x="410" y="209">authenticated fetch / mutate</text>
+    <line class="edge" x1="520" y1="305" x2="600" y2="215" />
+    <text class="edge-label" x="560" y="254">create/advance</text>
+    <line class="edge" x1="520" y1="305" x2="600" y2="405" />
+    <text class="edge-label" x="560" y="349">read/write</text>
+    <line class="edge" x1="820" y1="215" x2="900" y2="125" />
+    <text class="edge-label" x="860" y="164">invoke agents</text>
+    <line class="edge" x1="820" y1="215" x2="900" y2="305" />
+    <text class="edge-label" x="860" y="254">resolve skills</text>
+    <line class="edge" x1="710" y1="270" x2="710" y2="350" />
+    <text class="edge-label" x="710" y="304">persist artifacts</text>
+    <line class="edge" x1="1120" y1="125" x2="1190" y2="85" />
+    <text class="edge-label" x="1155" y="99">POST agent-runs</text>
+    <line class="edge" x1="1120" y1="125" x2="1190" y2="235" />
+    <text class="edge-label" x="1155" y="174">bridge/A2A</text>
+    <line class="edge" x1="1120" y1="125" x2="1190" y2="385" />
+    <text class="edge-label" x="1155" y="249">ensure repo</text>
+  </g>
+  <g class="nodes">
+    <rect class="node person" x="30" y="230" width="220" height="110" rx="8" fill="#fff4cc" />
+    <text class="node-title" x="46" y="258">Operator</text>
+    <text class="node-desc" x="46" y="282">Uses browser UI.</text>
+    <rect class="node container" x="300" y="70" width="220" height="110" rx="8" fill="#e6f4ea" />
+    <text class="node-title" x="316" y="98">Harness Dashboard</text>
+    <text class="node-desc" x="316" y="122">Project selection, workflow</text>
+    <text class="node-desc" x="316" y="138">launch, artifacts, approval gates.</text>
+    <rect class="node container" x="300" y="250" width="220" height="110" rx="8" fill="#e6f4ea" />
+    <text class="node-title" x="316" y="278">Authenticated HTTP</text>
+    <text class="node-title" x="316" y="296">Boundary</text>
+    <text class="node-desc" x="316" y="320">Public /health; site-authenticated</text>
+    <text class="node-desc" x="316" y="336">UI, API, and /api/agent-health.</text>
+    <rect class="node container" x="600" y="160" width="220" height="110" rx="8" fill="#e6f4ea" />
+    <text class="node-title" x="616" y="188">Workflow Engine</text>
+    <text class="node-desc" x="616" y="212">Creates/advances runs and</text>
+    <text class="node-desc" x="616" y="228">coordinates gates.</text>
+    <rect class="node container" x="900" y="70" width="220" height="110" rx="8" fill="#e6f4ea" />
+    <text class="node-title" x="916" y="98">Agent Bridge</text>
+    <text class="node-desc" x="916" y="122">Normalizes</text>
+    <text class="node-desc" x="916" y="138">Codex/OpenClaw/simulated executor</text>
+    <text class="node-desc" x="916" y="154">calls.</text>
+    <rect class="node container" x="900" y="250" width="220" height="110" rx="8" fill="#e6f4ea" />
+    <text class="node-title" x="916" y="278">Runtime Skill Resolver</text>
+    <text class="node-desc" x="916" y="302">Resolves bridge protocol v0.3</text>
+    <text class="node-desc" x="916" y="318">skill bundles.</text>
+    <rect class="node storage" x="600" y="350" width="220" height="110" rx="8" fill="#f5e6ff" />
+    <text class="node-title" x="616" y="378">Workspace Store</text>
+    <text class="node-desc" x="616" y="402">Local JSON-backed project and</text>
+    <text class="node-desc" x="616" y="418">workflow state.</text>
+    <rect class="node external" x="1190" y="30" width="220" height="110" rx="8" fill="#ffe3d8" />
+    <text class="node-title" x="1206" y="58">Codex Bridge</text>
+    <text class="node-desc" x="1206" y="82">External execution bridge.</text>
+    <rect class="node external" x="1190" y="180" width="220" height="110" rx="8" fill="#ffe3d8" />
+    <text class="node-title" x="1206" y="208">OpenClaw Runtime</text>
+    <text class="node-desc" x="1206" y="232">Optional external executor.</text>
+    <rect class="node external" x="1190" y="330" width="220" height="110" rx="8" fill="#ffe3d8" />
+    <text class="node-title" x="1206" y="358">GitHub</text>
+    <text class="node-desc" x="1206" y="382">Repository source/target.</text>
+  </g>
+</svg>

@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1580" height="430" viewBox="0 0 1580 430" role="img" aria-labelledby="title desc">
+  <title id="title">Deployment: Local Runtime</title>
+  <desc id="desc">Partly inferred from Next.js app layout, local JSON store, and bridge environment variables.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#344054" />
+    </marker>
+  </defs>
+  <style>
+    svg { background: #ffffff; font-family: Arial, Helvetica, sans-serif; }
+    .diagram-title { fill: #101828; font-size: 24px; font-weight: 700; }
+    .diagram-meta { fill: #667085; font-size: 13px; }
+    .node { stroke: #344054; stroke-width: 1.2; }
+    .node-title { fill: #101828; font-size: 14px; font-weight: 700; }
+    .node-desc { fill: #344054; font-size: 12px; }
+    .edge { stroke: #344054; stroke-width: 1.4; marker-end: url(#arrow); }
+    .edge-label { fill: #475467; font-size: 12px; paint-order: stroke; stroke: #ffffff; stroke-width: 4px; stroke-linejoin: round; }
+  </style>
+  <rect class="canvas-background" width="100%" height="100%" fill="#ffffff" />
+  <text class="diagram-title" x="32" y="36">Deployment: Local Runtime</text>
+  <text class="diagram-meta" x="32" y="58">Deployment - Partly inferred from Next.js app layout, local JSON store, and bridge environment variables.</text>
+  <g class="edges">
+    <line class="edge" x1="280" y1="155" x2="360" y2="155" />
+    <text class="edge-label" x="320" y="149">HTTP localhost</text>
+    <line class="edge" x1="580" y1="155" x2="680" y2="155" />
+    <text class="edge-label" x="630" y="149">fs read/write</text>
+    <line class="edge" x1="580" y1="155" x2="1000" y2="95" />
+    <text class="edge-label" x="790" y="119">HTTP bridge</text>
+    <line class="edge" x1="580" y1="155" x2="1000" y2="275" />
+    <text class="edge-label" x="790" y="209">HTTP or child_process</text>
+    <line class="edge" x1="580" y1="155" x2="1280" y2="185" />
+    <text class="edge-label" x="930" y="164">repository API</text>
+  </g>
+  <g class="nodes">
+    <rect class="node person" x="60" y="100" width="220" height="110" rx="8" fill="#fff4cc" />
+    <text class="node-title" x="76" y="128">Operator Browser</text>
+    <text class="node-desc" x="76" y="152">Runs Harness Dashboard UI.</text>
+    <rect class="node container" x="360" y="100" width="220" height="110" rx="8" fill="#e6f4ea" />
+    <text class="node-title" x="376" y="128">Local Next.js Process</text>
+    <text class="node-desc" x="376" y="152">Serves UI and route handlers.</text>
+    <rect class="node storage" x="680" y="100" width="220" height="110" rx="8" fill="#f5e6ff" />
+    <text class="node-title" x="696" y="128">Local State File</text>
+    <text class="node-desc" x="696" y="152">repos/jormungand/data/harness-state.json.</text>
+    <rect class="node external" x="1000" y="40" width="220" height="110" rx="8" fill="#ffe3d8" />
+    <text class="node-title" x="1016" y="68">Local Codex Bridge</text>
+    <text class="node-desc" x="1016" y="92">Optional CODEX_BRIDGE_URL process.</text>
+    <rect class="node external" x="1000" y="220" width="220" height="110" rx="8" fill="#ffe3d8" />
+    <text class="node-title" x="1016" y="248">OpenClaw Bridge/A2A</text>
+    <text class="node-desc" x="1016" y="272">Optional OPENCLAW_* process or</text>
+    <text class="node-desc" x="1016" y="288">command.</text>
+    <rect class="node external" x="1280" y="130" width="220" height="110" rx="8" fill="#ffe3d8" />
+    <text class="node-title" x="1296" y="158">GitHub</text>
+    <text class="node-desc" x="1296" y="182">Network repository service.</text>
+  </g>
+</svg>

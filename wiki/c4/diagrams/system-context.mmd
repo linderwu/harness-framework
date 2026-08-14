@@ -1,0 +1,11 @@
+flowchart LR
+  %% System Context
+  operator["Operator<br/>Creates projects, launches workflow runs, reviews artifacts, decides gates."]
+  jormungand["Jormungand Harness Framework<br/>Dashboard and workflow orchestration for agent-assisted delivery."]
+  codex["Codex Bridge<br/>Authenticated v0.3 bridge for one configured repository."]
+  openclaw["OpenClaw Runtime<br/>Authenticated v0.3 bridge or optional A2A executor."]
+  github["GitHub<br/>Repository source and intake readiness target."]
+  operator -->|"operates"| jormungand
+  jormungand -->|"agent runs"| codex
+  jormungand -->|"optional execution"| openclaw
+  jormungand -->|"repository readiness"| github

@@ -1,0 +1,128 @@
+{
+  "schemaVersion": "ouroboros-c4-diagrams/v1",
+  "generatedAt": "2026-08-12T17:36:54.037Z",
+  "source": "wiki/c4/workspace.dsl",
+  "outputs": [
+    {
+      "key": "system-context",
+      "title": "System Context",
+      "c4Type": "System Context",
+      "evidence": "Evidence-backed from wiki/c4/workspace.dsl and current API/UI source files.",
+      "files": [
+        "wiki/c4/diagrams/system-context.mmd",
+        "wiki/c4/diagrams/system-context.svg"
+      ]
+    },
+    {
+      "key": "container",
+      "title": "Container",
+      "c4Type": "Container",
+      "evidence": "Evidence-backed from repos/jormungand/app/page.tsx, repos/jormungand/app/api/** routes, and repos/jormungand/lib/*.ts.",
+      "files": [
+        "wiki/c4/diagrams/container.mmd",
+        "wiki/c4/diagrams/container.svg"
+      ]
+    },
+    {
+      "key": "component-dashboard",
+      "title": "Harness Dashboard Components",
+      "c4Type": "Component",
+      "evidence": "Evidence-backed component view for Harness Dashboard.",
+      "files": [
+        "wiki/c4/diagrams/component-dashboard.mmd",
+        "wiki/c4/diagrams/component-dashboard.svg"
+      ]
+    },
+    {
+      "key": "component-api-routes",
+      "title": "API Route Components",
+      "c4Type": "Component",
+      "evidence": "Evidence-backed from repos/jormungand/proxy.ts and repos/jormungand/app/**/route.ts.",
+      "files": [
+        "wiki/c4/diagrams/component-api-routes.mmd",
+        "wiki/c4/diagrams/component-api-routes.svg"
+      ]
+    },
+    {
+      "key": "component-workflow-engine",
+      "title": "Workflow Engine Components",
+      "c4Type": "Component",
+      "evidence": "Evidence-backed component view for Workflow Engine.",
+      "files": [
+        "wiki/c4/diagrams/component-workflow-engine.mmd",
+        "wiki/c4/diagrams/component-workflow-engine.svg"
+      ]
+    },
+    {
+      "key": "component-agent-bridge",
+      "title": "Agent Bridge Components",
+      "c4Type": "Component",
+      "evidence": "Evidence-backed component view for Agent Bridge.",
+      "files": [
+        "wiki/c4/diagrams/component-agent-bridge.mmd",
+        "wiki/c4/diagrams/component-agent-bridge.svg"
+      ]
+    },
+    {
+      "key": "component-workspace-store",
+      "title": "Workspace Store Components",
+      "c4Type": "Component",
+      "evidence": "Evidence-backed component view for Workspace Store.",
+      "files": [
+        "wiki/c4/diagrams/component-workspace-store.mmd",
+        "wiki/c4/diagrams/component-workspace-store.svg"
+      ]
+    },
+    {
+      "key": "component-runtime-skill-resolver",
+      "title": "Runtime Skill Resolver Components",
+      "c4Type": "Component",
+      "evidence": "Evidence-backed component view for Runtime Skill Resolver.",
+      "files": [
+        "wiki/c4/diagrams/component-runtime-skill-resolver.mmd",
+        "wiki/c4/diagrams/component-runtime-skill-resolver.svg"
+      ]
+    },
+    {
+      "key": "dynamic-start-workflow-run",
+      "title": "Dynamic: Start Workflow Run",
+      "c4Type": "Dynamic",
+      "evidence": "Evidence-backed from repos/jormungand/app/api/workflow-runs/route.ts and repos/jormungand/lib/workflow.ts.",
+      "files": [
+        "wiki/c4/diagrams/dynamic-start-workflow-run.mmd",
+        "wiki/c4/diagrams/dynamic-start-workflow-run.svg"
+      ]
+    },
+    {
+      "key": "deployment-local",
+      "title": "Deployment: Local Runtime",
+      "c4Type": "Deployment",
+      "evidence": "Partly inferred from Next.js app layout, local JSON store, and bridge environment variables.",
+      "files": [
+        "wiki/c4/diagrams/deployment-local.mmd",
+        "wiki/c4/diagrams/deployment-local.svg"
+      ]
+    },
+    {
+      "key": "deployment-production",
+      "title": "Deployment: Production Bridges",
+      "c4Type": "Deployment",
+      "evidence": "Evidence-backed by raw/2026-08-13-secure-bridge-deployment-verification.md and commit 52a020e.",
+      "files": [
+        "wiki/c4/diagrams/deployment-production.mmd",
+        "wiki/c4/diagrams/deployment-production.svg"
+      ]
+    },
+    {
+      "key": "code-key-abstractions",
+      "title": "Code-level Key Abstractions",
+      "c4Type": "Code",
+      "evidence": "Evidence-backed from graphify report and repos/jormungand/lib/types.ts plus repos/jormungand/lib/workflow.ts symbol names.",
+      "files": [
+        "wiki/c4/diagrams/code-key-abstractions.mmd",
+        "wiki/c4/diagrams/code-key-abstractions.svg"
+      ]
+    }
+  ],
+  "index": "wiki/c4/diagrams/index.html"
+}

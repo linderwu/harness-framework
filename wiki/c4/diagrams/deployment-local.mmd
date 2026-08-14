@@ -1,0 +1,13 @@
+flowchart LR
+  %% Deployment: Local Runtime
+  browser["Operator Browser<br/>Runs Harness Dashboard UI."]
+  next["Local Next.js Process<br/>Serves UI and route handlers."]
+  json["Local State File<br/>repos/jormungand/data/harness-state.json."]
+  codex["Local Codex Bridge<br/>Optional CODEX_BRIDGE_URL process."]
+  openclaw["OpenClaw Bridge/A2A<br/>Optional OPENCLAW_* process or command."]
+  github["GitHub<br/>Network repository service."]
+  browser -->|"HTTP localhost"| next
+  next -->|"fs read/write"| json
+  next -->|"HTTP bridge"| codex
+  next -->|"HTTP or child_process"| openclaw
+  next -->|"repository API"| github

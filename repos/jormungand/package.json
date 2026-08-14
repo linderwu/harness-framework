@@ -1,0 +1,33 @@
+{
+  "name": "harness-framework",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "codex-bridge": "node scripts/codex-bridge.mjs",
+    "openclaw-bridge": "node scripts/openclaw-bridge.mjs",
+    "c4:diagrams": "node scripts/generate-c4-diagrams.mjs",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "node -e \"require('fs').rmSync('.tmp-tests',{recursive:true,force:true})\" && tsc tests/agent-profiles.test.ts tests/agent-response-records.test.ts tests/agent-bridge-source.test.ts tests/bridge-security.test.ts tests/ouroboros-layout.test.ts tests/workspace-model.test.ts tests/workflow.test.ts tests/runtime-skills.test.ts tests/layout-css.test.ts tests/harness-dashboard-structure.test.ts tests/project-selector.test.ts tests/site-auth.test.ts lib/agent-response-records.ts lib/agents.ts lib/github-repository.ts lib/ouroboros-agent-contract.ts lib/project-templates.ts lib/types.ts lib/workflow.ts lib/workspace.ts lib/runtime-skills.ts lib/project-selector.ts lib/site-auth.ts --outDir .tmp-tests --module commonjs --target es2022 --moduleResolution node --baseUrl . --esModuleInterop --skipLibCheck && node --test .tmp-tests/tests/*.test.js"
+  },
+  "dependencies": {
+    "lucide-react": "^0.468.0",
+    "next": "^16.3.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.17.12",
+    "@types/react": "^18.3.18",
+    "@types/react-dom": "^18.3.5",
+    "eslint": "^9.39.1",
+    "eslint-config-next": "^16.3.0",
+    "typescript": "^5.7.2"
+  },
+  "overrides": {
+    "postcss": "^8.5.23"
+  }
+}

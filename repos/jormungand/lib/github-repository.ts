@@ -1,0 +1,550 @@
+import { spawn } from "child_process"
+import { ouroborosAgentContract } from "./ouroboros-agent-contract"
+
+interface GitHubRepositoryRef {
+  owner?: string
+  name: string
+}
+
+interface GitHubApiRepository {
+  full_name?: string
+  name?: string
+  owner?: {
+    login?: string
+  }
+}
+
+interface GitHubContentResponse {
+  content?: {
+    html_url?: string
+  }
+}
+
+interface GitHubFileResponse {
+  sha?: string
+  content?: {
+    html_url?: string
+  }
+}
+
+export interface GitHubFileUpsertInput {
+  repository: string
+  path: string
+  content: string
+  message: string
+}
+
+export interface GitHubFileUpsertResult {
+  status: "published" | "unchanged"
+  repository: string
+  path: string
+  htmlUrl?: string
+}
+
+export class GitHubRepositoryError extends Error {
+  status: number
+
+  constructor(message: string, status = 502) {
+    super(message)
+    this.name = "GitHubRepositoryError"
+    this.status = status
+  }
+}
+
+export async function ensureGitHubRepository(repository: string) {
+  const repo = parseRepositoryRef(repository)
+
+  if (!repo) {
+    return ""
+  }
+
+  const token = getGitHubToken()
+
+  if (token) {
+    return ensureRepositoryWithApi(repo, token)
+  }
+
+  return ensureRepositoryWithCli(repo)
+}
+
+export async function upsertGitHubFile(
+  input: GitHubFileUpsertInput
+): Promise<GitHubFileUpsertResult> {
+  const fullName = await ensureGitHubRepository(input.repository)
+  const token = process.env.GITHUB_TOKEN ?? process.env.GH_TOKEN
+
+  if (token) {
+    return upsertGitHubFileWithApi({ ...input, repository: fullName }, token)
+  }
+
+  return upsertGitHubFileWithCli({ ...input, repository: fullName })
+}
+
+function parseRepositoryRef(value: string): GitHubRepositoryRef | undefined {
+  const normalized = normalizeRepositoryInput(value)
+
+  if (!normalized) {
+    return undefined
+  }
+
+  const parts = normalized.split("/")
+
+  if (parts.length === 1) {
+    assertValidRepositorySegment(parts[0], "repository name")
+    return { name: parts[0] }
+  }
+
+  if (parts.length === 2) {
+    assertValidRepositorySegment(parts[0], "repository owner")
+    assertValidRepositorySegment(parts[1], "repository name")
+    return { owner: parts[0], name: parts[1] }
+  }
+
+  throw new GitHubRepositoryError(
+    "Repository must be a GitHub repo name, owner/name, or GitHub URL.",
+    400
+  )
+}
+
+function normalizeRepositoryInput(value: string) {
+  let normalized = value.trim()
+
+  if (!normalized) {
+    return ""
+  }
+
+  normalized = normalized.replace(/^git@github\.com:/i, "")
+  normalized = normalized.replace(/^https?:\/\/github\.com\//i, "")
+  normalized = normalized.replace(/\.git$/i, "")
+  normalized = normalized.replace(/^\/+|\/+$/g, "")
+
+  return normalized
+}
+
+function assertValidRepositorySegment(value: string, label: string) {
+  if (!/^[A-Za-z0-9_.-]+$/.test(value)) {
+    throw new GitHubRepositoryError(`Invalid GitHub ${label}: ${value}`, 400)
+  }
+}
+
+function getGitHubToken() {
+  return (
+    process.env.HARNESS_GITHUB_TOKEN?.trim() ||
+    process.env.GITHUB_TOKEN?.trim() ||
+    process.env.GH_TOKEN?.trim() ||
+    ""
+  )
+}
+
+async function ensureRepositoryWithApi(
+  repo: GitHubRepositoryRef,
+  token: string
+) {
+  const viewer = await fetchGitHubViewer(token)
+  const owner = repo.owner ?? viewer
+  const existing = await fetchGitHubRepository(owner, repo.name, token)
+
+  if (existing) {
+    return formatRepositoryFullName(existing)
+  }
+
+  const created =
+    owner.toLowerCase() === viewer.toLowerCase()
+      ? await createUserRepository(repo.name, token)
+      : await createOrganizationRepository(owner, repo.name, token)
+
+  const fullName = formatRepositoryFullName(created)
+  await seedRepositoryAgentContract(fullName, token)
+  return fullName
+}
+
+async function fetchGitHubViewer(token: string) {
+  const response = await githubFetch("https://api.github.com/user", token)
+
+  if (!response.ok) {
+    throw new GitHubRepositoryError(
+      `GitHub authentication failed with HTTP ${response.status}. Set HARNESS_GITHUB_TOKEN, GITHUB_TOKEN, or GH_TOKEN for the account that should create repositories.`,
+      response.status === 401 || response.status === 403 ? 401 : 502
+    )
+  }
+
+  const data = (await response.json()) as { login?: string }
+
+  if (!data.login) {
+    throw new GitHubRepositoryError("GitHub did not return the current user.", 502)
+  }
+
+  return data.login
+}
+
+async function fetchGitHubRepository(
+  owner: string,
+  name: string,
+  token: string
+) {
+  const response = await githubFetch(
+    `https://api.github.com/repos/${owner}/${name}`,
+    token
+  )
+
+  if (response.status === 404) {
+    return undefined
+  }
+
+  if (!response.ok) {
+    throw new GitHubRepositoryError(
+      `Could not check GitHub repository ${owner}/${name}: HTTP ${response.status}.`,
+      response.status
+    )
+  }
+
+  return (await response.json()) as GitHubApiRepository
+}
+
+async function createUserRepository(name: string, token: string) {
+  const response = await githubFetch("https://api.github.com/user/repos", token, {
+    method: "POST",
+    body: JSON.stringify(createRepositoryPayload(name))
+  })
+
+  return readCreatedRepository(response, name)
+}
+
+async function createOrganizationRepository(
+  owner: string,
+  name: string,
+  token: string
+) {
+  const response = await githubFetch(
+    `https://api.github.com/orgs/${owner}/repos`,
+    token,
+    {
+      method: "POST",
+      body: JSON.stringify(createRepositoryPayload(name))
+    }
+  )
+
+  return readCreatedRepository(response, `${owner}/${name}`)
+}
+
+function createRepositoryPayload(name: string) {
+  return {
+    name,
+    private: process.env.GITHUB_REPOSITORY_VISIBILITY !== "public",
+    auto_init: true
+  }
+}
+
+async function readCreatedRepository(response: Response, label: string) {
+  if (!response.ok) {
+    const details = await response.text().catch(() => "")
+    throw new GitHubRepositoryError(
+      `Could not create GitHub repository ${label}: HTTP ${response.status}${details ? ` ${details}` : ""}`,
+      response.status
+    )
+  }
+
+  return (await response.json()) as GitHubApiRepository
+}
+
+function githubFetch(url: string, token: string, init: RequestInit = {}) {
+  return fetch(url, {
+    ...init,
+    headers: {
+      Accept: "application/vnd.github+json",
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+      "X-GitHub-Api-Version": "2022-11-28",
+      ...init.headers
+    }
+  })
+}
+
+async function upsertGitHubFileWithApi(
+  input: GitHubFileUpsertInput,
+  token: string
+): Promise<GitHubFileUpsertResult> {
+  const current = await githubFetch(
+    `https://api.github.com/repos/${input.repository}/contents/${encodeGitHubPath(input.path)}`,
+    token
+  )
+  let sha: string | undefined
+  let htmlUrl: string | undefined
+
+  if (current.ok) {
+    const data = (await current.json()) as GitHubFileResponse
+    sha = data.sha
+    htmlUrl = data.content?.html_url
+  } else if (current.status !== 404) {
+    throw new GitHubRepositoryError(
+      `Could not check ${input.path} in ${input.repository}: HTTP ${current.status}.`,
+      current.status
+    )
+  }
+
+  if (sha && (await remoteFileMatches(input, token))) {
+    return {
+      status: "unchanged",
+      repository: input.repository,
+      path: input.path,
+      htmlUrl
+    }
+  }
+
+  const response = await githubFetch(
+    `https://api.github.com/repos/${input.repository}/contents/${encodeGitHubPath(input.path)}`,
+    token,
+    {
+      method: "PUT",
+      body: JSON.stringify({
+        message: input.message,
+        content: Buffer.from(input.content, "utf8").toString("base64"),
+        sha
+      })
+    }
+  )
+
+  if (!response.ok) {
+    const details = await response.text().catch(() => "")
+    throw new GitHubRepositoryError(
+      `Could not write ${input.path} in ${input.repository}: HTTP ${response.status}${details ? ` ${details}` : ""}`,
+      response.status
+    )
+  }
+
+  const data = (await response.json()) as GitHubContentResponse
+
+  return {
+    status: "published",
+    repository: input.repository,
+    path: input.path,
+    htmlUrl: data.content?.html_url
+  }
+}
+
+async function remoteFileMatches(input: GitHubFileUpsertInput, token: string) {
+  const response = await githubFetch(
+    `https://raw.githubusercontent.com/${input.repository}/HEAD/${input.path}`,
+    token,
+    {
+      headers: {
+        Accept: "text/plain"
+      }
+    }
+  )
+
+  if (!response.ok) {
+    return false
+  }
+
+  return (await response.text()) === input.content
+}
+
+function encodeGitHubPath(filePath: string) {
+  return filePath.split("/").map(encodeURIComponent).join("/")
+}
+
+function formatRepositoryFullName(repo: GitHubApiRepository) {
+  if (repo.full_name) {
+    return repo.full_name
+  }
+
+  if (repo.owner?.login && repo.name) {
+    return `${repo.owner.login}/${repo.name}`
+  }
+
+  throw new GitHubRepositoryError("GitHub did not return a repository name.", 502)
+}
+
+async function ensureRepositoryWithCli(repo: GitHubRepositoryRef) {
+  const viewer = repo.owner ? undefined : await runGh(["api", "user", "--jq", ".login"])
+  const fullName = repo.owner ? `${repo.owner}/${repo.name}` : `${viewer}/${repo.name}`
+  const viewResult = await runCommand("gh", [
+    "repo",
+    "view",
+    fullName,
+    "--json",
+    "nameWithOwner",
+    "--jq",
+    ".nameWithOwner"
+  ])
+
+  if (viewResult.exitCode === 0 && viewResult.stdout.trim()) {
+    return viewResult.stdout.trim()
+  }
+
+  const visibility =
+    process.env.GITHUB_REPOSITORY_VISIBILITY === "public" ? "--public" : "--private"
+  await runGh(["repo", "create", fullName, visibility, "--add-readme"])
+  await seedRepositoryAgentContractWithCli(fullName)
+  return fullName
+}
+
+async function upsertGitHubFileWithCli(
+  input: GitHubFileUpsertInput
+): Promise<GitHubFileUpsertResult> {
+  const current = await runCommand("gh", [
+    "api",
+    `repos/${input.repository}/contents/${input.path}`,
+    "--jq",
+    ".sha"
+  ])
+  const sha = current.exitCode === 0 ? current.stdout.trim() : undefined
+
+  if (sha && (await remoteFileMatchesWithCli(input))) {
+    return {
+      status: "unchanged",
+      repository: input.repository,
+      path: input.path,
+      htmlUrl: `https://github.com/${input.repository}/blob/HEAD/${input.path}`
+    }
+  }
+
+  const args = [
+    "api",
+    "-X",
+    "PUT",
+    `repos/${input.repository}/contents/${input.path}`,
+    "-f",
+    `message=${input.message}`,
+    "-f",
+    `content=${Buffer.from(input.content, "utf8").toString("base64")}`
+  ]
+
+  if (sha) {
+    args.push("-f", `sha=${sha}`)
+  }
+
+  await runGh(args)
+
+  return {
+    status: "published",
+    repository: input.repository,
+    path: input.path,
+    htmlUrl: `https://github.com/${input.repository}/blob/HEAD/${input.path}`
+  }
+}
+
+async function remoteFileMatchesWithCli(input: GitHubFileUpsertInput) {
+  const response = await runCommand("gh", [
+    "api",
+    `repos/${input.repository}/contents/${input.path}`,
+    "--jq",
+    ".content"
+  ])
+
+  if (response.exitCode !== 0) {
+    return false
+  }
+
+  const normalized = response.stdout.replace(/\s/g, "")
+  const current = Buffer.from(normalized, "base64").toString("utf8")
+
+  return current === input.content
+}
+
+async function seedRepositoryAgentContract(fullName: string, token: string) {
+  const existing = await githubFetch(
+    `https://api.github.com/repos/${fullName}/contents/AGENTS.md`,
+    token
+  )
+
+  if (existing.ok) {
+    return
+  }
+
+  if (existing.status !== 404) {
+    throw new GitHubRepositoryError(
+      `Could not check AGENTS.md in ${fullName}: HTTP ${existing.status}.`,
+      existing.status
+    )
+  }
+
+  const response = await githubFetch(
+    `https://api.github.com/repos/${fullName}/contents/AGENTS.md`,
+    token,
+    {
+      method: "PUT",
+      body: JSON.stringify({
+        message: "Add Ouroboros agent contract",
+        content: Buffer.from(ouroborosAgentContract, "utf8").toString("base64")
+      })
+    }
+  )
+
+  if (!response.ok) {
+    const details = await response.text().catch(() => "")
+    throw new GitHubRepositoryError(
+      `Could not seed AGENTS.md in ${fullName}: HTTP ${response.status}${details ? ` ${details}` : ""}`,
+      response.status
+    )
+  }
+}
+
+async function seedRepositoryAgentContractWithCli(fullName: string) {
+  const existing = await runCommand("gh", [
+    "api",
+    `repos/${fullName}/contents/AGENTS.md`,
+    "--silent"
+  ])
+
+  if (existing.exitCode === 0) {
+    return
+  }
+
+  const content = Buffer.from(ouroborosAgentContract, "utf8").toString("base64")
+  await runGh([
+    "api",
+    "-X",
+    "PUT",
+    `repos/${fullName}/contents/AGENTS.md`,
+    "-f",
+    "message=Add Ouroboros agent contract",
+    "-f",
+    `content=${content}`
+  ])
+}
+
+async function runGh(args: string[]) {
+  const result = await runCommand("gh", args)
+
+  if (result.exitCode === 0) {
+    return result.stdout.trim()
+  }
+
+  throw new GitHubRepositoryError(
+    `GitHub CLI failed: ${result.stderr.trim() || result.stdout.trim() || `gh ${args.join(" ")}`}. Authenticate with gh auth login or set HARNESS_GITHUB_TOKEN/GITHUB_TOKEN/GH_TOKEN.`,
+    502
+  )
+}
+
+function runCommand(command: string, args: string[]) {
+  return new Promise<{ exitCode: number; stdout: string; stderr: string }>(
+    (resolve, reject) => {
+      const child = spawn(command, args, {
+        shell: false,
+        windowsHide: true
+      })
+      let stdout = ""
+      let stderr = ""
+
+      child.stdout.on("data", (chunk) => {
+        stdout += chunk.toString()
+      })
+      child.stderr.on("data", (chunk) => {
+        stderr += chunk.toString()
+      })
+      child.on("error", (error) => {
+        reject(
+          new GitHubRepositoryError(
+            `${command} is not available. Install GitHub CLI or set HARNESS_GITHUB_TOKEN/GITHUB_TOKEN/GH_TOKEN: ${error.message}`,
+            502
+          )
+        )
+      })
+      child.on("close", (code) => {
+        resolve({ exitCode: code ?? 1, stdout, stderr })
+      })
+    }
+  )
+}

@@ -1,6 +1,6 @@
 # Local Codex Bridge
 
-The dashboard records `codex`, concrete OpenClaw profiles, and `manual` as workflow executors. To make `codex` execute on this machine, run the local bridge and point the app at it.
+The dashboard records `codex` and concrete OpenClaw profiles as workflow executors. To make `codex` execute on this machine, run the local bridge and point the app at it.
 
 ## Local Development
 
@@ -23,15 +23,36 @@ When a workflow event is assigned to `codex`, the Next.js API calls `POST /agent
 codex exec -c service_tier="fast" -C <repo> --sandbox workspace-write -
 ```
 
-Without `CODEX_BRIDGE_URL`, non-manual agents fail closed by default instead of
-silently creating simulated artifacts. Set `HARNESS_ALLOW_SIMULATED_AGENTS=1`
+Without `CODEX_BRIDGE_URL`, Codex fails closed by default instead of silently
+creating simulated artifacts. Set `HARNESS_ALLOW_SIMULATED_AGENTS=1`
 only when you intentionally want local demo artifacts instead of a real agent
 run.
 
-OpenClaw profiles use ids such as `openclaw.rowlet`, `openclaw.roaringmoon`,
-`openclaw.charizard`, `openclaw.mrmime`, `openclaw.mrmine`, and
-`openclaw.gengar`. When one is assigned, the Next.js
-API calls `OPENCLAW_BRIDGE_URL` and includes `mainAgent` in the payload.
+## Ouroboros-Aware Repositories
+
+Jormungandr-created GitHub repositories are seeded with an `AGENTS.md` contract
+that asks future agents to run an Ouroboros preflight before substantial work.
+The contract uses a size gate:
+
+- `<5` important source files: skip full Ouroboros and read the code directly.
+- `5-20` files: use lightweight Ouroboros, with `raw/`, focused `spec/`, and
+  graphify only for hub modules.
+- `>20` files: use full `raw/`, `graphify/`, `wiki/`, and `spec/`.
+
+The same contract is also injected into local Codex bridge prompts so workflow
+agents see the rule even before the generated repo has been cloned locally.
+The contract keeps `raw/` append-only, routes durable design rationale to
+reviewed `wiki/` pages, routes code-derived interfaces to `spec/`, and forbids
+parallel evidence layers such as `wiki/raw/`.
+
+OpenClaw profiles use ids such as `openclaw.rowlet`, `openclaw.roaringmoon`, and `openclaw.charizard`. When one is assigned, the Next.js API calls `OPENCLAW_BRIDGE_URL` and includes `mainAgent` in the payload. The reproducible HTTP adapter is `scripts/openclaw-bridge.mjs`; run it on the OpenClaw host with `npm run openclaw-bridge`. It implements bridge protocol v0.3, verifies runtime skill bundles, and copies verified bundles into the OpenClaw container before dispatch.
+
+For the configured VM, `scripts/deploy-openclaw-bridge.ps1` deploys the bridge
+with the committed runtime-skill lockfile. The bridge accepts only descriptors
+that match that local lockfile. SSH uses the existing pinned host key in
+`%USERPROFILE%\.ssh\known_hosts`; the deploy script does not accept a new host
+key automatically. Only the bridge token is copied to the executor host. Site
+Basic Auth credentials remain on the web service.
 
 ## OpenClaw A2A Command
 
@@ -82,68 +103,15 @@ openclaw agent \
 Use `OPENCLAW_BRIDGE_URL` for an HTTP request/response bridge. Use
 `OPENCLAW_A2A_COMMAND` when you want the persistent session-based A2A transport.
 
-## OpenClaw Bridge On 192.168.28.128
+When the dashboard stops or cancels a workflow run through A2A command mode, it
+invokes the same command with a standalone `/stop` message by default. The
+message is sent with the same `OPENCLAW_A2A_SESSION_KEY`, so OpenClaw targets
+the active run for that session. Override the message with
+`OPENCLAW_A2A_CONTROL_MESSAGE` only if the local adapter expects a different
+abort phrase.
 
-Use this when the Zeabur app needs to call OpenClaw. Zeabur cannot run the local
-PowerShell `OPENCLAW_A2A_COMMAND`, so it needs a public HTTPS URL that forwards
-to an HTTP bridge on the OpenClaw VM.
-
-On `192.168.28.128`:
-
-```sh
-cd /path/to/harness-framework
-export OPENCLAW_BRIDGE_HOST=127.0.0.1
-export OPENCLAW_BRIDGE_PORT=4188
-export OPENCLAW_BRIDGE_TOKEN='<same secret configured in Zeabur OPENCLAW_BRIDGE_TOKEN>'
-export OPENCLAW_CONTAINER=openclaw
-npm run openclaw-bridge
-```
-
-Health check from the VM:
-
-```sh
-curl http://127.0.0.1:4188/health
-```
-
-Expose it with a tunnel. Cloudflare Tunnel shape:
-
-```sh
-cloudflared tunnel --url http://127.0.0.1:4188
-```
-
-ngrok shape:
-
-```sh
-ngrok http 4188
-```
-
-Set the Zeabur app environment variables:
-
-```txt
-OPENCLAW_BRIDGE_URL=https://your-openclaw-bridge-domain.example
-OPENCLAW_BRIDGE_TOKEN=<same secret as OPENCLAW_BRIDGE_TOKEN on the VM>
-```
-
-Then redeploy/restart the Zeabur app. Workflow events assigned to
-`openclaw.rowlet`, `openclaw.roaringmoon`, `openclaw.charizard`,
-`openclaw.mrmime`, `openclaw.mrmine`, or `openclaw.gengar` will call:
-
-```txt
-POST $OPENCLAW_BRIDGE_URL/agent-runs
-Authorization: Bearer $OPENCLAW_BRIDGE_TOKEN
-```
-
-The bridge runs:
-
-```sh
-docker exec openclaw openclaw agent --agent <agent> --model <model> --session-key agent:<agent>:harness-<workflowRunId>-<event>-<attempt> --message <A2A envelope> --json
-```
-
-Do not expose the bridge without a token. Keep `OPENCLAW_BRIDGE_HOST=127.0.0.1`
-when using a tunnel so the bridge is not directly reachable on the LAN.
-
-The future production direction is a real OpenClaw A2A HTTP endpoint instead of
-the stdin command adapter. That endpoint should publish an Agent Card at
+The longer-term production direction is a native OpenClaw A2A HTTP endpoint instead of
+the included bridge or stdin command adapter. That endpoint should publish an Agent Card at
 `/.well-known/agent-card.json`, declare JSON-RPC transport, accept
 `message/send`, return `Message` or `Task` results, and later add `tasks/get`
 or streaming when long-running jobs need progress updates.
@@ -190,9 +158,11 @@ Expected public bridge health:
 
 ```txt
 protocolVersion=harness-agent-bridge/v0.3
-repoRoot=C:\Users\linder\Documents\harness框架
 capabilities=cancel, stop, active-run-status, idempotency-key, text-output, runtime-skill-bundles
 ```
+
+When a bridge token is configured, `/health` requires the same bearer token as
+`/agent-runs`. Health responses intentionally omit local workspace paths.
 
 Successful end-to-end workflow smoke test:
 

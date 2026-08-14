@@ -1,0 +1,242 @@
+{
+  ".harness/skill-registry.json": {
+    "mtime": 1786551545.8506775,
+    "ast_hash": "bceafaa0af93727d1b07899967770239",
+    "semantic_hash": "bceafaa0af93727d1b07899967770239"
+  },
+  ".harness/skill.lock.json": {
+    "mtime": 1786551545.851632,
+    "ast_hash": "e427acf47bf33cdb14af35aeec207992",
+    "semantic_hash": "e427acf47bf33cdb14af35aeec207992"
+  },
+  "app/api/agent-health/route.ts": {
+    "mtime": 1786551558.5542,
+    "ast_hash": "b446eee6431ac859f02db390d444bc1b",
+    "semantic_hash": "b446eee6431ac859f02db390d444bc1b"
+  },
+  "app/api/approval-gates/[id]/decide/route.ts": {
+    "mtime": 1786550417.4231997,
+    "ast_hash": "d1e540f46a123cfc143b9ada8d55755e",
+    "semantic_hash": "d1e540f46a123cfc143b9ada8d55755e"
+  },
+  "app/api/projects/[id]/workflow-runs/route.ts": {
+    "mtime": 1786550417.4242,
+    "ast_hash": "374bb6300a7c512fbabace4c1198a378",
+    "semantic_hash": "374bb6300a7c512fbabace4c1198a378"
+  },
+  "app/api/projects/route.ts": {
+    "mtime": 1786550417.4242,
+    "ast_hash": "3f11f5ededf877f06fc2d7899cd6e6d6",
+    "semantic_hash": "3f11f5ededf877f06fc2d7899cd6e6d6"
+  },
+  "app/api/workflow-runs/[id]/advance/route.ts": {
+    "mtime": 1786550417.4262006,
+    "ast_hash": "8ec8aa145969675640b51ac31aca0bf0",
+    "semantic_hash": "8ec8aa145969675640b51ac31aca0bf0"
+  },
+  "app/api/workflow-runs/[id]/cancel/route.ts": {
+    "mtime": 1786550417.427201,
+    "ast_hash": "65b0f22ce3451ff54bf0c59718123c6c",
+    "semantic_hash": "65b0f22ce3451ff54bf0c59718123c6c"
+  },
+  "app/api/workflow-runs/[id]/route.ts": {
+    "mtime": 1786550417.4282,
+    "ast_hash": "20546f4cd2808aad1896a04111f89e15",
+    "semantic_hash": "20546f4cd2808aad1896a04111f89e15"
+  },
+  "app/api/workflow-runs/[id]/stop/route.ts": {
+    "mtime": 1786550417.4291997,
+    "ast_hash": "067aeb716f6fbfa2cce30593b3ae0e00",
+    "semantic_hash": "067aeb716f6fbfa2cce30593b3ae0e00"
+  },
+  "app/api/workflow-runs/route.ts": {
+    "mtime": 1786550417.4291997,
+    "ast_hash": "df87e4ea1aae83e7b9d418c6d5afd1bd",
+    "semantic_hash": "df87e4ea1aae83e7b9d418c6d5afd1bd"
+  },
+  "app/health/route.ts": {
+    "mtime": 1786551545.8496318,
+    "ast_hash": "0fb47f07f966a25153860e5e03b9a42a",
+    "semantic_hash": "0fb47f07f966a25153860e5e03b9a42a"
+  },
+  "app/layout.tsx": {
+    "mtime": 1786550417.4302,
+    "ast_hash": "45ab9215a30d3d4ce72a7d5b80af3ba7",
+    "semantic_hash": "45ab9215a30d3d4ce72a7d5b80af3ba7"
+  },
+  "app/page.tsx": {
+    "mtime": 1786550417.4302,
+    "ast_hash": "d3e5a6d8522313fee50ba5df5ddacee6",
+    "semantic_hash": "d3e5a6d8522313fee50ba5df5ddacee6"
+  },
+  "components/harness-dashboard.tsx": {
+    "mtime": 1786550417.4322066,
+    "ast_hash": "22a1e8d46847a4f5d8f5ea95c1a71a90",
+    "semantic_hash": "22a1e8d46847a4f5d8f5ea95c1a71a90"
+  },
+  "eslint.config.mjs": {
+    "mtime": 1786550417.4322066,
+    "ast_hash": "a2716b5dca5c27bd28ffda9cc17b1eb9",
+    "semantic_hash": "a2716b5dca5c27bd28ffda9cc17b1eb9"
+  },
+  "lib/a2a-protocol.ts": {
+    "mtime": 1786550417.433206,
+    "ast_hash": "037b1685dedae886dbd9f3a598085b66",
+    "semantic_hash": "037b1685dedae886dbd9f3a598085b66"
+  },
+  "lib/agent-bridge.ts": {
+    "mtime": 1786551558.553015,
+    "ast_hash": "634d750b49e471877580406a8cb782e7",
+    "semantic_hash": "634d750b49e471877580406a8cb782e7"
+  },
+  "lib/agents.ts": {
+    "mtime": 1786550417.4342065,
+    "ast_hash": "9cc0aa10c7e977b9011f0a93fd798b1a",
+    "semantic_hash": "9cc0aa10c7e977b9011f0a93fd798b1a"
+  },
+  "lib/github-repository.ts": {
+    "mtime": 1786550417.435205,
+    "ast_hash": "f0d0d26003eaa40cbfbb452f1b8ca5d0",
+    "semantic_hash": "f0d0d26003eaa40cbfbb452f1b8ca5d0"
+  },
+  "lib/ouroboros-agent-contract.ts": {
+    "mtime": 1786550417.4362059,
+    "ast_hash": "b1ed6a52c2e9d8557e38a121375025ba",
+    "semantic_hash": "b1ed6a52c2e9d8557e38a121375025ba"
+  },
+  "lib/project-selector.ts": {
+    "mtime": 1786550417.4362059,
+    "ast_hash": "704fcf8cf6b43557a12482943f617f4b",
+    "semantic_hash": "704fcf8cf6b43557a12482943f617f4b"
+  },
+  "lib/project-templates.ts": {
+    "mtime": 1786550417.4372053,
+    "ast_hash": "4d34c76d6398a3a8aa2727f6f59e6e68",
+    "semantic_hash": "4d34c76d6398a3a8aa2727f6f59e6e68"
+  },
+  "lib/runtime-skills.ts": {
+    "mtime": 1786550417.4372053,
+    "ast_hash": "a6e7d1f714609171f992dcb78e996000",
+    "semantic_hash": "a6e7d1f714609171f992dcb78e996000"
+  },
+  "lib/site-auth.ts": {
+    "mtime": 1786551545.8456373,
+    "ast_hash": "8fff44456643c3ad6241254370632099",
+    "semantic_hash": "8fff44456643c3ad6241254370632099"
+  },
+  "lib/store.ts": {
+    "mtime": 1786550417.4392064,
+    "ast_hash": "1126a326861cc199e1e2e12fc29328a8",
+    "semantic_hash": "1126a326861cc199e1e2e12fc29328a8"
+  },
+  "lib/types.ts": {
+    "mtime": 1786550417.4392064,
+    "ast_hash": "533562455fa4e514a3fe78a5953d7729",
+    "semantic_hash": "533562455fa4e514a3fe78a5953d7729"
+  },
+  "lib/workflow.ts": {
+    "mtime": 1786550417.4402056,
+    "ast_hash": "54ee708382e6f217d9d9e0e0e8a665d6",
+    "semantic_hash": "54ee708382e6f217d9d9e0e0e8a665d6"
+  },
+  "lib/workspace.ts": {
+    "mtime": 1786550417.441206,
+    "ast_hash": "2fa1ba38b3c94470f795df181871c477",
+    "semantic_hash": "2fa1ba38b3c94470f795df181871c477"
+  },
+  "next-env.d.ts": {
+    "mtime": 1786552732.3585927,
+    "ast_hash": "0e4a65e8b2b9aa3ed0f8957b9406bd41",
+    "semantic_hash": "0e4a65e8b2b9aa3ed0f8957b9406bd41"
+  },
+  "next.config.mjs": {
+    "mtime": 1786550417.441206,
+    "ast_hash": "11f938b820bc97e42be9ddae0f9e3ea0",
+    "semantic_hash": "11f938b820bc97e42be9ddae0f9e3ea0"
+  },
+  "package.json": {
+    "mtime": 1786552662.6413147,
+    "ast_hash": "d23870c2d01b12060b955bd3dd35b76c",
+    "semantic_hash": "d23870c2d01b12060b955bd3dd35b76c"
+  },
+  "proxy.ts": {
+    "mtime": 1786551545.8476312,
+    "ast_hash": "3fdb0a3a0ac4e17e66d87d819bcdf209",
+    "semantic_hash": "3fdb0a3a0ac4e17e66d87d819bcdf209"
+  },
+  "scripts/codex-bridge.mjs": {
+    "mtime": 1786551720.2064676,
+    "ast_hash": "2d8e970588311ed12e24a3ca83677662",
+    "semantic_hash": "2d8e970588311ed12e24a3ca83677662"
+  },
+  "scripts/deploy-openclaw-bridge.ps1": {
+    "mtime": 1786552978.070189,
+    "ast_hash": "6b5b97559172663a423245e54eafcc8b",
+    "semantic_hash": "6b5b97559172663a423245e54eafcc8b"
+  },
+  "scripts/generate-c4-diagrams.mjs": {
+    "mtime": 1786550417.4497197,
+    "ast_hash": "3fadcac514de7cdec22b41d91b0205e9",
+    "semantic_hash": "3fadcac514de7cdec22b41d91b0205e9"
+  },
+  "scripts/openclaw-bridge.mjs": {
+    "mtime": 1786552617.698553,
+    "ast_hash": "21e05520c3bc4211841a3a99578c93af",
+    "semantic_hash": "21e05520c3bc4211841a3a99578c93af"
+  },
+  "tests/agent-profiles.test.ts": {
+    "mtime": 1786550417.4507234,
+    "ast_hash": "9e1ae2aad683303198aa34e97c9a94f6",
+    "semantic_hash": "9e1ae2aad683303198aa34e97c9a94f6"
+  },
+  "tests/bridge-security.test.ts": {
+    "mtime": 1786552662.6393173,
+    "ast_hash": "a130198e6b17d3269f7bc016cd6d1566",
+    "semantic_hash": "a130198e6b17d3269f7bc016cd6d1566"
+  },
+  "tests/harness-dashboard-structure.test.ts": {
+    "mtime": 1786550417.4507234,
+    "ast_hash": "384d9d40fa4afafd0d6b675df9d0e1f9",
+    "semantic_hash": "384d9d40fa4afafd0d6b675df9d0e1f9"
+  },
+  "tests/layout-css.test.ts": {
+    "mtime": 1786550417.4517214,
+    "ast_hash": "da047e1467303919ab1fc39f95764744",
+    "semantic_hash": "da047e1467303919ab1fc39f95764744"
+  },
+  "tests/ouroboros-layout.test.ts": {
+    "mtime": 1786550417.4527204,
+    "ast_hash": "35d99ad993d3db64b4c79c371d3af6f3",
+    "semantic_hash": "35d99ad993d3db64b4c79c371d3af6f3"
+  },
+  "tests/project-selector.test.ts": {
+    "mtime": 1786550417.4527204,
+    "ast_hash": "0f3e13daa8dd5b3a17bcf53094d4efed",
+    "semantic_hash": "0f3e13daa8dd5b3a17bcf53094d4efed"
+  },
+  "tests/runtime-skills.test.ts": {
+    "mtime": 1786551545.8526332,
+    "ast_hash": "89df324ff4170a2a21ebe147c4f7eee9",
+    "semantic_hash": "89df324ff4170a2a21ebe147c4f7eee9"
+  },
+  "tests/site-auth.test.ts": {
+    "mtime": 1786551545.8466349,
+    "ast_hash": "61beb1672def38536e49e42f87be04c2",
+    "semantic_hash": "61beb1672def38536e49e42f87be04c2"
+  },
+  "tests/workflow.test.ts": {
+    "mtime": 1786551545.8536298,
+    "ast_hash": "ba712671de8dbb9ba0faf044b5651407",
+    "semantic_hash": "ba712671de8dbb9ba0faf044b5651407"
+  },
+  "tests/workspace-model.test.ts": {
+    "mtime": 1786551597.8094664,
+    "ast_hash": "dd5385cd99138b047a4e69631b9e21cd",
+    "semantic_hash": "dd5385cd99138b047a4e69631b9e21cd"
+  },
+  "tsconfig.json": {
+    "mtime": 1786550417.4547212,
+    "ast_hash": "47fe7f910945f851236d69fe5534ba35",
+    "semantic_hash": "47fe7f910945f851236d69fe5534ba35"
+  }
+}

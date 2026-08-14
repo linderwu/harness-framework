@@ -1,0 +1,2629 @@
+"use client"
+
+import Image from "next/image"
+import { createPortal } from "react-dom"
+import {
+  Bot,
+  BookOpenText,
+  Bug,
+  Check,
+  Code2,
+  ChevronLeft,
+  ChevronDown,
+  ChevronRight,
+  CircleDot,
+  ClipboardList,
+  FileUp,
+  FolderUp,
+  GitBranch,
+  Play,
+  RefreshCw,
+  RotateCcw,
+  Search,
+  Server,
+  Square,
+  SlidersHorizontal,
+  ShieldCheck,
+  Trash2,
+  UserCheck,
+  Wifi,
+  WifiOff,
+  X
+} from "lucide-react"
+import {
+  ChangeEvent,
+  FormEvent,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  useEffect
+} from "react"
+import type { CSSProperties } from "react"
+import {
+  agentProfiles,
+  defaultAgentKind,
+  getAgentLabel,
+  type AgentProfile
+} from "@/lib/agents"
+import { formatQuotaValue, type AgentQuota } from "@/lib/agent-quota"
+import type {
+  AgentKind,
+  ApprovalActorType,
+  ApprovalGate,
+  HarnessState,
+  Project,
+  ProjectContextFile,
+  ProjectOverview,
+  ProjectType,
+  WorkflowRun,
+  WorkflowStage
+} from "@/lib/types"
+import {
+  getProjectTemplate,
+  projectTypeOptions
+} from "@/lib/project-templates"
+import {
+  buildProjectSelectorItems,
+  filterProjectSelectorItems,
+  type ProjectSelectorFilter,
+  type ProjectSelectorItem
+} from "@/lib/project-selector"
+import {
+  actorLabels,
+  createDefaultEventSkills,
+  createResearchEventSkills,
+  eventTypeLabels,
+  stageLabels
+} from "@/lib/workflow"
+
+const orderedStages: WorkflowStage[] = [
+  "intake",
+  "plan",
+  "design",
+  "implementation",
+  "verification",
+  "completed"
+]
+const agentMenuMaxHeight = 268
+const folderPickerAttributes = {
+  directory: "",
+  webkitdirectory: ""
+} as Record<string, string>
+
+const defaultEventSkills = createDefaultEventSkills()
+const defaultSkillAssignments = Object.fromEntries(
+  defaultEventSkills.map((skill) => [skill.id, defaultAgentKind])
+) as Record<string, AgentKind>
+
+function getAssignableEventSkills(projectType: ProjectType) {
+  if (projectType === "agent_task") {
+    return []
+  }
+
+  if (projectType === "research") {
+    return createResearchEventSkills().filter(
+      (skill) => skill.id !== "intake.requirement" && skill.id !== "closeout.archive"
+    )
+  }
+
+  return defaultEventSkills
+}
+
+const maxContextFileBytes = 2 * 1024 * 1024
+const maxContextTotalBytes = 5 * 1024 * 1024
+const bridgeHealthPollIntervalMs = 10_000
+const bridgeHealthStaleAfterMs = 30_000
+const bridgeOfflineFailureThreshold = 2
+type ApprovalDecision = "approved" | "rejected" | "changes_requested"
+type BridgeHealthStatus = "online" | "offline"
+type BridgePanelStatus = BridgeHealthStatus | "checking" | "stale"
+type BridgeId = "codex-bridge" | "openclaw-bridge"
+
+interface BridgeHealth {
+  id: BridgeId
+  label: string
+  status: BridgeHealthStatus
+  urlHost: string
+  protocolVersion?: string
+  capabilities?: string[]
+  message?: string
+}
+
+interface AgentHealthResponse {
+  checkedAt: string
+  bridges: BridgeHealth[]
+}
+
+const sampleRequirement =
+  "Build a Jormungandr dashboard that can select Arceus/OpenClaw agents and control design/verification with approval gates."
+
+const projectTypeVisuals: Record<
+  ProjectType,
+  { icon: typeof ClipboardList; accent: string; description: string }
+> = {
+  research: {
+    icon: Search,
+    accent: "violet",
+    description: "Collect evidence and produce a research report."
+  },
+  development: {
+    icon: Code2,
+    accent: "orange",
+    description: "Ship a feature from intake through verification."
+  },
+  testing: {
+    icon: Check,
+    accent: "green",
+    description: "Plan, execute, and document test coverage."
+  },
+  documentation: {
+    icon: BookOpenText,
+    accent: "cyan",
+    description: "Draft, review, and publish clear documentation."
+  },
+  diagnosis: {
+    icon: Bug,
+    accent: "red",
+    description: "Reproduce, diagnose, and verify a problem."
+  },
+  decision: {
+    icon: GitBranch,
+    accent: "blue",
+    description: "Compare options and record a confident decision."
+  },
+  agent_task: {
+    icon: Bot,
+    accent: "violet",
+    description: "Send a focused instruction to an agent."
+  }
+}
+
+const projectModeDescriptions: Record<ProjectType, string> = {
+  research: "Explore evidence and turn uncertainty into a clear report.",
+  development: "Move from idea to verified software with approval gates.",
+  testing: "Design coverage, execute scenarios, and preserve evidence.",
+  documentation: "Shape source material into a reviewed, publishable artifact.",
+  diagnosis: "Trace a failure from symptom to cause and recovery plan.",
+  decision: "Compare options, expose tradeoffs, and record the call.",
+  agent_task: "Send one focused instruction and receive an agent response."
+}
+
+export function HarnessDashboard({
+  initialState
+}: {
+  initialState: HarnessState
+}) {
+  const [projects, setProjects] = useState<Project[]>(initialState.projects)
+  const [runs, setRuns] = useState<WorkflowRun[]>(initialState.workflowRuns)
+  const [selectedProjectId, setSelectedProjectId] = useState<
+    string | undefined
+  >(initialState.projects[0]?.id)
+  const [selectedRunId, setSelectedRunId] = useState<string | undefined>(
+    initialState.workflowRuns.find(
+      (run) => run.projectId === initialState.projects[0]?.id
+    )?.id
+  )
+  const [isLoading, setIsLoading] = useState(false)
+  const [isMutating, setIsMutating] = useState(false)
+  const [mutationError, setMutationError] = useState<string | undefined>()
+  const [agentQuotas, setAgentQuotas] = useState<AgentQuota[]>([])
+  const [quotaError, setQuotaError] = useState<string | undefined>()
+  const [openComposeSection, setOpenComposeSection] = useState<
+    "requirement" | "automation" | undefined
+  >()
+  const [skillSearch, setSkillSearch] = useState("")
+  const [showOverridesOnly, setShowOverridesOnly] = useState(false)
+  const [bulkStage, setBulkStage] = useState<WorkflowStage | "all">("all")
+  const [bulkAgent, setBulkAgent] = useState<AgentKind>(defaultAgentKind)
+  const [form, setForm] = useState({
+    projectName: "Jormungandr MVP",
+    projectType: "development" as ProjectType,
+    repository: "",
+    requirement: sampleRequirement,
+    contextFiles: [] as ProjectContextFile[],
+    selectedAgent: defaultAgentKind,
+    skillAssignments: defaultSkillAssignments,
+    designApprovalActor: "independent_agent" as ApprovalActorType,
+    verificationApprovalActor: "verification_subagent" as ApprovalActorType
+  })
+
+  const projectSelectorItems = useMemo(
+    () => buildProjectSelectorItems(projects, runs),
+    [projects, runs]
+  )
+  const selectedProject = useMemo(
+    () =>
+      projectSelectorItems.find((item) => item.project.id === selectedProjectId)
+        ?.project ?? projectSelectorItems[0]?.project,
+    [projectSelectorItems, selectedProjectId]
+  )
+  const selectedProjectRuns = useMemo(
+    () =>
+      selectedProject
+        ? runs.filter((run) => run.projectId === selectedProject.id)
+        : [],
+    [runs, selectedProject]
+  )
+  const selectedRun = useMemo(
+    () =>
+      selectedProjectRuns.find((run) => run.id === selectedRunId) ??
+      selectedProjectRuns[0],
+    [selectedProjectRuns, selectedRunId]
+  )
+  const selectedOverview = useMemo(
+    () =>
+      selectedProject
+        ? buildProjectOverview(selectedProject, selectedProjectRuns)
+      : undefined,
+    [selectedProject, selectedProjectRuns]
+  )
+  const isAgentTask = form.projectType === "agent_task"
+  const assignmentSkills = useMemo(
+    () => getAssignableEventSkills(form.projectType),
+    [form.projectType]
+  )
+  const assignmentStages = useMemo(
+    () => Array.from(new Set(assignmentSkills.map((skill) => skill.stage))),
+    [assignmentSkills]
+  )
+  const hasApprovalPolicies = form.projectType === "development"
+  const overrideCount = useMemo(
+    () =>
+      assignmentSkills.filter(
+        (skill) =>
+          (form.skillAssignments[skill.id] ?? form.selectedAgent) !==
+          form.selectedAgent
+      ).length,
+    [assignmentSkills, form.selectedAgent, form.skillAssignments]
+  )
+  const visibleAssignmentSkills = useMemo(() => {
+    const query = skillSearch.trim().toLowerCase()
+
+    return assignmentSkills.filter((skill) => {
+      const executor = form.skillAssignments[skill.id] ?? form.selectedAgent
+      const isOverride = executor !== form.selectedAgent
+      const matchesQuery =
+        query.length === 0 ||
+        skill.name.toLowerCase().includes(query) ||
+        eventTypeLabels[skill.eventType].toLowerCase().includes(query) ||
+        stageLabels[skill.stage].toLowerCase().includes(query)
+
+      return matchesQuery && (!showOverridesOnly || isOverride)
+    })
+  }, [
+    assignmentSkills,
+    form.selectedAgent,
+    form.skillAssignments,
+    showOverridesOnly,
+    skillSearch
+  ])
+
+  async function refreshWorkspace() {
+    const [projectsResponse, runsResponse] = await Promise.all([
+      fetch("/api/projects", { cache: "no-store" }),
+      fetch("/api/workflow-runs", { cache: "no-store" })
+    ])
+    const nextProjects = (await projectsResponse.json()) as Project[]
+    const nextRuns = (await runsResponse.json()) as WorkflowRun[]
+    const nextSelectorItems = buildProjectSelectorItems(nextProjects, nextRuns)
+    const fallbackProjectId = nextSelectorItems[0]?.project.id
+
+    setProjects(nextProjects)
+    setRuns(nextRuns)
+    setSelectedProjectId((current) =>
+      nextProjects.some((project) => project.id === current)
+        ? current
+        : fallbackProjectId
+    )
+    setSelectedRunId((current) => {
+      if (nextRuns.some((run) => run.id === current)) {
+        return current
+      }
+
+      const activeProjectId =
+        nextProjects.some((project) => project.id === selectedProjectId)
+          ? selectedProjectId
+          : fallbackProjectId
+      const latestRun = nextRuns
+        .filter((run) => run.projectId === activeProjectId)
+        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0]
+
+      return latestRun?.id
+    })
+    setIsLoading(false)
+  }
+
+  async function refreshAgentQuotas() {
+    try {
+      const response = await fetch("/api/agent-quotas", { cache: "no-store" })
+      if (!response.ok) throw new Error("Unable to load agent quota")
+      setAgentQuotas((await response.json()) as AgentQuota[])
+      setQuotaError(undefined)
+    } catch (error) {
+      setQuotaError(error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  useEffect(() => {
+    const initialRefresh = window.setTimeout(() => void refreshAgentQuotas(), 0)
+    const interval = window.setInterval(() => void refreshAgentQuotas(), 60_000)
+    return () => {
+      window.clearTimeout(initialRefresh)
+      window.clearInterval(interval)
+    }
+  }, [])
+
+  async function createProject(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    setIsMutating(true)
+    setMutationError(undefined)
+
+    try {
+      const response = await fetch("/api/projects", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: form.projectName,
+          type: form.projectType,
+          goal: form.requirement,
+          repository: form.repository,
+          contextFiles: form.contextFiles
+        })
+      })
+      const project = await readProjectMutationResponse(response)
+      const run = isAgentTask
+        ? await readRunMutationResponse(
+            await fetch(`/api/projects/${project.id}/workflow-runs`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                selectedAgent: form.selectedAgent
+              })
+            })
+          )
+        : undefined
+
+      await refreshWorkspace()
+      setSelectedProjectId(project.id)
+      setSelectedRunId(run?.id)
+    } catch (error) {
+      setMutationError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setIsMutating(false)
+    }
+  }
+
+  async function startProjectRun(project: Project) {
+    setIsMutating(true)
+    setMutationError(undefined)
+
+    try {
+      const response = await fetch(`/api/projects/${project.id}/workflow-runs`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          selectedAgent: form.selectedAgent,
+          skillAssignments: form.skillAssignments,
+          designApprovalActor: form.designApprovalActor,
+          verificationApprovalActor: form.verificationApprovalActor
+        })
+      })
+      const run = await readRunMutationResponse(response)
+      await refreshWorkspace()
+      setSelectedProjectId(project.id)
+      setSelectedRunId(run.id)
+    } catch (error) {
+      setMutationError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setIsMutating(false)
+    }
+  }
+
+  async function advanceRun(runId: string) {
+    setIsMutating(true)
+    const response = await fetch(`/api/workflow-runs/${runId}/advance`, {
+      method: "POST"
+    })
+    const run = await readRunMutationResponse(response)
+    await refreshWorkspace()
+    setSelectedRunId(run.id)
+    setIsMutating(false)
+  }
+
+  async function stopRun(runId: string) {
+    setIsMutating(true)
+    const response = await fetch(`/api/workflow-runs/${runId}/stop`, {
+      method: "POST"
+    })
+    const run = await readRunMutationResponse(response)
+    await refreshWorkspace()
+    setSelectedRunId(run.id)
+    setIsMutating(false)
+  }
+
+  async function cancelRun(run: WorkflowRun) {
+    const confirmed = window.confirm(
+      `Cancel "${run.projectName}" and preserve its artifacts for review?`
+    )
+
+    if (!confirmed) {
+      return
+    }
+
+    setIsMutating(true)
+    await fetch(`/api/workflow-runs/${run.id}/cancel`, {
+      method: "POST"
+    })
+    await refreshWorkspace()
+    setIsMutating(false)
+  }
+
+  async function decideGate(
+    gate: ApprovalGate,
+    decision: "approved" | "rejected" | "changes_requested"
+  ) {
+    setIsMutating(true)
+    const response = await fetch(`/api/approval-gates/${gate.id}/decide`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ decision })
+    })
+    const run = await readRunMutationResponse(response)
+    await refreshWorkspace()
+    setSelectedRunId(run.id)
+    setIsMutating(false)
+  }
+
+  function updateSelectedAgent(selectedAgent: AgentKind) {
+    setForm((currentForm) => ({
+      ...currentForm,
+      selectedAgent,
+      skillAssignments: Object.fromEntries(
+        getAssignableEventSkills(currentForm.projectType).map((skill) => {
+          const currentAgent =
+            currentForm.skillAssignments[skill.id] ??
+            currentForm.selectedAgent
+
+          return [
+            skill.id,
+            currentAgent === currentForm.selectedAgent
+              ? selectedAgent
+              : currentAgent
+          ]
+        })
+      ) as Record<string, AgentKind>
+    }))
+  }
+
+  function selectProjectType(projectType: ProjectType) {
+    const template = getProjectTemplate(projectType)
+
+    setForm((currentForm) => ({
+      ...currentForm,
+      projectType,
+      repository: projectType === "agent_task" ? "" : currentForm.repository,
+      skillAssignments: Object.fromEntries(
+        getAssignableEventSkills(projectType).map((skill) => [
+          skill.id,
+          currentForm.selectedAgent
+        ])
+      ) as Record<string, AgentKind>
+    }))
+    setBulkStage("all")
+    setMutationError(template.warning)
+  }
+
+  function cycleProjectType(direction: -1 | 1) {
+    const currentIndex = projectTypeOptions.findIndex(
+      (option) => option.type === form.projectType
+    )
+    const nextIndex =
+      (currentIndex + direction + projectTypeOptions.length) %
+      projectTypeOptions.length
+
+    selectProjectType(projectTypeOptions[nextIndex].type)
+  }
+
+  function updateSkillAssignment(skillId: string, agent: AgentKind) {
+    setForm({
+      ...form,
+      skillAssignments: {
+        ...form.skillAssignments,
+        [skillId]: agent
+      }
+    })
+  }
+
+  function applyBulkAssignment() {
+    setForm((currentForm) => ({
+      ...currentForm,
+      skillAssignments: Object.fromEntries(
+        getAssignableEventSkills(currentForm.projectType).map((skill) => {
+          const currentAgent =
+            currentForm.skillAssignments[skill.id] ??
+            currentForm.selectedAgent
+          const shouldApply = bulkStage === "all" || skill.stage === bulkStage
+
+          return [skill.id, shouldApply ? bulkAgent : currentAgent]
+        })
+      ) as Record<string, AgentKind>
+    }))
+  }
+
+  function resetSkillAssignments() {
+    setForm((currentForm) => ({
+      ...currentForm,
+      skillAssignments: Object.fromEntries(
+        getAssignableEventSkills(currentForm.projectType).map((skill) => [
+          skill.id,
+          currentForm.selectedAgent
+        ])
+      ) as Record<string, AgentKind>
+    }))
+  }
+
+  async function importContextFiles(
+    event: ChangeEvent<HTMLInputElement>
+  ) {
+    const files = Array.from(event.target.files ?? [])
+
+    if (files.length === 0) {
+      return
+    }
+
+    const oversizedFile = files.find((file) => file.size > maxContextFileBytes)
+    const totalBytes =
+      form.contextFiles.reduce((total, file) => total + file.size, 0) +
+      files.reduce((total, file) => total + file.size, 0)
+
+    if (oversizedFile || totalBytes > maxContextTotalBytes) {
+      window.alert(
+        "Context files are too large for the JSON-backed state store. Keep each file under 2 MB and the run under 5 MB."
+      )
+      event.target.value = ""
+      return
+    }
+
+    const contextFiles = await Promise.all(files.map(readProjectContextFile))
+
+    setForm((currentForm) => ({
+      ...currentForm,
+      contextFiles: mergeContextFiles(currentForm.contextFiles, contextFiles)
+    }))
+    event.target.value = ""
+  }
+
+  function removeContextFile(fileId: string) {
+    setForm((currentForm) => ({
+      ...currentForm,
+      contextFiles: currentForm.contextFiles.filter((file) => file.id !== fileId)
+    }))
+  }
+
+  async function readRunMutationResponse(response: Response) {
+    const data = (await response.json()) as
+      | WorkflowRun
+      | { error?: string; latestRun?: WorkflowRun }
+
+    if (response.ok) {
+      return data as WorkflowRun
+    }
+
+    if ("latestRun" in data && data.latestRun) {
+      return data.latestRun
+    }
+
+    throw new Error(("error" in data && data.error) || "Workflow mutation failed")
+  }
+
+  async function readProjectMutationResponse(response: Response) {
+    const data = (await response.json()) as Project | { error?: string }
+
+    if (response.ok) {
+      return data as Project
+    }
+
+    throw new Error(("error" in data && data.error) || "Project mutation failed")
+  }
+
+  return (
+    <main className={`shell mode-${form.projectType}`}>
+      <button
+        aria-label="Previous project mode"
+        className="modeEdgeButton modeEdgeButtonLeft"
+        onClick={() => cycleProjectType(-1)}
+        title="Previous project mode"
+        type="button"
+      >
+        <ChevronLeft size={20} />
+        <span>Previous</span>
+      </button>
+      <button
+        aria-label="Next project mode"
+        className="modeEdgeButton modeEdgeButtonRight"
+        onClick={() => cycleProjectType(1)}
+        title="Next project mode"
+        type="button"
+      >
+        <span>Next</span>
+        <ChevronRight size={20} />
+      </button>
+      <header className="topbar">
+        <div>
+          <p className="eyebrow modeEyebrow">{getProjectTemplate(form.projectType).label} mode</p>
+          <h1>{"Jormungand"}</h1>
+        </div>
+        <button className="iconButton" onClick={refreshWorkspace} title="Refresh">
+          <RefreshCw size={18} />
+        </button>
+      </header>
+
+      <section className="quotaSection" aria-labelledby="quota-heading">
+        <div className="sectionHeading">
+          <div>
+            <p className="eyebrow">Model capacity</p>
+            <h2 id="quota-heading">Agent weekly health</h2>
+          </div>
+          <small>{quotaError ?? "Refreshes every minute"}</small>
+        </div>
+        <div className="quotaGrid">
+          {agentProfiles.map((agent) => {
+            const quota = agentQuotas.find((item) => item.agentId === agent.id)
+            return <AgentQuotaCard agent={agent} quota={quota} key={agent.id} />
+          })}
+        </div>
+      </section>
+
+      <section className="layoutGrid">
+        <form className="panel composePanel" onSubmit={createProject}>
+          <div className="panelHeader">
+            <CircleDot size={18} />
+            <h2>New Project</h2>
+          </div>
+
+          <div className="modeSurface" aria-labelledby="mode-surface-heading">
+            <div className="modeSurfaceHeader">
+              <div>
+                <p className="eyebrow">Global mode</p>
+                <h3 id="mode-surface-heading">{getProjectTemplate(form.projectType).label}</h3>
+                <p>{projectModeDescriptions[form.projectType]}</p>
+              </div>
+              <span className="modeSurfacePhase">{getProjectTemplate(form.projectType).phases.length} phases</span>
+            </div>
+            <div className="modeDock" aria-label="Project modes">
+              {projectTypeOptions.map((option) => {
+                const visual = projectTypeVisuals[option.type]
+                const Icon = visual.icon
+                return (
+                  <button
+                    aria-label={option.label}
+                    aria-pressed={form.projectType === option.type}
+                    className={form.projectType === option.type ? "selected" : ""}
+                    key={option.type}
+                    onClick={() => selectProjectType(option.type)}
+                    type="button"
+                  >
+                    <Icon size={16} />
+                    <span>{option.label}</span>
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+
+          <button
+            className="composeLaunchButton"
+            onClick={() => setOpenComposeSection("requirement")}
+            type="button"
+          >
+            <ClipboardList size={18} />
+            <span>
+              <strong>
+                {isAgentTask
+                  ? "Task / Agent Instruction"
+                  : "Project / Repository / Requirement"}
+              </strong>
+              <small>
+                {isAgentTask
+                  ? form.requirement
+                  : `${form.projectName} - ${
+                      form.repository || "GitHub repo not set"
+                    }`}
+              </small>
+            </span>
+            <ChevronRight size={18} />
+          </button>
+
+          <button
+            className="composeLaunchButton"
+            onClick={() => setOpenComposeSection("automation")}
+            type="button"
+          >
+            <SlidersHorizontal size={18} />
+            <span>
+              <strong>
+                {isAgentTask
+                  ? "Agent"
+                  : hasApprovalPolicies
+                    ? "Agent / Skills / Approval Policies"
+                    : "Agent / Skills"}
+              </strong>
+              <small>
+                {isAgentTask
+                  ? getAgentLabel(form.selectedAgent)
+                  : hasApprovalPolicies
+                    ? `${getAgentLabel(
+                        form.selectedAgent
+                      )} - design and verification gates`
+                    : `${getAgentLabel(
+                        form.selectedAgent
+                      )} - ${assignmentSkills.length} workflow skills`}
+              </small>
+            </span>
+            <ChevronRight size={18} />
+          </button>
+
+          <div className="runActionRow">
+            <button
+              className="primaryButton createRunButton"
+              disabled={isMutating}
+            >
+              <Play size={17} />
+              {isAgentTask ? "Run Task" : "Create Project"}
+            </button>
+            <button
+              className="stopButton"
+              disabled={
+                isMutating ||
+                !selectedRun ||
+                !isStoppableStatus(selectedRun.status)
+              }
+              onClick={() => selectedRun && stopRun(selectedRun.id)}
+              title="Stop selected run's current stage"
+              type="button"
+            >
+              <Square size={16} />
+              Stop Stage
+            </button>
+            <button
+              className="dangerButton"
+              disabled={
+                isMutating ||
+                !selectedRun ||
+                !isCancelableStatus(selectedRun.status)
+              }
+              onClick={() => selectedRun && cancelRun(selectedRun)}
+              title="Cancel selected run and preserve its artifacts"
+              type="button"
+            >
+              <Trash2 size={17} />
+              Cancel Run
+            </button>
+          </div>
+
+          <BridgeStatusPanel run={selectedRun} />
+
+          {mutationError ? (
+            <p className="formError" role="alert">
+              {mutationError}
+            </p>
+          ) : null}
+
+          {openComposeSection ? (
+            <div className="composeOverlay" role="dialog" aria-modal="true">
+              <div className="composeSheet">
+                <div className="composeSheetHeader">
+                  <div>
+                    <p className="eyebrow">Workflow Setup</p>
+                    <h2>
+                      {openComposeSection === "requirement"
+                        ? isAgentTask
+                          ? "Task / Agent Instruction"
+                          : "Project / Repository / Requirement"
+                        : isAgentTask
+                          ? "Agent"
+                          : hasApprovalPolicies
+                            ? "Agent / Skills / Approval Policies"
+                            : "Agent / Skills"}
+                    </h2>
+                  </div>
+                  <button
+                    className="iconButton"
+                    onClick={() => setOpenComposeSection(undefined)}
+                    title="Close"
+                    type="button"
+                  >
+                    <X size={18} />
+                  </button>
+                </div>
+
+                {openComposeSection === "requirement" ? (
+                  <div className="composeSheetBody">
+                    <label>
+                      <span>Project</span>
+                      <input
+                        value={form.projectName}
+                        onChange={(event) =>
+                          setForm({ ...form, projectName: event.target.value })
+                        }
+                      />
+                    </label>
+
+                    {!isAgentTask ? (
+                      <label>
+                        <span>Repository</span>
+                        <input
+                          placeholder="my-new-repo or owner/repository"
+                          value={form.repository}
+                          onChange={(event) =>
+                            setForm({ ...form, repository: event.target.value })
+                          }
+                        />
+                      </label>
+                    ) : null}
+
+                    <label>
+                      <span className="requirementHeader">
+                        <span>
+                          {isAgentTask ? "Instruction" : "Requirement"}
+                        </span>
+                        <span className="requirementActions">
+                          {form.contextFiles.length > 0 ? (
+                            <small>
+                              {form.contextFiles.length} files attached
+                            </small>
+                          ) : null}
+                          <span
+                            className="iconTextButton importButton"
+                            tabIndex={0}
+                          >
+                            <FileUp size={15} />
+                            Import File
+                            <input
+                              className="fileImportInput"
+                              multiple
+                              onChange={importContextFiles}
+                              type="file"
+                            />
+                          </span>
+                          <span
+                            className="iconTextButton importButton"
+                            tabIndex={0}
+                          >
+                            <FolderUp size={15} />
+                            Import Folder
+                            <input
+                              className="fileImportInput"
+                              multiple
+                              onChange={importContextFiles}
+                              type="file"
+                              {...folderPickerAttributes}
+                            />
+                          </span>
+                        </span>
+                      </span>
+                      <textarea
+                        value={form.requirement}
+                        onChange={(event) =>
+                          setForm({ ...form, requirement: event.target.value })
+                        }
+                      />
+                      {form.contextFiles.length > 0 ? (
+                        <div className="contextFileList">
+                          {form.contextFiles.map((file) => (
+                            <span className="contextFileChip" key={file.id}>
+                              <FileUp size={13} />
+                              <span>
+                                <strong>{file.path}</strong>
+                                <small>{formatFileSize(file.size)}</small>
+                              </span>
+                              <button
+                                aria-label={`Remove ${file.path}`}
+                                onClick={() => removeContextFile(file.id)}
+                                type="button"
+                              >
+                                <X size={13} />
+                              </button>
+                            </span>
+                          ))}
+                        </div>
+                      ) : null}
+                    </label>
+                  </div>
+                ) : (
+                  <div className="composeSheetBody">
+                    {isAgentTask ? (
+                      <section className="agentTaskAgentPanel">
+                        <label>
+                          <span>Agent</span>
+                          <AgentSelect
+                            value={form.selectedAgent}
+                            onChange={updateSelectedAgent}
+                          />
+                        </label>
+                      </section>
+                    ) : (
+                    <section className="assignmentWorkbench">
+                      <div className="assignmentHeader">
+                        <div>
+                          <h3>Assignment Workbench</h3>
+                          <p>
+                            Route each workflow skill to an executor. Skills use
+                            the default unless you override them.
+                          </p>
+                        </div>
+                        <div className="assignmentSummary">
+                          <strong>{overrideCount}</strong>
+                          <span>overrides</span>
+                        </div>
+                      </div>
+
+                      <div className="defaultExecutorRow">
+                        <div>
+                          <strong>Default Executor</strong>
+                          <small>
+                            Applied to skills without a custom assignment.
+                          </small>
+                        </div>
+                        <AgentSelect
+                          value={form.selectedAgent}
+                          onChange={updateSelectedAgent}
+                        />
+                      </div>
+
+                      <div className="assignmentToolbar">
+                        <label className="searchField">
+                          <span>Search Skills</span>
+                          <span className="searchInputWrap">
+                            <Search size={15} />
+                            <input
+                              value={skillSearch}
+                              onChange={(event) =>
+                                setSkillSearch(event.target.value)
+                              }
+                              placeholder="Stage, event, or skill name"
+                            />
+                          </span>
+                        </label>
+
+                        <label>
+                          <span>Bulk Scope</span>
+                          <select
+                            className="plainSelect"
+                            value={bulkStage}
+                            onChange={(event) =>
+                              setBulkStage(
+                                event.target.value as WorkflowStage | "all"
+                              )
+                            }
+                          >
+                            <option value="all">All stages</option>
+                            {orderedStages
+                              .filter((stage) => assignmentStages.includes(stage))
+                              .map((stage) => (
+                                <option key={stage} value={stage}>
+                                  {stageLabels[stage]}
+                                </option>
+                              ))}
+                          </select>
+                        </label>
+
+                        <label>
+                          <span>Bulk Executor</span>
+                          <AgentSelect
+                            value={bulkAgent}
+                            onChange={setBulkAgent}
+                          />
+                        </label>
+
+                        <div className="toolbarActions">
+                          <button
+                            className="iconTextButton applyBulkButton"
+                            onClick={applyBulkAssignment}
+                            type="button"
+                          >
+                            <Check size={15} />
+                            Apply
+                          </button>
+                          <button
+                            className={
+                              showOverridesOnly
+                                ? "iconTextButton activeFilter"
+                                : "iconTextButton"
+                            }
+                            onClick={() =>
+                              setShowOverridesOnly((current) => !current)
+                            }
+                            type="button"
+                          >
+                            <SlidersHorizontal size={15} />
+                            Overrides
+                          </button>
+                          <button
+                            className="iconTextButton"
+                            onClick={resetSkillAssignments}
+                            type="button"
+                          >
+                            <RotateCcw size={15} />
+                            Reset
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="assignmentTable" role="table">
+                        <div className="assignmentTableHead" role="row">
+                          <span>Stage</span>
+                          <span>Skill</span>
+                          <span>Executor</span>
+                          <span>Policy</span>
+                        </div>
+                        {visibleAssignmentSkills.length === 0 ? (
+                          <div className="assignmentEmpty">
+                            No matching skills.
+                          </div>
+                        ) : (
+                          visibleAssignmentSkills.map((skill) => {
+                            const executor =
+                              form.skillAssignments[skill.id] ??
+                              form.selectedAgent
+                            const isOverride = executor !== form.selectedAgent
+
+                            return (
+                              <div
+                                className="assignmentTableRow"
+                                key={skill.id}
+                                role="row"
+                              >
+                                <span className={`stageBadge ${skill.stage}`}>
+                                  {stageLabels[skill.stage]}
+                                </span>
+                                <div className="skillCell">
+                                  <strong>{skill.name}</strong>
+                                  <small>{eventTypeLabels[skill.eventType]}</small>
+                                </div>
+                                <div className="executorCell">
+                                  <AgentSelect
+                                    value={executor}
+                                    menuPlacement="up"
+                                    onChange={(agent) =>
+                                      updateSkillAssignment(skill.id, agent)
+                                    }
+                                  />
+                                  <small>
+                                    {isOverride
+                                      ? "Custom assignment"
+                                      : `Uses default: ${getAgentLabel(
+                                          form.selectedAgent
+                                        )}`}
+                                  </small>
+                                </div>
+                                <span className={`policyBadge ${skill.stage}`}>
+                                  {getSkillPolicyLabel(skill.stage)}
+                                </span>
+                              </div>
+                            )
+                          })
+                        )}
+                      </div>
+
+                      {hasApprovalPolicies ? (
+                      <div className="policyGrid assignmentPolicyGrid">
+                        <fieldset>
+                          <legend>Design Approval Policy</legend>
+                          <ActorSelect
+                            value={form.designApprovalActor}
+                            onChange={(designApprovalActor) =>
+                              setForm({ ...form, designApprovalActor })
+                            }
+                          />
+                        </fieldset>
+
+                        <fieldset>
+                          <legend>Verification Approval Policy</legend>
+                          <ActorSelect
+                            value={form.verificationApprovalActor}
+                            onChange={(verificationApprovalActor) =>
+                              setForm({ ...form, verificationApprovalActor })
+                            }
+                          />
+                        </fieldset>
+                      </div>
+                      ) : null}
+                    </section>
+                    )}
+                  </div>
+                )}
+
+                <div className="composeSheetFooter">
+                  <button
+                    className="primaryButton"
+                    onClick={() => setOpenComposeSection(undefined)}
+                    type="button"
+                  >
+                    Done
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : null}
+        </form>
+
+        <section className="workspace">
+          <ProjectSelector
+            isLoading={isLoading}
+            items={projectSelectorItems}
+            selectedProjectId={selectedProject?.id}
+            onSelectProject={(item) => {
+              setSelectedProjectId(item.project.id)
+              setSelectedRunId(item.latestRun?.id)
+            }}
+          />
+
+          {selectedProject && selectedOverview ? (
+            <ProjectDetail
+              overview={selectedOverview}
+              selectedRun={selectedRun}
+              isMutating={isMutating}
+              onStartRun={startProjectRun}
+              onAdvance={advanceRun}
+              onDecideGate={decideGate}
+              onCancelRun={cancelRun}
+              onStopRun={stopRun}
+            />
+          ) : (
+            <div className="panel emptyState">
+              <Bot size={22} />
+              <p>Create a project to start.</p>
+            </div>
+          )}
+        </section>
+      </section>
+    </main>
+  )
+}
+
+function ProjectSelector({
+  isLoading,
+  items,
+  selectedProjectId,
+  onSelectProject
+}: {
+  isLoading: boolean
+  items: ProjectSelectorItem[]
+  selectedProjectId?: string
+  onSelectProject: (item: ProjectSelectorItem) => void
+}) {
+  const [isOpen, setIsOpen] = useState(false)
+  const [query, setQuery] = useState("")
+  const [filter, setFilter] = useState<ProjectSelectorFilter>("all")
+  const selectedItem =
+    items.find((item) => item.project.id === selectedProjectId) ?? items[0]
+  const visibleItems = filterProjectSelectorItems(items, query, filter)
+
+  function clearFilters() {
+    setQuery("")
+    setFilter("all")
+  }
+
+  return (
+    <div className="panel runsPanel projectSelector">
+      <button
+        aria-expanded={isOpen}
+        className="projectSelectorSummary"
+        onClick={() => items.length > 0 && setIsOpen((current) => !current)}
+        type="button"
+      >
+        <span className="projectSelectorHeader">
+          <span>
+            <GitBranch size={18} />
+            <strong>Projects</strong>
+          </span>
+          <ChevronDown size={18} />
+        </span>
+
+        {isLoading ? (
+          <span className="muted">Loading</span>
+        ) : selectedItem ? (
+          <span className="projectSelectorCurrent">
+            <span
+              className={`projectStatusDot ${selectedItem.status.dotVariant}`}
+              aria-hidden="true"
+            />
+            <span>
+              <strong title={selectedItem.project.name}>
+                {selectedItem.project.name}
+              </strong>
+              <small title={selectedItem.absoluteActivityLabel}>
+                {selectedItem.projectTypeLabel} - {selectedItem.status.label} -{" "}
+                {selectedItem.relativeActivityLabel}
+              </small>
+            </span>
+          </span>
+        ) : (
+          <span className="muted">No projects yet</span>
+        )}
+      </button>
+
+      {isOpen ? (
+        <div className="projectSelectorPopover">
+          <div className="projectSelectorControls">
+            <label className="projectSearch">
+              <Search size={16} />
+              <input
+                aria-label="Search projects"
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="Search projects..."
+                value={query}
+              />
+            </label>
+            <div className="segmented projectFilter">
+              {[
+                ["all", "All"],
+                ["active", "Active"],
+                ["needs_attention", "Needs attention"],
+                ["completed", "Completed"]
+              ].map(([value, label]) => (
+                <button
+                  className={filter === value ? "selected" : ""}
+                  key={value}
+                  onClick={() => setFilter(value as ProjectSelectorFilter)}
+                  type="button"
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {visibleItems.length === 0 ? (
+            <div className="projectSelectorEmpty">
+              <p className="muted">No projects found</p>
+              <button
+                className="iconTextButton"
+                onClick={clearFilters}
+                type="button"
+              >
+                <RotateCcw size={15} />
+                Clear filters
+              </button>
+            </div>
+          ) : (
+            <div className="projectSelectorList">
+              {visibleItems.map((item) => (
+                <ProjectOption
+                  item={item}
+                  isSelected={item.project.id === selectedProjectId}
+                  key={item.project.id}
+                  onSelect={() => {
+                    onSelectProject(item)
+                    setIsOpen(false)
+                  }}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+function ProjectOption({
+  item,
+  isSelected,
+  onSelect
+}: {
+  item: ProjectSelectorItem
+  isSelected: boolean
+  onSelect: () => void
+}) {
+  return (
+    <button
+      className={isSelected ? "projectOption selected" : "projectOption"}
+      onClick={onSelect}
+      type="button"
+    >
+      <span
+        className={`projectStatusDot ${item.status.dotVariant}`}
+        aria-hidden="true"
+      />
+      <span>
+        <strong title={item.project.name}>{item.project.name}</strong>
+        <small title={item.absoluteActivityLabel}>
+          {item.projectTypeLabel} - {item.status.label} -{" "}
+          {item.relativeActivityLabel}
+        </small>
+        <small>{item.latestRunSummary}</small>
+      </span>
+    </button>
+  )
+}
+
+function buildProjectOverview(
+  project: Project,
+  workflowRuns: WorkflowRun[]
+): ProjectOverview {
+  const template = getProjectTemplate(project.type)
+  const sortedRuns = [...workflowRuns].sort((a, b) =>
+    b.updatedAt.localeCompare(a.updatedAt)
+  )
+
+  return {
+    project,
+    phaseLabels: template.phases,
+    artifacts: sortedRuns.flatMap((run) => run.artifacts),
+    pendingGates: sortedRuns.flatMap((run) =>
+      run.approvalGates.filter((gate) => gate.status === "pending")
+    ),
+    agentRuns: sortedRuns.flatMap((run) => run.agentRuns),
+    workflowEvents: sortedRuns.flatMap((run) => run.events),
+    contextFiles: project.contextFiles,
+    latestRun: sortedRuns[0],
+    warning: template.warning
+  }
+}
+
+function ProjectPhaseTimeline({ overview }: { overview: ProjectOverview }) {
+  const currentIndex = Math.max(
+    0,
+    overview.phaseLabels.indexOf(overview.project.currentPhase)
+  )
+
+  return (
+    <section className="panel timelinePanel">
+      <div className="stageTrack">
+        {overview.phaseLabels.map((phase, index) => {
+          const progress =
+            index < currentIndex
+              ? 100
+              : index === currentIndex
+                ? phase === "Completed"
+                  ? 100
+                  : 68
+                : 0
+          const stageClass =
+            index < currentIndex || phase === "Completed"
+              ? "stage done"
+              : index === currentIndex
+                ? "stage current"
+                : "stage"
+
+          return (
+            <div className={`${stageClass} projectPhase`} key={phase}>
+              <span
+                className="stageRing"
+                style={
+                  {
+                    "--stage-progress": `${progress}%`
+                  } as CSSProperties
+                }
+              >
+                {progress}%
+              </span>
+              <small>{phase}</small>
+            </div>
+          )
+        })}
+      </div>
+    </section>
+  )
+}
+
+function ProjectDetail({
+  overview,
+  selectedRun,
+  isMutating,
+  onStartRun,
+  onAdvance,
+  onDecideGate,
+  onCancelRun,
+  onStopRun
+}: {
+  overview: ProjectOverview
+  selectedRun?: WorkflowRun
+  isMutating: boolean
+  onStartRun: (project: Project) => void
+  onAdvance: (runId: string) => void
+  onDecideGate: (gate: ApprovalGate, decision: ApprovalDecision) => void
+  onCancelRun: (run: WorkflowRun) => void
+  onStopRun: (runId: string) => void
+}) {
+  const { project } = overview
+
+  return (
+    <div className="detailStack projectDetailStack">
+      <section className="panel heroPanel">
+        <div>
+          <p className="eyebrow">
+            {getProjectTemplate(project.type).label} -{" "}
+            {project.repository || "No repository"}
+          </p>
+          <h2>{project.name}</h2>
+          <p className="requirement">{project.goal}</p>
+          <p className="muted">
+            {project.currentPhase} - {project.status} - {project.nextAction}
+          </p>
+          {overview.warning ? <p className="muted">{overview.warning}</p> : null}
+        </div>
+        <div className="projectActionStack">
+          <button
+            className="primaryButton"
+            disabled={isMutating}
+            onClick={() => onStartRun(project)}
+            title={
+              project.type === "agent_task"
+                ? "Run agent task"
+                : "Start project run"
+            }
+          >
+            <Play size={18} />
+            {project.type === "agent_task" ? "Run Task" : "Start Run"}
+          </button>
+          {selectedRun && project.type !== "agent_task" ? (
+            <button
+              className="iconTextButton"
+              disabled={
+                isMutating ||
+                selectedRun.status === "waiting_for_approval" ||
+                isTerminalStatus(selectedRun.status)
+              }
+              onClick={() => onAdvance(selectedRun.id)}
+              title="Advance selected project run"
+            >
+              <ChevronRight size={18} />
+              Advance
+            </button>
+          ) : null}
+        </div>
+      </section>
+
+      <ProjectPhaseTimeline overview={overview} />
+
+      <section className="splitGrid">
+        <div className="panel">
+          <div className="panelHeader">
+            <ShieldCheck size={18} />
+            <h2>Command Queue</h2>
+          </div>
+          {overview.pendingGates.length === 0 ? (
+            <p className="muted">No pending gates</p>
+          ) : (
+            <div className="gateList">
+              {overview.pendingGates.map((gate) => (
+                <div className="gateRow" key={gate.id}>
+                  <div>
+                    <strong>{stageLabels[gate.stage]}</strong>
+                    <small>
+                      {actorLabels[gate.actorType]}
+                      {gate.requireIndependence ? " - independent" : ""}
+                    </small>
+                  </div>
+                  <GateDecisionButtons
+                    className="compact"
+                    gate={gate}
+                    isMutating={isMutating}
+                    onDecideGate={onDecideGate}
+                  />
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="panel">
+          <div className="panelHeader">
+            <UserCheck size={18} />
+            <h2>Context</h2>
+          </div>
+          {overview.contextFiles.length === 0 ? (
+            <p className="muted">No context files attached</p>
+          ) : (
+            <div className="contextFileList">
+              {overview.contextFiles.map((file) => (
+                <span className="contextFileChip" key={file.id}>
+                  <FileUp size={13} />
+                  <span>
+                    <strong>{file.path}</strong>
+                    <small>{formatFileSize(file.size)}</small>
+                  </span>
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      </section>
+
+      {selectedRun ? (
+        <RunDetail
+          isMutating={isMutating}
+          run={selectedRun}
+          onDecideGate={onDecideGate}
+          onCancelRun={onCancelRun}
+          onStopRun={onStopRun}
+        />
+      ) : (
+        <section className="panel emptyState">
+          <Bot size={22} />
+          <p>Start a run to generate artifacts and execution history.</p>
+        </section>
+      )}
+    </div>
+  )
+}
+
+function RunDetail({
+  isMutating,
+  run,
+  onDecideGate,
+  onCancelRun,
+  onStopRun
+}: {
+  isMutating: boolean
+  run: WorkflowRun
+  onDecideGate: (gate: ApprovalGate, decision: ApprovalDecision) => void
+  onCancelRun: (run: WorkflowRun) => void
+  onStopRun: (runId: string) => void
+}) {
+  const pendingGate = run.approvalGates.find((gate) => gate.status === "pending")
+  const pendingApprovalSkillId = pendingGate
+    ? `${pendingGate.stage}.approval`
+    : undefined
+  const [openDetailSection, setOpenDetailSection] = useState<
+    "skills" | "artifacts" | undefined
+  >()
+
+  return (
+    <div className="detailStack">
+      <section className="splitGrid">
+        <div className="panel">
+          <div className="panelHeader">
+            <ShieldCheck size={18} />
+            <h2>Approval Gates</h2>
+          </div>
+          <div className="gateList">
+            {run.approvalGates.length === 0 ? (
+              <p className="muted">No gates opened yet</p>
+            ) : (
+              run.approvalGates.map((gate) => (
+                <div className="gateRow" key={gate.id}>
+                  <div>
+                    <strong>{stageLabels[gate.stage]}</strong>
+                    <small>
+                      {actorLabels[gate.actorType]}
+                      {gate.requireIndependence ? " - independent" : ""}
+                    </small>
+                  </div>
+                  <StatusPill status={gate.status} />
+                </div>
+              ))
+            )}
+          </div>
+
+          {pendingGate ? (
+            <GateDecisionButtons
+              gate={pendingGate}
+              isMutating={isMutating}
+              onDecideGate={onDecideGate}
+            />
+          ) : null}
+        </div>
+
+        <div className="panel">
+          <div className="panelHeader">
+            <UserCheck size={18} />
+            <h2>Agent Runs</h2>
+            <button
+              className="dangerButton compactPanelButton"
+              disabled={isMutating || !isCancelableStatus(run.status)}
+              onClick={() => onCancelRun(run)}
+              title="Cancel run"
+              type="button"
+            >
+              <Trash2 size={15} />
+              Cancel Run
+            </button>
+          </div>
+          <div className="agentList">
+            {run.agentRuns.length === 0 ? (
+              <p className="muted">No agent activity yet</p>
+            ) : (
+              run.agentRuns.map((agentRun) => (
+                <div className="agentRow" key={agentRun.id}>
+                  <span className="agentRunInfo">
+                    <strong>{stageLabels[agentRun.stage]}</strong>
+                    <small>
+                      {getAgentLabel(agentRun.agent)} - {agentRun.status}
+                    </small>
+                  </span>
+                  {isActiveAgentRunStatus(agentRun.status) ? (
+                    <button
+                      className="stopButton compactPanelButton"
+                      disabled={isMutating}
+                      onClick={() => onStopRun(run.id)}
+                      title="Stop task"
+                      type="button"
+                    >
+                      <Square size={14} />
+                      Stop task
+                    </button>
+                  ) : (
+                    <StatusPill status={agentRun.status} />
+                  )}
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      </section>
+
+      <section className="detailLaunchGrid">
+        <button
+          className="composeLaunchButton detailLaunchButton"
+          onClick={() => setOpenDetailSection("skills")}
+          type="button"
+        >
+          <ClipboardList size={18} />
+          <span>
+            <strong>Event Skill Chain</strong>
+            <small>
+              {run.eventSkills.length} skills - {run.events.length} events
+              recorded
+            </small>
+          </span>
+          <ChevronRight size={18} />
+        </button>
+
+        <button
+          className="composeLaunchButton detailLaunchButton"
+          onClick={() => setOpenDetailSection("artifacts")}
+          type="button"
+        >
+          <Bot size={18} />
+          <span>
+            <strong>Artifacts</strong>
+            <small>
+              {run.artifacts.length} artifacts - {run.currentStage} stage
+            </small>
+          </span>
+          <ChevronRight size={18} />
+        </button>
+      </section>
+
+      {openDetailSection ? (
+        <div className="composeOverlay" role="dialog" aria-modal="true">
+          <div className="composeSheet">
+            <div className="composeSheetHeader">
+              <div>
+                <p className="eyebrow">Run Detail</p>
+                <h2>
+                  {openDetailSection === "skills"
+                    ? "Event Skill Chain"
+                    : "Artifacts"}
+                </h2>
+              </div>
+              <button
+                className="iconButton"
+                onClick={() => setOpenDetailSection(undefined)}
+                title="Close"
+                type="button"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="composeSheetBody">
+              {openDetailSection === "skills" ? (
+                <div className="skillChain">
+                  {run.eventSkills.map((skill) => {
+                    const matchingEvents = run.events.filter(
+                      (event) =>
+                        event.workflowRunId === run.id && event.skillId === skill.id
+                    )
+                    const latestEvent = [...matchingEvents].sort((a, b) =>
+                      a.createdAt.localeCompare(b.createdAt)
+                    )[matchingEvents.length - 1]
+                    const executor =
+                      run.skillAssignments[skill.id] ?? run.selectedAgent
+                    const isPendingApprovalSkill =
+                      Boolean(pendingGate) && skill.id === pendingApprovalSkillId
+
+                    return (
+                      <article
+                        className={
+                          isPendingApprovalSkill
+                            ? "skillCard pendingGateSkill"
+                            : "skillCard"
+                        }
+                        key={skill.id}
+                      >
+                        <div className="skillCardHeader">
+                          <div className="skillCardTitle">
+                            <strong>{skill.name}</strong>
+                            <small>
+                              {eventTypeLabels[skill.eventType]} -{" "}
+                              {stageLabels[skill.stage]}
+                            </small>
+                          </div>
+                          <div className="skillCardStatusColumn">
+                            <StatusPill
+                              status={latestEvent?.status ?? "pending"}
+                            />
+                            {isPendingApprovalSkill && pendingGate ? (
+                              <GateDecisionButtons
+                                className="skillGateActions"
+                                gate={pendingGate}
+                                isMutating={isMutating}
+                                onDecideGate={onDecideGate}
+                              />
+                            ) : null}
+                          </div>
+                        </div>
+                        <p>{skill.purpose}</p>
+                        <div className="skillMetaGrid">
+                          <SkillMeta
+                            title="Executor"
+                            values={[getAgentLabel(executor)]}
+                          />
+                          <SkillMeta title="Trigger" values={[skill.trigger]} />
+                          <SkillMeta
+                            title="Knowledge"
+                            values={skill.knowledgeSources}
+                          />
+                          <SkillMeta
+                            title="Constraints"
+                            values={skill.constraints}
+                          />
+                          <SkillMeta title="Gates" values={skill.gates} />
+                        </div>
+                      </article>
+                    )
+                  })}
+                </div>
+              ) : (
+                <div className="artifactList">
+                  {run.artifacts.length === 0 ? (
+                    <p className="muted">No artifacts yet</p>
+                  ) : (
+                    run.artifacts.map((artifact) => (
+                      <article className="artifact" key={artifact.id}>
+                        <div>
+                          <strong>{artifact.title}</strong>
+                          <small>
+                            {stageLabels[artifact.stage]} - {artifact.type}
+                          </small>
+                        </div>
+                        <pre>{artifact.body}</pre>
+                      </article>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div className="composeSheetFooter">
+              <button
+                className="primaryButton"
+                onClick={() => setOpenDetailSection(undefined)}
+                type="button"
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+function getSkillPolicyLabel(stage: WorkflowStage) {
+  if (stage === "plan") {
+    return "Human gate"
+  }
+
+  if (stage === "design") {
+    return "Design gate"
+  }
+
+  if (stage === "verification") {
+    return "Verification gate"
+  }
+
+  return "No gate"
+}
+
+const textFileExtensions = new Set([
+  "css",
+  "csv",
+  "html",
+  "js",
+  "json",
+  "jsx",
+  "log",
+  "md",
+  "markdown",
+  "mdx",
+  "sql",
+  "svg",
+  "toml",
+  "ts",
+  "tsx",
+  "txt",
+  "xml",
+  "yaml",
+  "yml"
+])
+
+async function readProjectContextFile(file: File): Promise<ProjectContextFile> {
+  const path = getContextFilePath(file)
+  const isText = isTextContextFile(file)
+
+  return {
+    id: crypto.randomUUID(),
+    name: file.name,
+    path,
+    type: file.type || "application/octet-stream",
+    size: file.size,
+    encoding: isText ? "text" : "base64",
+    content: isText ? await file.text() : await readFileAsBase64(file),
+    importedAt: new Date().toISOString()
+  }
+}
+
+function getContextFilePath(file: File) {
+  const relativePath = (file as File & { webkitRelativePath?: string })
+    .webkitRelativePath
+
+  return relativePath || file.name
+}
+
+function isTextContextFile(file: File) {
+  const extension = file.name.split(".").pop()?.toLowerCase() ?? ""
+
+  return file.type.startsWith("text/") || textFileExtensions.has(extension)
+}
+
+function readFileAsBase64(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader()
+
+    reader.onerror = () => reject(reader.error)
+    reader.onload = () => {
+      const dataUrl = String(reader.result ?? "")
+      const [, base64 = ""] = dataUrl.split(",", 2)
+      resolve(base64)
+    }
+    reader.readAsDataURL(file)
+  })
+}
+
+function mergeContextFiles(
+  existingFiles: ProjectContextFile[],
+  incomingFiles: ProjectContextFile[]
+) {
+  const filesByPath = new Map(
+    existingFiles.map((file) => [file.path, file] as const)
+  )
+
+  incomingFiles.forEach((file) => filesByPath.set(file.path, file))
+
+  return Array.from(filesByPath.values())
+}
+
+function formatFileSize(bytes: number) {
+  if (bytes <= 0) {
+    return "0 B"
+  }
+
+  const units = ["B", "KB", "MB", "GB"]
+  let size = bytes
+  let unitIndex = 0
+
+  while (size >= 1024 && unitIndex < units.length - 1) {
+    size /= 1024
+    unitIndex += 1
+  }
+
+  return `${size.toFixed(size >= 10 || unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`
+}
+
+function BridgeStatusPanel({ run }: { run?: WorkflowRun }) {
+  const [health, setHealth] = useState<Partial<Record<BridgeId, BridgeHealth>>>(
+    {}
+  )
+  const [isChecking, setIsChecking] = useState(false)
+  const [failureCount, setFailureCount] = useState(0)
+  const [lastSuccessAt, setLastSuccessAt] = useState<string | undefined>()
+  const [now, setNow] = useState(() => Date.now())
+
+  async function refreshBridgeHealth() {
+    setIsChecking(true)
+    setNow(Date.now())
+
+    try {
+      const response = await fetch("/api/agent-health", { cache: "no-store" })
+      const data = (await response.json()) as AgentHealthResponse
+
+      if (!response.ok) {
+        throw new Error("Bridge health request failed")
+      }
+
+      setHealth(
+        Object.fromEntries(
+          data.bridges.map((bridge) => [bridge.id, bridge])
+        ) as Partial<Record<BridgeId, BridgeHealth>>
+      )
+      setLastSuccessAt(data.checkedAt)
+      setFailureCount(0)
+    } catch {
+      setFailureCount((current) => current + 1)
+    } finally {
+      setIsChecking(false)
+    }
+  }
+
+  useLayoutEffect(() => {
+    const initialCheckId = window.setTimeout(refreshBridgeHealth, 0)
+    const intervalId = window.setInterval(
+      refreshBridgeHealth,
+      bridgeHealthPollIntervalMs
+    )
+    const clockId = window.setInterval(() => setNow(Date.now()), 1000)
+
+    return () => {
+      window.clearTimeout(initialCheckId)
+      window.clearInterval(intervalId)
+      window.clearInterval(clockId)
+    }
+  }, [])
+
+  const isStale =
+    lastSuccessAt &&
+    now - new Date(lastSuccessAt).getTime() > bridgeHealthStaleAfterMs
+  const panelStatus = getAggregateBridgeStatus({
+    health,
+    failureCount,
+    isChecking,
+    isStale: Boolean(isStale)
+  })
+  const visibleBridges = Object.values(health)
+
+  return (
+    <aside className="bridgeStatusPanel" aria-label="Agent bridge status">
+      <div className="bridgeStatusPanelHeader">
+        <span>
+          {panelStatus === "online" ? <Wifi size={16} /> : <WifiOff size={16} />}
+          <strong>Bridge Connections</strong>
+        </span>
+        <button
+          className="iconButton bridgeRefreshButton"
+          onClick={refreshBridgeHealth}
+          title="Refresh bridge health"
+          type="button"
+        >
+          <RefreshCw size={14} />
+        </button>
+      </div>
+
+      {visibleBridges.length === 0 ? (
+        <p className="bridgeStatusEmpty">No bridge URLs registered</p>
+      ) : (
+        <div className="bridgeStatusCards">
+          {visibleBridges.map((bridge) => (
+            <BridgeStatusCard
+              agents={getBridgeAgents(bridge.id)}
+              failureCount={failureCount}
+              health={bridge}
+              isChecking={isChecking}
+              isStale={Boolean(isStale)}
+              key={bridge.id}
+              lastSuccessAt={lastSuccessAt}
+              now={now}
+              run={run}
+            />
+          ))}
+        </div>
+      )}
+    </aside>
+  )
+}
+
+function BridgeStatusCard({
+  agents,
+  failureCount,
+  health,
+  isChecking,
+  isStale,
+  lastSuccessAt,
+  now,
+  run
+}: {
+  agents: AgentKind[]
+  failureCount: number
+  health: BridgeHealth
+  isChecking: boolean
+  isStale: boolean
+  lastSuccessAt?: string
+  now: number
+  run?: WorkflowRun
+}) {
+  const status = getBridgePanelStatus({
+    failureCount,
+    health,
+    isChecking,
+    isStale
+  })
+
+  return (
+    <article className={`bridgeStatusCard ${status}`}>
+      <div className="bridgeStatusCardHeader">
+        <span>
+          <Server size={16} />
+          <span>
+            <strong>{health.label}</strong>
+            <small>{health.urlHost}</small>
+          </span>
+        </span>
+      </div>
+      <div className="bridgeStatusMeta">
+        <StatusPill status={status} />
+        <small>{formatBridgeCheckedAt(lastSuccessAt, now)}</small>
+      </div>
+      {health?.message ? <p>{health.message}</p> : null}
+      <div className="bridgeAgentRows">
+        {agents.map((agent) => (
+          <AgentBridgeRow agent={agent} key={agent} run={run} />
+        ))}
+      </div>
+    </article>
+  )
+}
+
+function AgentBridgeRow({
+  agent,
+  run
+}: {
+  agent: AgentKind
+  run?: WorkflowRun
+}) {
+  const latestAgentRun = [...(run?.agentRuns ?? [])]
+    .reverse()
+    .find((agentRun) => agentRun.agent === agent)
+  const profile = agentProfiles.find((candidate) => candidate.id === agent)
+  const status = latestAgentRun?.status ?? "idle"
+  const statusLabel = status === "failed" ? "FAIL" : status.toUpperCase()
+
+  if (!profile) {
+    return null
+  }
+
+  return (
+    <div className={`bridgeAgentRow status-${status}`} role="status">
+      <AgentOptionLabel agent={profile} />
+      <strong className="bridgeAgentStatus">{statusLabel}</strong>
+    </div>
+  )
+}
+
+function getBridgeAgents(bridgeId: BridgeId): AgentKind[] {
+  if (bridgeId === "codex-bridge") {
+    return ["codex"]
+  }
+
+  return [
+    "openclaw.rowlet",
+    "openclaw.roaringmoon",
+    "openclaw.charizard",
+    "openclaw.mrmime",
+    "openclaw.gengar"
+  ]
+}
+
+function AgentSelect({
+  menuPlacement = "down",
+  value,
+  onChange
+}: {
+  menuPlacement?: "down" | "up"
+  value: AgentKind
+  onChange: (value: AgentKind) => void
+}) {
+  const [isOpen, setIsOpen] = useState(false)
+  const [menuStyle, setMenuStyle] = useState<CSSProperties>({})
+  const buttonRef = useRef<HTMLButtonElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
+  const wrapRef = useRef<HTMLSpanElement>(null)
+  const selectedAgent =
+    agentProfiles.find((agent) => agent.id === value) ?? agentProfiles[0]
+  const agentGroups = [
+    {
+      label: "Arceus",
+      agents: agentProfiles.filter((agent) => agent.family === "codex")
+    },
+    {
+      label: "OpenClaw",
+      agents: agentProfiles.filter((agent) => agent.family === "openclaw")
+    }
+  ].filter((group) => group.agents.length > 0)
+
+  useLayoutEffect(() => {
+    if (!isOpen || !buttonRef.current) {
+      return
+    }
+
+    function updateMenuPosition() {
+      const button = buttonRef.current
+
+      if (!button) {
+        return
+      }
+
+      const gap = 5
+      const viewportPadding = 8
+      const rect = button.getBoundingClientRect()
+      const spaceAbove = rect.top - gap - viewportPadding
+      const spaceBelow = window.innerHeight - rect.bottom - gap - viewportPadding
+      const shouldOpenUp =
+        menuPlacement === "up" && spaceAbove > Math.min(spaceBelow, 120)
+      const maxHeight = Math.max(
+        120,
+        Math.min(
+          agentMenuMaxHeight,
+          shouldOpenUp ? spaceAbove : Math.max(spaceBelow, spaceAbove)
+        )
+      )
+
+      setMenuStyle({
+        bottom: shouldOpenUp
+          ? window.innerHeight - rect.top + gap
+          : "auto",
+        left: rect.left,
+        maxHeight,
+        position: "fixed",
+        right: "auto",
+        top: shouldOpenUp ? "auto" : rect.bottom + gap,
+        width: rect.width
+      })
+    }
+
+    updateMenuPosition()
+    window.addEventListener("resize", updateMenuPosition)
+    window.addEventListener("scroll", updateMenuPosition, true)
+
+    return () => {
+      window.removeEventListener("resize", updateMenuPosition)
+      window.removeEventListener("scroll", updateMenuPosition, true)
+    }
+  }, [isOpen, menuPlacement])
+
+  function keepOpenForTarget(target: Node | null) {
+    return Boolean(
+      target &&
+        (wrapRef.current?.contains(target) || menuRef.current?.contains(target))
+    )
+  }
+
+  const menu = (
+    <div
+      className="agentSelectMenu"
+      onBlur={(event) => {
+        const nextTarget = event.relatedTarget as Node | null
+
+        if (!keepOpenForTarget(nextTarget)) {
+          setIsOpen(false)
+        }
+      }}
+      ref={menuRef}
+      role="listbox"
+      style={menuStyle}
+    >
+      {agentGroups.map((group) => (
+        <div className="agentSelectGroup" key={group.label}>
+          <div className="agentSelectGroupLabel">{group.label}</div>
+          {group.agents.map((agent) => (
+            <button
+              aria-selected={agent.id === value}
+              className={
+                agent.id === value
+                  ? "agentSelectOption selected"
+                  : "agentSelectOption"
+              }
+              key={agent.id}
+              onClick={() => {
+                onChange(agent.id)
+                setIsOpen(false)
+              }}
+              role="option"
+              type="button"
+            >
+              <AgentOptionLabel agent={agent} />
+              {agent.id === value ? <Check size={14} /> : null}
+            </button>
+          ))}
+        </div>
+      ))}
+    </div>
+  )
+
+  return (
+    <span
+      className={
+        menuPlacement === "up"
+          ? "agentSelectWrap menuUp"
+          : "agentSelectWrap"
+      }
+      onBlur={(event) => {
+        const nextTarget = event.relatedTarget as Node | null
+
+        if (!keepOpenForTarget(nextTarget)) {
+          setIsOpen(false)
+        }
+      }}
+      ref={wrapRef}
+    >
+      <button
+        aria-label="Agent executor"
+        aria-expanded={isOpen}
+        aria-haspopup="listbox"
+        className="agentSelect"
+        onClick={() => setIsOpen((current) => !current)}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") {
+            setIsOpen(false)
+          }
+        }}
+        ref={buttonRef}
+        type="button"
+      >
+        <AgentOptionLabel agent={selectedAgent} />
+        <ChevronDown size={16} />
+      </button>
+
+      {isOpen && typeof document !== "undefined"
+        ? createPortal(menu, document.body)
+        : null}
+    </span>
+  )
+}
+
+function AgentQuotaCard({
+  agent,
+  quota
+}: {
+  agent: AgentProfile
+  quota?: AgentQuota
+}) {
+  const percentage = quota?.remainingPercent ?? 0
+  const status = quota?.status ?? "unavailable"
+  const statusLabel = {
+    healthy: "Healthy",
+    warning: "Low",
+    critical: "Critical",
+    exhausted: "Exhausted",
+    stale: "Stale",
+    unavailable: "Not synced"
+  }[status]
+
+  return (
+    <article className={`quotaCard ${status}`}>
+      <div className="quotaCardHeader">
+        <div>
+          <strong>{agent.label}</strong>
+          <small>{quota?.model ?? "Waiting for model data"}</small>
+        </div>
+        <span className="quotaStatus">{statusLabel}</span>
+      </div>
+      <div className="quotaValueRow">
+        <strong>{quota ? `${Math.round(percentage)}%` : "--"}</strong>
+        <small>
+          {quota
+            ? `${formatQuotaValue(quota.weeklyRemaining, quota.unit)} remaining`
+            : "Quota unavailable"}
+        </small>
+      </div>
+      <div
+        aria-label={`${agent.label} weekly quota remaining`}
+        aria-valuemax={100}
+        aria-valuemin={0}
+        aria-valuenow={quota ? percentage : 0}
+        className="quotaProgress"
+        role="progressbar"
+      >
+        <span style={{ width: `${percentage}%` }} />
+      </div>
+      <small className="quotaMeta">
+        {quota
+          ? `${formatQuotaValue(quota.weeklyUsed, quota.unit)} used · resets ${formatResetTime(quota.resetAt)}`
+          : "Connect a provider to load weekly usage"}
+      </small>
+    </article>
+  )
+}
+
+function formatResetTime(value: string) {
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit"
+  }).format(new Date(value))
+}
+
+function AgentOptionLabel({ agent }: { agent: AgentProfile }) {
+  return (
+    <span className="agentOptionLabel">
+      <AgentIcon agent={agent} />
+      <span>{agent.label}</span>
+    </span>
+  )
+}
+
+function AgentIcon({ agent }: { agent: AgentProfile }) {
+  if (agent.id === "codex") {
+    return (
+      <span className="agentSpriteMark" aria-hidden="true">
+        <Image
+          alt=""
+          height={24}
+          src="/agents/arceus.jpg"
+          unoptimized
+          width={30}
+        />
+      </span>
+    )
+  }
+
+  if (agent.id === "openclaw.rowlet") {
+    return (
+      <span className="agentMark" aria-hidden="true">
+        🦉
+      </span>
+    )
+  }
+
+  if (agent.id === "openclaw.roaringmoon") {
+    return (
+      <span className="agentMark" aria-hidden="true">
+        🌙
+      </span>
+    )
+  }
+
+  if (agent.id === "openclaw.charizard") {
+    return (
+      <span className="agentSpriteMark" aria-hidden="true">
+        <Image
+          alt=""
+          height={24}
+          src="/agents/charizard.webp"
+          unoptimized
+          width={30}
+        />
+      </span>
+    )
+  }
+
+  if (agent.id === "openclaw.mrmime" || agent.id === "openclaw.gengar") {
+    const sprite = agent.id === "openclaw.mrmime" ? "mrmime" : "gengar"
+    return (
+      <span className="agentSpriteMark" aria-hidden="true">
+        <Image
+          alt=""
+          height={24}
+          src={`/agents/${sprite}.svg`}
+          unoptimized
+          width={30}
+        />
+      </span>
+    )
+  }
+
+  return null
+}
+
+function ActorSelect({
+  value,
+  onChange
+}: {
+  value: ApprovalActorType
+  onChange: (value: ApprovalActorType) => void
+}) {
+  return (
+    <SegmentedControl
+      value={value}
+      options={[
+        ["human", "Human"],
+        ["verification_subagent", "Verify"],
+        ["independent_agent", "Independent"]
+      ]}
+      onChange={(nextValue) => onChange(nextValue as ApprovalActorType)}
+    />
+  )
+}
+
+function SegmentedControl({
+  value,
+  options,
+  onChange
+}: {
+  value: string
+  options: Array<[string, string]>
+  onChange: (value: string) => void
+}) {
+  return (
+    <div className="segmented">
+      {options.map(([optionValue, label]) => (
+        <button
+          type="button"
+          className={value === optionValue ? "selected" : ""}
+          key={optionValue}
+          onClick={() => onChange(optionValue)}
+        >
+          {label}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+function SkillMeta({ title, values }: { title: string; values: string[] }) {
+  return (
+    <div className="skillMeta">
+      <span>{title}</span>
+      <ul>
+        {values.map((value) => (
+          <li key={value}>{value}</li>
+        ))}
+      </ul>
+    </div>
+  )
+}
+
+function GateDecisionButtons({
+  className,
+  gate,
+  isMutating,
+  onDecideGate
+}: {
+  className?: string
+  gate: ApprovalGate
+  isMutating: boolean
+  onDecideGate: (gate: ApprovalGate, decision: ApprovalDecision) => void
+}) {
+  const classes = ["gateActions", className].filter(Boolean).join(" ")
+
+  return (
+    <div className={classes}>
+      <button
+        className="iconTextButton approve"
+        disabled={isMutating}
+        onClick={() => onDecideGate(gate, "approved")}
+        type="button"
+      >
+        <Check size={16} />
+        Approve
+      </button>
+      <button
+        className="iconTextButton request"
+        disabled={isMutating}
+        onClick={() => onDecideGate(gate, "changes_requested")}
+        type="button"
+      >
+        <RefreshCw size={16} />
+        Changes
+      </button>
+      <button
+        className="iconTextButton reject"
+        disabled={isMutating}
+        onClick={() => onDecideGate(gate, "rejected")}
+        type="button"
+      >
+        <X size={16} />
+        Reject
+      </button>
+    </div>
+  )
+}
+
+function getBridgePanelStatus({
+  failureCount,
+  health,
+  isChecking,
+  isStale
+}: {
+  failureCount: number
+  health?: BridgeHealth
+  isChecking: boolean
+  isStale: boolean
+}): BridgePanelStatus {
+  if (isChecking && !health) {
+    return "checking"
+  }
+
+  if (isStale && health?.status === "online") {
+    return "stale"
+  }
+
+  if (failureCount >= bridgeOfflineFailureThreshold && !health) {
+    return "offline"
+  }
+
+  return health?.status ?? "checking"
+}
+
+function getAggregateBridgeStatus({
+  failureCount,
+  health,
+  isChecking,
+  isStale
+}: {
+  failureCount: number
+  health: Partial<Record<BridgeId, BridgeHealth>>
+  isChecking: boolean
+  isStale: boolean
+}): BridgePanelStatus {
+  const statuses = Object.values(health).map((bridge) =>
+    getBridgePanelStatus({
+      failureCount,
+      health: bridge,
+      isChecking,
+      isStale
+    })
+  )
+
+  if (statuses.some((status) => status === "online")) {
+    return "online"
+  }
+
+  if (statuses.some((status) => status === "checking")) {
+    return "checking"
+  }
+
+  if (failureCount >= bridgeOfflineFailureThreshold) {
+    return "offline"
+  }
+
+  return statuses[0] ?? "checking"
+}
+
+function formatBridgeCheckedAt(value: string | undefined, now: number) {
+  if (!value) {
+    return "not checked"
+  }
+
+  const seconds = Math.max(
+    0,
+    Math.round((now - new Date(value).getTime()) / 1000)
+  )
+
+  return `${seconds}s ago`
+}
+
+function StatusPill({ status }: { status: string }) {
+  return <span className={`statusPill ${status}`}>{status}</span>
+}
+
+function isStoppableStatus(status: WorkflowRun["status"]) {
+  return (
+    status === "pending" ||
+    status === "running" ||
+    status === "waiting_for_approval"
+  )
+}
+
+function isCancelableStatus(status: WorkflowRun["status"]) {
+  return status !== "completed" && status !== "failed" && status !== "cancelled"
+}
+
+function isTerminalStatus(status: WorkflowRun["status"]) {
+  return status === "completed" || status === "failed" || status === "cancelled"
+}
+
+function isActiveAgentRunStatus(status: WorkflowRun["status"]) {
+  return (
+    status === "pending" ||
+    status === "running" ||
+    status === "waiting_for_approval"
+  )
+}

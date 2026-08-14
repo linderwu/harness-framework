@@ -1,0 +1,25 @@
+flowchart LR
+  %% Workflow Engine Components
+  operator["Operator<br/>Uses the system."]
+  dashboard["Harness Dashboard<br/>Browser UI."]
+  api["Next.js HTTP Boundary<br/>Site-authenticated API plus public /health."]
+  engine["Workflow Engine<br/>Workflow domain logic."]
+  bridge["Agent Bridge<br/>External executor integration."]
+  resolver["Runtime Skill Resolver<br/>Runtime skill bundle resolution."]
+  store["Workspace Store<br/>JSON-backed persistence."]
+  codex["Codex Bridge<br/>Authenticated v0.3 external bridge."]
+  openclaw["OpenClaw Runtime<br/>Authenticated v0.3 or A2A executor."]
+  github["GitHub<br/>Repository service."]
+  catalog["Event Skill Catalog<br/>Defines skills, gates, knowledge sources, and runtime bundles."]
+  factory["Run Factory<br/>Creates normalized runs and policies."]
+  advancer["Stage Advancer<br/>Moves runs through intake to closeout."]
+  approval["Approval Coordinator<br/>Opens gates, decisions, revisions."]
+  artifacts["Artifact Recorder<br/>Writes artifacts, events, agent run audit records."]
+  api -->|"createWorkflowRun"| factory
+  api -->|"advanceWorkflow"| advancer
+  advancer -->|"reads skills"| catalog
+  advancer -->|"opens gates"| approval
+  advancer -->|"records outputs"| artifacts
+  artifacts -->|"invoke agent"| bridge
+  artifacts -->|"resolve bundles"| resolver
+  approval -->|"persist revisions"| store
