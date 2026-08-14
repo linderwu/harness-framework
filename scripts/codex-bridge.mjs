@@ -38,6 +38,11 @@ const server = http.createServer(async (request, response) => {
       return
     }
 
+    if (request.method === "GET" && requestUrl.pathname === "/agent-quota") {
+      sendJson(response, 200, await readCodexQuota())
+      return
+    }
+
     const controlMatch = requestUrl.pathname.match(
       /^\/workflow-runs\/([^/]+)\/(cancel|stop)$/
     )
@@ -415,8 +420,95 @@ function bridgeCapabilities() {
     "active-run-status",
     "idempotency-key",
     "text-output",
-    "runtime-skill-bundles"
+    "runtime-skill-bundles",
+    "codex-oauth-secondary-rate-limit"
   ]
+}
+
+async function readCodexQuota() {
+  const command = process.env.CODEX_BRIDGE_COMMAND ?? "codex"
+  const child = spawn(command, ["app-server", "--stdio"], {
+    cwd: repoRoot,
+    shell: process.platform === "win32",
+    stdio: ["pipe", "pipe", "pipe"]
+  })
+  const responses = new Map()
+  let buffer = ""
+  let stderr = ""
+  let nextId = 1
+
+  child.stdout.on("data", (chunk) => {
+    buffer += chunk.toString()
+    const lines = buffer.split(/\r?\n/)
+    buffer = lines.pop() ?? ""
+    for (const line of lines) {
+      if (!line.trim()) continue
+      try {
+        const message = JSON.parse(line)
+        if (message.id !== undefined) {
+          responses.get(message.id)?.(message)
+        }
+      } catch {
+        // Ignore non-JSON startup output from the CLI.
+      }
+    }
+  })
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk.toString()
+  })
+
+  const request = (method, params) => {
+    const id = nextId++
+    child.stdin.write(`${JSON.stringify({ method, id, params })}\n`)
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        responses.delete(id)
+        reject(new Error(`${method} timed out`))
+      }, 15_000)
+      responses.set(id, (message) => {
+        clearTimeout(timer)
+        responses.delete(id)
+        if (message.error) reject(new Error(message.error.message ?? method))
+        else resolve(message.result)
+      })
+    })
+  }
+
+  try {
+    await request("initialize", {
+      clientInfo: { name: "jormungandr-bridge", title: "Jormungandr", version: "0.1.0" }
+    })
+    child.stdin.write(`${JSON.stringify({ method: "initialized", params: {} })}\n`)
+    await request("account/read", { refreshToken: true })
+    const result = await request("account/rateLimits/read", {})
+    const secondary = result?.rateLimits?.secondary
+    if (!secondary) throw new Error("Codex did not return a secondary rate limit")
+
+    const usedPercent = Math.min(100, Math.max(0, Number(secondary.usedPercent ?? 0)))
+    const remainingPercent = 100 - usedPercent
+    return {
+      agentId: "codex",
+      provider: "Codex",
+      model: "ChatGPT OAuth",
+      weeklyLimit: 100,
+      weeklyUsed: usedPercent,
+      weeklyRemaining: remainingPercent,
+      remainingPercent,
+      unit: "percent",
+      resetAt: new Date(Number(secondary.resetsAt) * 1000).toISOString(),
+      updatedAt: new Date().toISOString(),
+      status: remainingPercent === 0
+        ? "exhausted"
+        : remainingPercent < 20
+          ? "critical"
+          : remainingPercent <= 50
+            ? "warning"
+            : "healthy"
+    }
+  } finally {
+    child.kill()
+    if (stderr) stderr = ""
+  }
 }
 
 function tail(value, maxLength) {
