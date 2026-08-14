@@ -121,9 +121,6 @@ fi
 printf '%s' '__BRIDGE_B64__' | base64 -d > "$bridge_dir/openclaw-bridge.mjs"
 printf '%s' '__LOCK_B64__' | base64 -d > "$config_dir/skill.lock.json"
 bridge_token=$(printf '%s' '__TOKEN_B64__' | base64 -d)
-if ! docker exec openclaw openclaw agents list 2>/dev/null | grep -q 'mrmine'; then
-  docker exec openclaw sh -lc 'openclaw agents add mrmine --non-interactive --workspace "$HOME/.openclaw/workspace-mrmine" --agent-dir "$HOME/.openclaw/agents/mrmine/agent" --model minimax-portal/MiniMax-M2.7'
-fi
 {
   printf 'OPENCLAW_BRIDGE_TOKEN=%s\n' "$bridge_token"
   printf 'OPENCLAW_BRIDGE_PORT=4188\n'

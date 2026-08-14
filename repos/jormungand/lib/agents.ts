@@ -43,12 +43,6 @@ export const agentProfiles = [
     mainAgent: "mrmime"
   },
   {
-    id: "openclaw.mrmine",
-    label: "Mr. Mine",
-    family: "openclaw",
-    mainAgent: "mrmine"
-  },
-  {
     id: "openclaw.gengar",
     label: "Gengar",
     family: "openclaw",

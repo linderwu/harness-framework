@@ -558,7 +558,6 @@ function normalizeOpenClawAgent(mainAgent, executor) {
     "roaringmoon",
     "charizard",
     "mrmime",
-    "mrmine",
     "gengar"
   ].includes(value)
     ? value

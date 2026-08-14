@@ -88,6 +88,16 @@ test("bridge status panel renders endpoint bridges instead of fixed bridge defin
   assert.doesNotMatch(dashboard, /Manual \/ Simulated/)
 })
 
+test("bridge cards include the complete OpenClaw roster", () => {
+  const cardRoster = functionBody("getBridgeAgents")
+
+  assert.match(cardRoster, /openclaw\.rowlet/)
+  assert.match(cardRoster, /openclaw\.roaringmoon/)
+  assert.match(cardRoster, /openclaw\.mrmime/)
+  assert.match(cardRoster, /openclaw\.gengar/)
+  assert.doesNotMatch(cardRoster, /openclaw\.mrmine/)
+})
+
 test("bridge status polling and stale thresholds match the accepted design", () => {
   assert.match(dashboard, /const bridgeHealthPollIntervalMs = 10_000/)
   assert.match(dashboard, /const bridgeHealthStaleAfterMs = 30_000/)

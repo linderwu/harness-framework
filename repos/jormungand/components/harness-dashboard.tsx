@@ -2068,7 +2068,13 @@ function getBridgeAgents(bridgeId: BridgeId): AgentKind[] {
     return ["codex"]
   }
 
-  return ["openclaw.rowlet", "openclaw.roaringmoon", "openclaw.charizard"]
+  return [
+    "openclaw.rowlet",
+    "openclaw.roaringmoon",
+    "openclaw.charizard",
+    "openclaw.mrmime",
+    "openclaw.gengar"
+  ]
 }
 
 function AgentSelect({
@@ -2271,6 +2277,21 @@ function AgentIcon({ agent }: { agent: AgentProfile }) {
           alt=""
           height={24}
           src="/agents/charizard.webp"
+          unoptimized
+          width={30}
+        />
+      </span>
+    )
+  }
+
+  if (agent.id === "openclaw.mrmime" || agent.id === "openclaw.gengar") {
+    const sprite = agent.id === "openclaw.mrmime" ? "mrmime" : "gengar"
+    return (
+      <span className="agentSpriteMark" aria-hidden="true">
+        <Image
+          alt=""
+          height={24}
+          src={`/agents/${sprite}.svg`}
           unoptimized
           width={30}
         />

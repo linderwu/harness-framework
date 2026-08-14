@@ -47,6 +47,9 @@ test("OpenClaw bridge accepts the compatibility token and enforces its local ski
   assert.match(openClawBridgeSource, /OPENCLAW_GATEWAY_TOKEN/)
   assert.match(openClawBridgeSource, /OPENCLAW_RUNTIME_SKILL_LOCK/)
   assert.match(openClawBridgeSource, /bundle_not_locked/)
+  assert.match(openClawBridgeSource, /"mrmime"/)
+  assert.match(openClawBridgeSource, /"gengar"/)
+  assert.doesNotMatch(openClawBridgeSource, /"mrmine"/)
   assert.doesNotMatch(openClawBridgeSource, /SITE_AUTH_PASSWORD/)
 })
 

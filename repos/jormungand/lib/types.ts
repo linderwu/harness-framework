@@ -39,7 +39,6 @@ export type OpenClawMainAgent =
   | "roaringmoon"
   | "charizard"
   | "mrmime"
-  | "mrmine"
   | "gengar"
 
 export type AgentKind =
