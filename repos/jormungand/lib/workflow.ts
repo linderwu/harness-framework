@@ -110,6 +110,7 @@ interface AdvanceWorkflowOptions {
   invokeAgent?: AgentInvoker
   resolveRuntimeSkillBundles?: RuntimeSkillResolver
   publishAgentTaskRecord?: AgentTaskRecordPublisher
+  onProgress?: (run: WorkflowRun) => Promise<unknown>
 }
 
 export function createDefaultEventSkills(): WorkflowEventSkill[] {
@@ -640,7 +641,8 @@ export async function advanceWorkflow(
           nextRun.requirement
         ].join("\n"),
         options.invokeAgent,
-        options.resolveRuntimeSkillBundles
+        options.resolveRuntimeSkillBundles,
+        options.onProgress
       )
       if (intakeResult.status === "failed") {
         break
@@ -685,7 +687,8 @@ export async function advanceWorkflow(
             "- Verification approval must pass before PR-ready completion."
           ].join("\n"),
           options.invokeAgent,
-          options.resolveRuntimeSkillBundles
+          options.resolveRuntimeSkillBundles,
+          options.onProgress
         )
         if (planResult.status === "failed") {
           break
@@ -713,7 +716,8 @@ export async function advanceWorkflow(
             "Recommendation: approve plan for human gate."
           ].join("\n"),
           options.invokeAgent,
-          options.resolveRuntimeSkillBundles
+          options.resolveRuntimeSkillBundles,
+          options.onProgress
         )
         if (planReviewResult.status === "failed") {
           break
@@ -761,7 +765,8 @@ export async function advanceWorkflow(
             "Adapter boundary: Codex and OpenClaw run behind a shared interface."
           ].join("\n"),
           options.invokeAgent,
-          options.resolveRuntimeSkillBundles
+          options.resolveRuntimeSkillBundles,
+          options.onProgress
         )
         if (designResult.status === "failed") {
           break
@@ -805,7 +810,8 @@ export async function advanceWorkflow(
             "Expected output: branch, commits, PR link, and implementation notes."
           ].join("\n"),
           options.invokeAgent,
-          options.resolveRuntimeSkillBundles
+          options.resolveRuntimeSkillBundles,
+          options.onProgress
         )
         if (implementationResult.status === "failed") {
           break
@@ -833,7 +839,8 @@ export async function advanceWorkflow(
             "Recommendation: approve for implementation review."
           ].join("\n"),
           options.invokeAgent,
-          options.resolveRuntimeSkillBundles
+          options.resolveRuntimeSkillBundles,
+          options.onProgress
         )
         if (codeReviewResult.status === "failed") {
           break
@@ -907,7 +914,8 @@ export async function advanceWorkflow(
             "Recommendation: approve for verification report."
           ].join("\n"),
           options.invokeAgent,
-          options.resolveRuntimeSkillBundles
+          options.resolveRuntimeSkillBundles,
+          options.onProgress
         )
         if (implementationReviewResult.status === "failed") {
           break
@@ -957,7 +965,8 @@ export async function advanceWorkflow(
           "- Final gate waits for configured approval actor."
         ].join("\n"),
         options.invokeAgent,
-        options.resolveRuntimeSkillBundles
+        options.resolveRuntimeSkillBundles,
+        options.onProgress
       )
       if (verificationResult.status === "failed") {
         break
@@ -991,7 +1000,8 @@ async function advanceAgentTask(
       run.requirement
     ].join("\n"),
     options.invokeAgent,
-    options.resolveRuntimeSkillBundles
+    options.resolveRuntimeSkillBundles,
+    options.onProgress
   )
   const responseArtifact = run.artifacts[artifactStartIndex]
   const rawResponse = getAgentTaskRawResponseBody(taskResult)
@@ -1045,7 +1055,8 @@ async function advanceResearchWorkflow(
           run.requirement
         ].join("\n"),
         options.invokeAgent,
-        options.resolveRuntimeSkillBundles
+        options.resolveRuntimeSkillBundles,
+        options.onProgress
       )
       if (intakeResult.status !== "failed") {
         run.currentStage = "plan"
@@ -1072,7 +1083,8 @@ async function advanceResearchWorkflow(
           "Do not perform the research in this step."
         ].join("\n"),
         options.invokeAgent,
-        options.resolveRuntimeSkillBundles
+        options.resolveRuntimeSkillBundles,
+        options.onProgress
       )
       if (promptResult.status !== "failed") {
         run.currentStage = "implementation"
@@ -1107,7 +1119,8 @@ async function advanceResearchWorkflow(
           "Write the final research output into the named repository, then return the report content and repository path."
         ].join("\n"),
         options.invokeAgent,
-        options.resolveRuntimeSkillBundles
+        options.resolveRuntimeSkillBundles,
+        options.onProgress
       )
       if (researchResult.status !== "failed") {
         run.currentStage = "completed"
@@ -1623,7 +1636,8 @@ async function addAgentArtifact(
   title: string,
   body: string,
   invokeAgent?: AgentInvoker,
-  resolveRuntimeSkillBundles?: RuntimeSkillResolver
+  resolveRuntimeSkillBundles?: RuntimeSkillResolver,
+  onProgress?: (run: WorkflowRun) => Promise<unknown>
 ) {
   const executor = resolveSkillExecutor(run, skillId)
   const skill = run.eventSkills.find((item) => item.id === skillId)
@@ -1632,6 +1646,18 @@ async function addAgentArtifact(
     skill && skill.runtimeSkillBundles?.length && resolveRuntimeSkillBundles
       ? resolveRuntimeSkillBundles(skill)
       : undefined
+  const activeEvent = skill
+    ? addWorkflowEvent(
+        run,
+        skillId,
+        "running",
+        executor,
+        [],
+        `${title} is running through ${getAgentLabel(executor)}.`,
+        revision?.id
+      )
+    : undefined
+  await onProgress?.(run)
   const agentResult =
     skill && invokeAgent && runtimeSkillResolution?.status !== "failed"
       ? await invokeAgent({
@@ -1696,13 +1722,10 @@ async function addAgentArtifact(
   if (finalResult.repository) {
     run.repository = finalResult.repository
   }
-  addWorkflowEvent(
-    run,
-    skillId,
-    finalResult.status,
-    executor,
-    outputArtifactIds,
-    [
+  if (activeEvent) {
+    activeEvent.status = finalResult.status
+    activeEvent.outputArtifactIds = outputArtifactIds
+    activeEvent.note = [
       `${title} generated by ${getAgentLabel(executor)}.`,
       `Runner source: ${finalResult.source}.`,
       finalResult.externalRunId ? `External run: ${finalResult.externalRunId}.` : undefined,
@@ -1710,9 +1733,9 @@ async function addAgentArtifact(
       revision ? `Revision: ${revision.id}.` : undefined
     ]
       .filter(Boolean)
-      .join(" "),
-    revision?.id
-  )
+      .join(" ")
+    activeEvent.completedAt = new Date().toISOString()
+  }
   run.agentRuns.push({
     id: crypto.randomUUID(),
     workflowRunId: run.id,
@@ -1791,11 +1814,10 @@ function addWorkflowEvent(
   const skill = run.eventSkills.find((item) => item.id === skillId)
 
   if (!skill) {
-    return
+    return undefined
   }
 
-  run.events.push(
-    createWorkflowEvent({
+  const event = createWorkflowEvent({
       workflowRunId: run.id,
       skill,
       status,
@@ -1805,7 +1827,8 @@ function addWorkflowEvent(
       note,
       revisionId
     })
-  )
+  run.events.push(event)
+  return event
 }
 
 function createWorkflowEvent(input: {

@@ -7,6 +7,7 @@ import { normalizeWorkspace, refreshProjectAfterRun } from "@/lib/workspace"
 
 const statePath = path.join(process.cwd(), "data", "harness-state.json")
 let stateWriteQueue = Promise.resolve()
+const workflowRunQueues = new Map<string, Promise<unknown>>()
 
 export class StateConflictError extends Error {
   latestRun?: WorkflowRun
@@ -142,6 +143,36 @@ export async function upsertWorkflowRun(
     const normalizedState = normalizeWorkspace(state)
     await writeState(normalizedState)
     return normalizedState.workflowRuns.find((run) => run.id === nextRun.id) ?? nextRun
+  })
+}
+
+export async function replaceWorkflowRunSnapshot(run: WorkflowRun) {
+  return withStateWrite(async () => {
+    const state = await readState()
+    const index = state.workflowRuns.findIndex((item) => item.id === run.id)
+
+    if (index < 0) {
+      return run
+    }
+
+    state.workflowRuns[index] = normalizeWorkflowRun(run)
+    await writeState(state)
+    return state.workflowRuns[index]
+  })
+}
+
+export function withWorkflowRunLock<T>(
+  id: string,
+  operation: () => Promise<T>
+): Promise<T> {
+  const previous = workflowRunQueues.get(id) ?? Promise.resolve()
+  const current = previous.catch(() => undefined).then(operation)
+  workflowRunQueues.set(id, current)
+
+  return current.finally(() => {
+    if (workflowRunQueues.get(id) === current) {
+      workflowRunQueues.delete(id)
+    }
   })
 }
 
