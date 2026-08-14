@@ -45,12 +45,16 @@ function Invoke-Remote([string] $remoteScript) {
     throw "Pinned SSH known_hosts file was not found at $knownHostsFile."
   }
 
-  $remoteB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($remoteScript))
+  $remoteB64 = [Convert]::ToBase64String(
+    [Text.Encoding]::UTF8.GetBytes($remoteScript.Replace("`r`n", "`n"))
+  )
   $runner = New-TemporaryFile
+  $payloadFile = New-TemporaryFile
+  [IO.File]::WriteAllText($payloadFile.FullName, $remoteB64, [Text.UTF8Encoding]::new($false))
   $runnerScript = @'
 set -eu
 password="$1"
-remote_b64="$2"
+remote_b64=$(cat "$2")
 ssh_user="$3"
 ssh_host="$4"
 known_hosts="$5"
@@ -71,12 +75,17 @@ printf '%s' "$remote_b64" | base64 -d |
     'bash -s'
 '@
 
-  [IO.File]::WriteAllText($runner.FullName, $runnerScript, [Text.UTF8Encoding]::new($false))
+  [IO.File]::WriteAllText(
+    $runner.FullName,
+    $runnerScript.Replace("`r`n", "`n"),
+    [Text.UTF8Encoding]::new($false)
+  )
 
   try {
-    wsl bash (Convert-ToWslPath $runner.FullName) $password $remoteB64 $sshUser $sshHost (Convert-ToWslPath $knownHostsFile)
+    wsl bash (Convert-ToWslPath $runner.FullName) $password (Convert-ToWslPath $payloadFile.FullName) $sshUser $sshHost (Convert-ToWslPath $knownHostsFile)
   } finally {
     Remove-Item -LiteralPath $runner.FullName -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $payloadFile.FullName -Force -ErrorAction SilentlyContinue
   }
 }
 
