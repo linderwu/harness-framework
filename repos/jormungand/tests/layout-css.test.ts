@@ -72,3 +72,34 @@ test("bridge status panel is embedded in the compose panel", () => {
   assert.doesNotMatch(css, /\.bridgeStatusToggle/)
   assert.doesNotMatch(css, /\.bridgeStatusCards:not\(\.open\)/)
 })
+
+test("global mode dock forms one continuous armor-spine dragon body", () => {
+  const dockRule = ruleBody(/\.modeDock/, ".modeDock")
+  const spineRule = ruleBody(/\.modeDock::before/, ".modeDock::before")
+  const segmentRule = ruleBody(/\.modeDock button/, ".modeDock button")
+  const headRule = ruleBody(
+    /\.modeDock button:first-child/,
+    ".modeDock dragon head"
+  )
+  const tailRule = ruleBody(
+    /\.modeDock button:last-child/,
+    ".modeDock dragon tail"
+  )
+  const selectedRule = ruleBody(
+    /\.modeDock button\.selected/,
+    ".modeDock selected segment"
+  )
+
+  assert.match(dockRule, /grid-template-columns:\s*repeat\(7,/)
+  assert.match(dockRule, /isolation:\s*isolate;/)
+  assert.match(spineRule, /linear-gradient/)
+  assert.match(segmentRule, /clip-path:\s*polygon/)
+  assert.match(headRule, /clip-path:\s*polygon/)
+  assert.match(tailRule, /clip-path:\s*polygon/)
+  assert.match(selectedRule, /z-index:\s*3;/)
+  assert.match(selectedRule, /translateY\(-4px\)/)
+  assert.match(
+    css,
+    /@media \(max-width: 640px\)[\s\S]*?\.modeDock\s*\{[\s\S]*?grid-template-columns:\s*repeat\(7,[\s\S]*?overflow-x:\s*auto;/
+  )
+})

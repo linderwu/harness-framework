@@ -267,41 +267,79 @@ h2 {
 
 .modeDock {
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.025)),
-    rgba(2, 10, 20, 0.82);
-  border: 1px solid rgba(148, 163, 184, 0.26);
-  border-radius: 12px;
+    radial-gradient(circle at 50% 45%, rgba(34, 211, 238, 0.11), transparent 62%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.055), rgba(2, 10, 20, 0.2));
+  border: 1px solid rgba(103, 232, 249, 0.16);
+  border-radius: 16px;
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.12),
-    inset 0 -8px 18px rgba(0, 0, 0, 0.16),
-    0 12px 24px rgba(2, 8, 23, 0.18);
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    inset 0 -14px 24px rgba(0, 0, 0, 0.12);
   display: grid;
   gap: 0;
   grid-template-columns: repeat(7, minmax(0, 1fr));
+  isolation: isolate;
   overflow: visible;
+  padding: 14px 12px;
+  position: relative;
+}
+
+.modeDock::before {
+  background: linear-gradient(90deg, rgba(14, 116, 144, 0.2), #67e8f9 48%, rgba(14, 116, 144, 0.2));
+  border-radius: 999px;
+  box-shadow: 0 0 14px rgba(34, 211, 238, 0.38);
+  content: "";
+  height: 6px;
+  left: 26px;
+  position: absolute;
+  right: 22px;
+  top: calc(50% - 3px);
+  z-index: 0;
 }
 
 .modeDock button {
   align-items: center;
-  background: linear-gradient(145deg, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0.015));
-  border: 0;
-  border-right: 1px solid rgba(148, 163, 184, 0.2);
+  background:
+    linear-gradient(155deg, rgba(255, 255, 255, 0.2), transparent 38%),
+    linear-gradient(145deg, #24465a, #0a1e2d 68%);
+  border: 1px solid rgba(91, 137, 160, 0.7);
   border-radius: 0;
+  clip-path: polygon(13% 0, 86% 0, 100% 50%, 86% 100%, 13% 100%, 0 50%);
   color: #c5d8e8;
   display: flex;
+  filter: drop-shadow(0 7px 7px rgba(0, 0, 0, 0.32));
   font-size: 11px;
   font-weight: 800;
   gap: 0;
   justify-content: center;
-  min-height: 56px;
+  margin-left: -7px;
+  min-height: 62px;
   padding: 0;
   position: relative;
-  width: 56px;
-  transition: background 180ms ease, box-shadow 180ms ease, color 180ms ease, transform 180ms ease;
+  transition: background 180ms ease, border-color 180ms ease, color 180ms ease, filter 180ms ease, transform 180ms ease;
+  width: calc(100% + 7px);
+  z-index: 1;
 }
 
 .modeDock button::before {
-  display: none;
+  background: linear-gradient(90deg, transparent, rgba(186, 230, 253, 0.65), transparent);
+  content: "";
+  height: 1px;
+  left: 21%;
+  position: absolute;
+  right: 21%;
+  top: 9px;
+}
+
+.modeDock button::after {
+  background: #264b60;
+  clip-path: polygon(50% 0, 100% 100%, 0 100%);
+  content: "";
+  height: 9px;
+  left: calc(50% - 7px);
+  position: absolute;
+  top: -7px;
+  transition: background 180ms ease, filter 180ms ease;
+  width: 14px;
 }
 
 .modeDock button svg {
@@ -337,25 +375,56 @@ h2 {
 }
 
 .modeDock button:hover,
-.modeDock button.selected {
+.modeDock button:focus-visible {
   background: linear-gradient(145deg, rgba(103, 232, 249, 0.24), rgba(8, 145, 178, 0.04));
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.24),
-    inset 0 -2px 0 rgba(2, 8, 23, 0.22),
-    0 5px 12px rgba(34, 211, 238, 0.16);
+  border-color: rgba(165, 243, 252, 0.8);
   color: #f8fbff;
   transform: translateY(-2px);
 }
 
-.modeDock button:hover {
-  background: linear-gradient(145deg, rgba(255, 255, 255, 0.2), rgba(103, 232, 249, 0.04));
+.modeDock button:focus-visible {
+  outline: 2px solid #a5f3fc;
+  outline-offset: 3px;
+}
+
+.modeDock button.selected {
+  background:
+    linear-gradient(155deg, rgba(236, 254, 255, 0.3), transparent 36%),
+    linear-gradient(145deg, #155e75, #083344 72%);
+  border-color: #67e8f9;
   color: #f8fbff;
-  transform: translateY(-1px);
+  filter: drop-shadow(0 0 9px rgba(34, 211, 238, 0.58)) drop-shadow(0 10px 8px rgba(0, 0, 0, 0.35));
+  transform: translateY(-4px) scale(1.035);
+  z-index: 3;
+}
+
+.modeDock button.selected::after {
+  background: #67e8f9;
+  filter: drop-shadow(0 0 5px rgba(34, 211, 238, 0.85));
 }
 .modeDock button.selected svg { color: #67e8f9; }
 
+.modeDock button:first-child {
+  clip-path: polygon(0 14%, 70% 0, 100% 50%, 70% 100%, 0 86%, 14% 50%);
+  margin-left: 0;
+  min-height: 70px;
+  width: 100%;
+}
+
+.modeDock button:first-child::before {
+  background: #cffafe;
+  border-radius: 50%;
+  box-shadow: 0 0 7px #22d3ee;
+  height: 5px;
+  left: 17px;
+  right: auto;
+  top: 17px;
+  width: 5px;
+}
+
 .modeDock button:last-child {
-  border-right: 0;
+  clip-path: polygon(0 0, 58% 12%, 100% 50%, 58% 88%, 0 100%, 15% 50%);
+  width: calc(100% - 3px);
 }
 
 .projectTypeSwitcher {
@@ -2265,7 +2334,7 @@ pre {
   }
 
   .modeDock {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(7, minmax(0, 1fr));
   }
 
   .projectTypeGrid {
@@ -2320,7 +2389,12 @@ pre {
   }
 
   .modeDock {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(7, minmax(52px, 1fr));
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 14px 10px 30px;
+    scrollbar-color: rgba(103, 232, 249, 0.42) transparent;
+    scrollbar-width: thin;
   }
 
   .modeEdgeButton {
@@ -2337,12 +2411,7 @@ pre {
   }
 
   .modeDock button {
-    min-height: 44px;
-    width: 44px;
-  }
-
-  .modeDock {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    min-height: 56px;
   }
 
   .projectTypeGrid {
