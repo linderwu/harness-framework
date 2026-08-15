@@ -60,6 +60,7 @@ import type {
 } from "@/lib/types"
 import type { ConversationEntry } from "@/lib/hive-memory/types"
 import type { HiveMemoryHealthSummary } from "@/lib/hive-health"
+import type { AgentQuota } from "@/lib/agent-quota"
 import { getProjectTemplate } from "@/lib/project-templates"
 import { GlobalModeNav } from "@/components/global-mode-nav"
 import {
@@ -114,6 +115,7 @@ const maxContextTotalBytes = 5 * 1024 * 1024
 const bridgeHealthPollIntervalMs = 10_000
 const bridgeHealthStaleAfterMs = 30_000
 const bridgeOfflineFailureThreshold = 2
+const agentQuotaPollIntervalMs = 5 * 60 * 1000
 type ApprovalDecision = "approved" | "rejected" | "changes_requested"
 type BridgeHealthStatus = "online" | "offline"
 type BridgePanelStatus = BridgeHealthStatus | "checking" | "stale"
@@ -1931,6 +1933,7 @@ function BridgeStatusPanel({
   const [health, setHealth] = useState<Partial<Record<BridgeId, BridgeHealth>>>(
     {}
   )
+  const [codexQuota, setCodexQuota] = useState<AgentQuota | undefined>()
   const [isChecking, setIsChecking] = useState(false)
   const [failureCount, setFailureCount] = useState(0)
   const [lastSuccessAt, setLastSuccessAt] = useState<string | undefined>()
@@ -1962,17 +1965,37 @@ function BridgeStatusPanel({
     }
   }
 
+  async function refreshCodexQuota() {
+    try {
+      const response = await fetch("/api/agent-quotas", { cache: "no-store" })
+      if (!response.ok) throw new Error("Agent quota request failed")
+
+      const quotas = (await response.json()) as AgentQuota[]
+      const quota = quotas.find((entry) => entry.agentId === "codex")
+      setCodexQuota(quota)
+    } catch {
+      setCodexQuota(undefined)
+    }
+  }
+
   useLayoutEffect(() => {
     const initialCheckId = window.setTimeout(refreshBridgeHealth, 0)
+    const initialQuotaCheckId = window.setTimeout(refreshCodexQuota, 0)
     const intervalId = window.setInterval(
       refreshBridgeHealth,
       bridgeHealthPollIntervalMs
+    )
+    const quotaIntervalId = window.setInterval(
+      refreshCodexQuota,
+      agentQuotaPollIntervalMs
     )
     const clockId = window.setInterval(() => setNow(Date.now()), 1000)
 
     return () => {
       window.clearTimeout(initialCheckId)
+      window.clearTimeout(initialQuotaCheckId)
       window.clearInterval(intervalId)
+      window.clearInterval(quotaIntervalId)
       window.clearInterval(clockId)
     }
   }, [])
@@ -1997,7 +2020,10 @@ function BridgeStatusPanel({
         </span>
         <button
           className="iconButton bridgeRefreshButton"
-          onClick={refreshBridgeHealth}
+          onClick={() => {
+            void refreshBridgeHealth()
+            void refreshCodexQuota()
+          }}
           title="Refresh bridge health"
           type="button"
         >
@@ -2014,6 +2040,7 @@ function BridgeStatusPanel({
               agents={getBridgeAgents(bridge.id)}
               failureCount={failureCount}
               health={bridge}
+              quota={bridge.id === "codex-bridge" ? codexQuota : undefined}
               isChecking={isChecking}
               isStale={Boolean(isStale)}
               key={bridge.id}
@@ -2032,6 +2059,7 @@ function BridgeStatusCard({
   agents,
   failureCount,
   health,
+  quota,
   isChecking,
   isStale,
   lastSuccessAt,
@@ -2041,6 +2069,7 @@ function BridgeStatusCard({
   agents: AgentKind[]
   failureCount: number
   health: BridgeHealth
+  quota?: AgentQuota
   isChecking: boolean
   isStale: boolean
   lastSuccessAt?: string
@@ -2072,7 +2101,12 @@ function BridgeStatusCard({
       {health?.message ? <p>{health.message}</p> : null}
       <div className="bridgeAgentRows">
         {agents.map((agent) => (
-          <AgentBridgeRow agent={agent} key={agent} run={run} />
+          <AgentBridgeRow
+            agent={agent}
+            key={agent}
+            quota={agent === "codex" ? quota : undefined}
+            run={run}
+          />
         ))}
       </div>
     </article>
@@ -2081,9 +2115,11 @@ function BridgeStatusCard({
 
 function AgentBridgeRow({
   agent,
+  quota,
   run
 }: {
   agent: AgentKind
+  quota?: AgentQuota
   run?: WorkflowRun
 }) {
   const latestAgentRun = [...(run?.agentRuns ?? [])]
@@ -2099,8 +2135,40 @@ function AgentBridgeRow({
 
   return (
     <div className={`bridgeAgentRow status-${status}`} role="status">
-      <AgentOptionLabel agent={profile} />
-      <strong className="bridgeAgentStatus">{statusLabel}</strong>
+      <div className="bridgeAgentRowMain">
+        <AgentOptionLabel agent={profile} />
+        <strong className="bridgeAgentStatus">{statusLabel}</strong>
+      </div>
+      {agent === "codex" ? <AgentQuotaBar quota={quota} /> : null}
+    </div>
+  )
+}
+
+function AgentQuotaBar({ quota }: { quota?: AgentQuota }) {
+  const status = quota?.status ?? "unavailable"
+  const remainingPercent = Math.max(
+    0,
+    Math.min(100, Math.round(quota?.remainingPercent ?? 0))
+  )
+  const label = quota ? `${remainingPercent}%` : "Unavailable"
+
+  return (
+    <div className={`agentQuotaBar status-${status}`}>
+      <div className="agentQuotaTrackLabel">
+        <span>Weekly HP</span>
+        <strong>{label}</strong>
+      </div>
+      <div
+        aria-label="Arceus remaining weekly quota"
+        aria-valuemax={100}
+        aria-valuemin={0}
+        aria-valuenow={quota ? remainingPercent : undefined}
+        aria-valuetext={label}
+        className="agentQuotaTrack"
+        role="progressbar"
+      >
+        <span className="agentQuotaFill" style={{ width: `${remainingPercent}%` }} />
+      </div>
     </div>
   )
 }

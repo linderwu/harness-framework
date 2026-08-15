@@ -955,10 +955,13 @@ async function readCodexQuota() {
     child.stdin.write(`${JSON.stringify({ method: "initialized", params: {} })}\n`)
     await request("account/read", { refreshToken: true })
     const result = await request("account/rateLimits/read", {})
-    const secondary = result?.rateLimits?.secondary
-    if (!secondary) throw new Error("Codex did not return a secondary rate limit")
+    const rateLimit = result?.rateLimits?.primary ?? result?.rateLimits?.secondary
+    if (!rateLimit) throw new Error("Codex did not return a rate limit")
 
-    const usedPercent = Math.min(100, Math.max(0, Number(secondary.usedPercent ?? 0)))
+    const usedPercent = Math.min(
+      100,
+      Math.max(0, Number(rateLimit.usedPercent ?? 0))
+    )
     const remainingPercent = 100 - usedPercent
     return {
       agentId: "codex",
@@ -969,7 +972,7 @@ async function readCodexQuota() {
       weeklyRemaining: remainingPercent,
       remainingPercent,
       unit: "percent",
-      resetAt: new Date(Number(secondary.resetsAt) * 1000).toISOString(),
+      resetAt: new Date(Number(rateLimit.resetsAt) * 1000).toISOString(),
       updatedAt: new Date().toISOString(),
       status: remainingPercent === 0
         ? "exhausted"

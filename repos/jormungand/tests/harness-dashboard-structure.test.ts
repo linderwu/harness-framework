@@ -101,6 +101,21 @@ test("bridge status polling and stale thresholds match the accepted design", () 
   assert.match(dashboard, /const bridgeOfflineFailureThreshold = 2/)
 })
 
+test("bridge status panel polls quotas and forwards only codex quota to the Arceus row", () => {
+  const panel = functionBody("BridgeStatusPanel")
+  const card = functionBody("BridgeStatusCard")
+  const row = functionBody("AgentBridgeRow")
+  const quotaBar = functionBody("AgentQuotaBar")
+
+  assert.match(panel, /const agentQuotaPollIntervalMs = 5 \* 60 \* 1000/)
+  assert.match(panel, /refreshCodexQuota/)
+  assert.match(panel, /bridge.id === "codex-bridge" \? codexQuota : undefined/)
+  assert.match(card, /quota={agent === \"codex\" \? quota : undefined}/)
+  assert.match(row, /agent === \"codex\" \? <AgentQuotaBar quota={quota} \/> : null/)
+  assert.match(quotaBar, /role="progressbar"/)
+  assert.match(quotaBar, /Weekly HP/)
+})
+
 test("agent run rows expose a stop button for active task runs", () => {
   const runDetail = functionBody("RunDetail")
 

@@ -72,6 +72,18 @@ test("bridge status panel expands in the monitoring rail without nested scrollin
   assert.doesNotMatch(cardsRule, /overflow(?:-y)?:\s*(?:auto|scroll);/)
 })
 
+test("bridge row layout supports a nested quota bar", () => {
+  const rowRule = ruleBody(/\.bridgeAgentRow/, "bridgeAgentRow")
+  const rowMainRule = ruleBody(/\.bridgeAgentRowMain/, "bridgeAgentRowMain")
+  const trackRule = ruleBody(/\.agentQuotaTrack/, "agentQuotaTrack")
+
+  assert.match(rowRule, /display:\s*grid;/)
+  assert.match(rowMainRule, /display:\s*flex;/)
+  assert.match(rowMainRule, /justify-content:\s*space-between;/)
+  assert.match(trackRule, /overflow:\s*hidden;/)
+  assert.match(trackRule, /border-radius:\s*999px;/)
+})
+
 test("global mode navigator spans ten modes and scrolls at narrow widths", () => {
   const navRule = ruleBody(/\.globalModeNav/, ".globalModeNav")
   const segmentsRule = ruleBody(/\.globalModeSegments/, ".globalModeSegments")

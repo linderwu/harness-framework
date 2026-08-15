@@ -2093,8 +2093,7 @@ pre {
 
 .bridgeStatusPanelHeader,
 .bridgeStatusPanelHeader span,
-.bridgeStatusMeta,
-.bridgeAgentRow {
+.bridgeStatusMeta {
   align-items: center;
   display: flex;
 }
@@ -2213,6 +2212,7 @@ pre {
 }
 
 .bridgeAgentRow {
+  display: grid;
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(226, 235, 244, 0.96));
   border: 1px solid rgba(148, 163, 184, 0.48);
@@ -2222,10 +2222,17 @@ pre {
     0 3px 0 rgba(100, 116, 139, 0.24),
     0 7px 14px rgba(15, 23, 42, 0.1);
   color: var(--text);
-  justify-content: space-between;
+  gap: 7px;
   min-height: 46px;
   padding: 5px 6px 5px 10px;
   transition: box-shadow 160ms ease, transform 160ms ease;
+}
+
+.bridgeAgentRowMain {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  min-width: 0;
 }
 
 .bridgeAgentRow:hover {
@@ -2285,6 +2292,64 @@ pre {
   background: #fef3c7;
   border-color: #f59e0b;
   color: #b45309;
+}
+
+.agentQuotaBar {
+  display: grid;
+  gap: 5px;
+}
+
+.agentQuotaTrackLabel {
+  align-items: center;
+  color: #475569;
+  display: flex;
+  font-size: 10px;
+  font-weight: 900;
+  justify-content: space-between;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.agentQuotaTrackLabel strong {
+  color: #166534;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.agentQuotaTrack {
+  align-items: center;
+  background: #e2e8f0;
+  border: 1px solid #cbd5e1;
+  border-radius: 999px;
+  display: flex;
+  height: 8px;
+  overflow: hidden;
+}
+
+.agentQuotaFill {
+  background: linear-gradient(90deg, #22c55e, #4ade80);
+  border-radius: 999px;
+  display: block;
+  height: 100%;
+  transition: width 220ms ease;
+}
+
+.agentQuotaBar.status-warning .agentQuotaFill {
+  background: linear-gradient(90deg, #f59e0b, #f97316);
+}
+
+.agentQuotaBar.status-critical .agentQuotaFill,
+.agentQuotaBar.status-exhausted .agentQuotaFill {
+  background: linear-gradient(90deg, #ef4444, #dc2626);
+}
+
+.agentQuotaBar.status-unavailable .agentQuotaFill,
+.agentQuotaBar.status-stale .agentQuotaFill {
+  background: #94a3b8;
+}
+
+.agentQuotaBar.status-unavailable .agentQuotaTrackLabel strong {
+  color: #64748b;
 }
 
 .emptyState {
