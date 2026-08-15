@@ -134,10 +134,10 @@ test("compose form sends the complete Arceus maintenance contract", () => {
   assert.match(dashboard, /required=\{isArceusMaintenance\}/)
 })
 
-test("Arceus maintenance keeps its repository server-managed", () => {
+test("Arceus maintenance does not show repository field text", () => {
   assert.match(dashboard, /projectType === "agent_task" \|\| projectType === "arceus_maintenance"/)
   assert.match(dashboard, /!isAgentTask && !isArceusMaintenance/)
-  assert.match(dashboard, /Repository is fixed by JORMUNGAND_REPOSITORY/)
+  assert.doesNotMatch(dashboard, /Repository is fixed by JORMUNGAND_REPOSITORY/)
 })
 
 test("compose form uses research-specific workflow skills", () => {

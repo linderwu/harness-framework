@@ -645,7 +645,7 @@ export function HarnessDashboard({
                 {isAgentTask
                   ? form.requirement
                   : isArceusMaintenance
-                    ? `${form.projectName} - server-managed repository`
+                    ? form.projectName
                   : `${form.projectName} - ${
                       form.repository || "GitHub repo not set"
                     }`}
@@ -778,8 +778,6 @@ export function HarnessDashboard({
                           }
                         />
                       </label>
-                    ) : isArceusMaintenance ? (
-                      <p className="muted">Repository is fixed by JORMUNGAND_REPOSITORY.</p>
                     ) : null}
 
                     <label>
