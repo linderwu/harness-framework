@@ -138,6 +138,10 @@ interface AgentHealthResponse {
 const sampleRequirement =
   "Build a Jormungandr dashboard that can select Arceus/OpenClaw agents and control design/verification with approval gates."
 
+function splitLines(value: string) {
+  return value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
+}
+
 export function HarnessDashboard({
   initialState,
   initialHiveHealth
@@ -170,6 +174,9 @@ export function HarnessDashboard({
     projectType: "development" as ProjectType,
     repository: "",
     requirement: sampleRequirement,
+    successCriteria: "",
+    constraints: "",
+    nonGoals: "",
     contextFiles: [] as ProjectContextFile[],
     selectedAgent: defaultAgentKind,
     skillAssignments: defaultSkillAssignments,
@@ -208,6 +215,7 @@ export function HarnessDashboard({
     [selectedProject, selectedProjectRuns]
   )
   const isAgentTask = form.projectType === "agent_task"
+  const isArceusMaintenance = form.projectType === "arceus_maintenance"
   const assignmentSkills = useMemo(
     () => getAssignableEventSkills(form.projectType),
     [form.projectType]
@@ -293,6 +301,9 @@ export function HarnessDashboard({
           type: form.projectType,
           goal: form.requirement,
           repository: form.repository,
+          successCriteria: splitLines(form.successCriteria),
+          constraints: splitLines(form.constraints),
+          nonGoals: splitLines(form.nonGoals),
           contextFiles: form.contextFiles
         })
       })
@@ -427,7 +438,9 @@ export function HarnessDashboard({
     setForm((currentForm) => ({
       ...currentForm,
       projectType,
-      repository: projectType === "agent_task" ? "" : currentForm.repository,
+      repository: projectType === "agent_task" || projectType === "arceus_maintenance"
+        ? ""
+        : currentForm.repository,
       skillAssignments: Object.fromEntries(
         getAssignableEventSkills(projectType).map((skill) => [
           skill.id,
@@ -631,6 +644,8 @@ export function HarnessDashboard({
               <small>
                 {isAgentTask
                   ? form.requirement
+                  : isArceusMaintenance
+                    ? `${form.projectName} - server-managed repository`
                   : `${form.projectName} - ${
                       form.repository || "GitHub repo not set"
                     }`}
@@ -671,7 +686,7 @@ export function HarnessDashboard({
           <div className="runActionRow">
             <button
               className="primaryButton createRunButton"
-              disabled={isMutating}
+              disabled={isMutating || (isArceusMaintenance && splitLines(form.successCriteria).length === 0)}
             >
               <Play size={17} />
               {isAgentTask ? "Run Task" : "Create Project"}
@@ -752,7 +767,7 @@ export function HarnessDashboard({
                       />
                     </label>
 
-                    {!isAgentTask ? (
+                    {!isAgentTask && !isArceusMaintenance ? (
                       <label>
                         <span>Repository</span>
                         <input
@@ -763,6 +778,8 @@ export function HarnessDashboard({
                           }
                         />
                       </label>
+                    ) : isArceusMaintenance ? (
+                      <p className="muted">Repository is fixed by JORMUNGAND_REPOSITORY.</p>
                     ) : null}
 
                     <label>
@@ -832,6 +849,42 @@ export function HarnessDashboard({
                         </div>
                       ) : null}
                     </label>
+
+                    {isArceusMaintenance ? (
+                      <>
+                        <label>
+                          <span>Success criteria</span>
+                          <textarea
+                            placeholder="One criterion per line"
+                            required={isArceusMaintenance}
+                            value={form.successCriteria}
+                            onChange={(event) =>
+                              setForm({ ...form, successCriteria: event.target.value })
+                            }
+                          />
+                        </label>
+                        <label>
+                          <span>Constraints</span>
+                          <textarea
+                            placeholder="Optional; one constraint per line"
+                            value={form.constraints}
+                            onChange={(event) =>
+                              setForm({ ...form, constraints: event.target.value })
+                            }
+                          />
+                        </label>
+                        <label>
+                          <span>Non-goals</span>
+                          <textarea
+                            placeholder="Optional; one non-goal per line"
+                            value={form.nonGoals}
+                            onChange={(event) =>
+                              setForm({ ...form, nonGoals: event.target.value })
+                            }
+                          />
+                        </label>
+                      </>
+                    ) : null}
                   </div>
                 ) : (
                   <div className="composeSheetBody">

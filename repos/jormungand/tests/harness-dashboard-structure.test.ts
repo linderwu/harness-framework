@@ -122,7 +122,22 @@ test("compose form gives agent task projects a one-step instruction flow", () =>
   assert.match(dashboard, /const isAgentTask = form\.projectType === "agent_task"/)
   assert.match(dashboard, /isAgentTask \? "Instruction" : "Requirement"/)
   assert.match(dashboard, /isAgentTask \? "Run Task" : "Create Project"/)
-  assert.match(dashboard, /!\s*isAgentTask \? \(\s*<label>\s*<span>Repository<\/span>/)
+  assert.match(dashboard, /!isAgentTask && !isArceusMaintenance \? \(\s*<label>\s*<span>Repository<\/span>/)
+})
+
+test("compose form sends the complete Arceus maintenance contract", () => {
+  assert.match(dashboard, /const isArceusMaintenance = form\.projectType === "arceus_maintenance"/)
+  assert.match(dashboard, /successCriteria: splitLines\(form\.successCriteria\)/)
+  assert.match(dashboard, /constraints: splitLines\(form\.constraints\)/)
+  assert.match(dashboard, /nonGoals: splitLines\(form\.nonGoals\)/)
+  assert.match(dashboard, /isArceusMaintenance \? \([\s\S]*Success criteria[\s\S]*Constraints[\s\S]*Non-goals/)
+  assert.match(dashboard, /required=\{isArceusMaintenance\}/)
+})
+
+test("Arceus maintenance keeps its repository server-managed", () => {
+  assert.match(dashboard, /projectType === "agent_task" \|\| projectType === "arceus_maintenance"/)
+  assert.match(dashboard, /!isAgentTask && !isArceusMaintenance/)
+  assert.match(dashboard, /Repository is fixed by JORMUNGAND_REPOSITORY/)
 })
 
 test("compose form uses research-specific workflow skills", () => {
