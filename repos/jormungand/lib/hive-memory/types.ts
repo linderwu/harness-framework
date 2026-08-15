@@ -127,6 +127,26 @@ export interface AgentIdentity {
   updatedAt: string
 }
 
+export type ConversationRole = "user" | "agent" | "manager" | "system"
+export type ConversationImportance = "normal" | "important" | "critical"
+export type ConversationStatus = "queued" | "running" | "completed" | "failed"
+
+export interface ConversationEntry {
+  id: string
+  workflowRunId: string
+  taskId?: string
+  role: ConversationRole
+  agentId?: import("../types").AgentKind
+  content: string
+  importance: ConversationImportance
+  status: ConversationStatus
+  replyToId?: string
+  artifactIds: string[]
+  memoryIds: string[]
+  idempotencyKey: string
+  createdAt: string
+}
+
 export type PromotionOutcome =
   | { status: "activated"; memory: FormalMemory }
   | { status: "merged"; memory: FormalMemory }

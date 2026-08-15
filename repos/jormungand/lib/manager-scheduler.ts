@@ -8,7 +8,7 @@ export type ManagerWakeReason =
   | "worker_failed" | "worker_timed_out" | "worker_unreachable"
   | "review_blocked" | "memory_candidate" | "memory_conflict"
   | "approval_decided" | "health_check" | "operator_message"
-  | "operator_resume"
+  | "operator_resume" | "worker_message"
 
 export type ManagerCycleResult =
   | { status: "completed"; checkpointId: string; acceptedActionCount: number; rejectedActionCount: number }

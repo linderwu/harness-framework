@@ -2,6 +2,7 @@ import type Database from "better-sqlite3"
 import type { HiveDatabase } from "./database"
 import type {
   AgentIdentity,
+  ConversationEntry,
   CreateMemoryInput,
   FormalMemory,
   HiveEvent,
@@ -52,6 +53,22 @@ type CandidateRow = {
   decision_reason: string | null
   created_at: string
   decided_at: string | null
+}
+
+type ConversationRow = {
+  id: string
+  workflow_run_id: string
+  task_id: string | null
+  role: ConversationEntry["role"]
+  agent_id: ConversationEntry["agentId"] | null
+  content: string
+  importance: ConversationEntry["importance"]
+  status: ConversationEntry["status"]
+  reply_to_id: string | null
+  artifact_ids_json: string
+  memory_ids_json: string
+  idempotency_key: string
+  created_at: string
 }
 
 export class HiveMemoryRepository {
@@ -520,6 +537,82 @@ export class HiveMemoryRepository {
     await this.database.write((connection) => this.insertEvent(connection, input))
   }
 
+  async insertConversation(input: Omit<ConversationEntry, "id" | "createdAt">) {
+    const entry: ConversationEntry = {
+      ...input,
+      id: crypto.randomUUID(),
+      createdAt: new Date().toISOString()
+    }
+    const inserted = await this.database.write((connection) => {
+      const result = connection.prepare(`
+        INSERT OR IGNORE INTO conversation_entries(
+          id, workflow_run_id, task_id, role, agent_id, content, importance,
+          status, reply_to_id, artifact_ids_json, memory_ids_json,
+          idempotency_key, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        entry.id, entry.workflowRunId, entry.taskId ?? null, entry.role,
+        entry.agentId ?? null, entry.content, entry.importance, entry.status,
+        entry.replyToId ?? null, JSON.stringify(entry.artifactIds),
+        JSON.stringify(entry.memoryIds), entry.idempotencyKey, entry.createdAt
+      )
+      return result.changes > 0
+    })
+    return {
+      entry: inserted ? entry : this.getConversationByIdempotencyKey(input.idempotencyKey)!,
+      inserted
+    }
+  }
+
+  listConversation(workflowRunId: string) {
+    return this.database.read((connection) =>
+      (connection.prepare(`
+        SELECT * FROM conversation_entries
+        WHERE workflow_run_id = ? ORDER BY created_at ASC, id ASC
+      `).all(workflowRunId) as ConversationRow[]).map(conversationFromRow)
+    )
+  }
+
+  getConversationByIdempotencyKey(idempotencyKey: string) {
+    return this.database.read((connection) => {
+      const row = connection.prepare(`
+        SELECT * FROM conversation_entries WHERE idempotency_key = ?
+      `).get(idempotencyKey) as ConversationRow | undefined
+      return row ? conversationFromRow(row) : undefined
+    })
+  }
+
+  getConversationEntry(id: string) {
+    return this.database.read((connection) => {
+      const row = connection.prepare("SELECT * FROM conversation_entries WHERE id = ?")
+        .get(id) as ConversationRow | undefined
+      return row ? conversationFromRow(row) : undefined
+    })
+  }
+
+  async updateConversation(input: {
+    id: string
+    status?: ConversationEntry["status"]
+    artifactIds?: string[]
+    memoryIds?: string[]
+  }) {
+    await this.database.write((connection) => {
+      connection.prepare(`
+        UPDATE conversation_entries SET
+          status = COALESCE(?, status),
+          artifact_ids_json = COALESCE(?, artifact_ids_json),
+          memory_ids_json = COALESCE(?, memory_ids_json)
+        WHERE id = ?
+      `).run(
+        input.status ?? null,
+        input.artifactIds ? JSON.stringify(input.artifactIds) : null,
+        input.memoryIds ? JSON.stringify(input.memoryIds) : null,
+        input.id
+      )
+    })
+    return this.getConversationEntry(input.id)
+  }
+
   async createManagerTask(input: {
     workflowRunId: string
     parentTaskId?: string
@@ -738,6 +831,24 @@ function parseStringArray(value: string) {
 
 function clampScore(value: number) {
   return Math.min(1, Math.max(0, value))
+}
+
+function conversationFromRow(row: ConversationRow): ConversationEntry {
+  return {
+    id: row.id,
+    workflowRunId: row.workflow_run_id,
+    taskId: row.task_id ?? undefined,
+    role: row.role,
+    agentId: row.agent_id ?? undefined,
+    content: row.content,
+    importance: row.importance,
+    status: row.status,
+    replyToId: row.reply_to_id ?? undefined,
+    artifactIds: parseStringArray(row.artifact_ids_json),
+    memoryIds: parseStringArray(row.memory_ids_json),
+    idempotencyKey: row.idempotency_key,
+    createdAt: row.created_at
+  }
 }
 
 function unique(values: string[]) {
