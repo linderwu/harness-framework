@@ -1,11 +1,12 @@
 import { agentProfiles } from "./agents"
 import { invokeConfiguredAgent, invokeConfiguredHiveManager } from "./agent-bridge"
-import { createConversationService } from "./conversation"
+import { createConversationService, parseUnboundManagerDecision } from "./conversation"
 import { createContextBuilder } from "./context-builder"
 import { openHiveDatabase } from "./hive-memory/database"
 import { createHiveMemoryRepository } from "./hive-memory/repository"
 import { createManagerScheduler } from "./manager-scheduler"
-import { getWorkflowRun, upsertWorkflowRun } from "./store"
+import { getWorkflowRun, listProjects, listWorkflowRuns, upsertWorkflowRun } from "./store"
+import { createWorkflowRun } from "./workflow"
 
 let services: ReturnType<typeof createServices> | undefined
 
@@ -104,7 +105,59 @@ function createServices() {
       await upsertWorkflowRun({ ...latest, artifacts: [...latest.artifacts, artifact] }, { expectedVersion: latest.version })
       return artifact.id
     },
-    enqueueManagerWake: (input) => scheduler.enqueue(input)
+    enqueueManagerWake: (input) => scheduler.enqueue(input),
+    routeUnbound: async ({ content, entries }) => {
+      const [projects, runs] = await Promise.all([listProjects(), listWorkflowRuns()])
+      const candidateLines = projects.map((project) => {
+        const projectRuns = runs.filter((run) => run.projectId === project.id)
+        return `- ${project.name}: projectId=${project.id}; workflowRuns=${projectRuns.map((run) => `${run.id} (${run.status})`).join(", ") || "none"}`
+      })
+      const prompt = [
+        "You are the Jormungand conversation manager.",
+        "Answer the operator and decide whether this conversation clearly belongs to one existing project and workflow run.",
+        "Keep it unbound when intent is general, ambiguous, or no matching workflow run exists.",
+        "Return exactly one JSON object: {\"reply\":\"...\",\"projectId\":string|null,\"workflowRunId\":string|null}.",
+        "Existing targets:",
+        ...(candidateLines.length ? candidateLines : ["- none"]),
+        "Recent conversation:",
+        ...entries.slice(-12).map((entry) => `${entry.role}: ${entry.content}`),
+        `Latest operator message: ${content}`
+      ].join("\n")
+      const syntheticRun = createWorkflowRun({
+        projectId: "",
+        projectName: "Unbound conversation",
+        repository: "",
+        requirement: content,
+        selectedAgent: "codex",
+        designApprovalActor: "human",
+        verificationApprovalActor: "human"
+      })
+      const result = await invokeConfiguredAgent({
+        run: syntheticRun,
+        executor: "codex",
+        stage: "intake",
+        artifactType: "log",
+        title: "Route unbound conversation",
+        fallbackBody: JSON.stringify({ reply: content, projectId: null, workflowRunId: null }),
+        skill: {
+          id: "hive_manager.route_conversation",
+          eventType: "requirement_intake",
+          stage: "intake",
+          name: "Route unbound conversation",
+          purpose: prompt,
+          trigger: "The operator posted to the persistent unbound conversation.",
+          allowedActors: ["codex"],
+          inputs: ["recent conversation", "existing project and workflow targets"],
+          outputs: ["reply and optional validated binding"],
+          constraints: ["Bind only when the target is unambiguous.", "Never invent project or workflow identifiers."],
+          gates: ["Jormungand validates the selected target."],
+          knowledgeSources: ["persisted conversation", "workspace index"],
+          verificationRules: ["Output exactly one JSON object matching the requested shape."]
+        }
+      })
+      if (result.status === "failed") return { status: "failed" as const, body: result.body }
+      return { status: "completed" as const, ...parseUnboundManagerDecision(result.body, runs) }
+    }
   })
   return { database, repository, scheduler, conversation }
 }

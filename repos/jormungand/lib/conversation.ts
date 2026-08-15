@@ -5,6 +5,14 @@ import type { ConversationEntry } from "./hive-memory/types"
 import type { ManagerWakeReason } from "./manager-scheduler"
 import type { AgentKind, WorkflowRun } from "./types"
 
+export const unboundConversationId = "global:unbound-conversation"
+
+export interface ConversationBinding {
+  projectId: string
+  workflowRunId: string
+  projectName: string
+}
+
 export type AgentAvailability = "online" | "busy" | "offline" | "disabled"
 export type AgentHealth = Partial<Record<AgentKind, AgentAvailability>>
 
@@ -48,6 +56,14 @@ interface ConversationDependencies {
     reason: ManagerWakeReason
     idempotencyKey: string
   }) => Promise<unknown>
+  routeUnbound?: (input: {
+    content: string
+    entries: ConversationEntry[]
+  }) => Promise<{
+    status: "completed" | "failed"
+    body: string
+    binding?: ConversationBinding
+  }>
 }
 
 export class ConversationService {
@@ -59,6 +75,77 @@ export class ConversationService {
     return {
       entries: this.dependencies.repository.listConversation(workflowRunId),
       allowedAgents: listAllowedAgents(run, health)
+    }
+  }
+
+  getUnboundConversation() {
+    return {
+      entries: this.dependencies.repository.listConversation(unboundConversationId),
+      allowedAgents: ["codex"] satisfies AgentKind[],
+      binding: undefined
+    }
+  }
+
+  async postUnboundMessage(input: {
+    content: string
+    idempotencyKey: string
+  }) {
+    const content = input.content.trim()
+    if (!content) throw new ConversationError("content is required", 400)
+    if (!input.idempotencyKey.trim()) throw new ConversationError("idempotencyKey is required", 400)
+    if (!this.dependencies.routeUnbound) throw new ConversationError("Conversation manager is unavailable", 503)
+
+    const existing = this.dependencies.repository.getConversationByIdempotencyKey(input.idempotencyKey)
+    if (existing) return this.duplicateUnboundResult(existing)
+
+    const userInsert = await this.dependencies.repository.insertConversation({
+      workflowRunId: unboundConversationId,
+      role: "user",
+      agentId: "codex",
+      content,
+      importance: "normal",
+      status: "queued",
+      artifactIds: [],
+      memoryIds: [],
+      idempotencyKey: input.idempotencyKey
+    })
+    const userEntry = userInsert.entry
+    if (!userInsert.inserted) return this.duplicateUnboundResult(userEntry)
+
+    try {
+      await this.dependencies.repository.updateConversation({ id: userEntry.id, status: "running" })
+      const decision = await this.dependencies.routeUnbound({
+        content,
+        entries: this.dependencies.repository.listConversation(unboundConversationId)
+      })
+      const responseInsert = await this.dependencies.repository.insertConversation({
+        workflowRunId: unboundConversationId,
+        role: "manager",
+        agentId: "codex",
+        content: compactResponse(decision.body),
+        importance: decision.status === "failed" ? "critical" : "important",
+        status: decision.status,
+        replyToId: userEntry.id,
+        artifactIds: [],
+        memoryIds: [],
+        idempotencyKey: `${input.idempotencyKey}:response`
+      })
+      await this.dependencies.repository.updateConversation({
+        id: userEntry.id,
+        status: decision.status === "completed" ? "completed" : "failed"
+      })
+      if (decision.binding) {
+        await this.dependencies.repository.moveConversation(unboundConversationId, decision.binding.workflowRunId)
+      }
+      return {
+        userEntry: this.dependencies.repository.getConversationEntry(userEntry.id)!,
+        responseEntry: this.dependencies.repository.getConversationEntry(responseInsert.entry.id)!,
+        binding: decision.binding,
+        duplicate: false
+      }
+    } catch (error) {
+      await this.dependencies.repository.updateConversation({ id: userEntry.id, status: "failed" })
+      throw error
     }
   }
 
@@ -178,10 +265,50 @@ export class ConversationService {
       duplicate: true
     }
   }
+
+  private async duplicateUnboundResult(userEntry: ConversationEntry) {
+    const run = userEntry.workflowRunId === unboundConversationId
+      ? undefined
+      : await this.dependencies.getRun(userEntry.workflowRunId)
+    return {
+      userEntry,
+      responseEntry: this.dependencies.repository.getConversationByIdempotencyKey(`${userEntry.idempotencyKey}:response`),
+      binding: run ? { projectId: run.projectId, workflowRunId: run.id, projectName: run.projectName } : undefined,
+      duplicate: true
+    }
+  }
 }
 
 export function createConversationService(dependencies: ConversationDependencies) {
   return new ConversationService(dependencies)
+}
+
+export function parseUnboundManagerDecision(raw: string, runs: WorkflowRun[]) {
+  let value: unknown
+  try {
+    value = JSON.parse(raw)
+  } catch {
+    throw new Error("Conversation manager response must be one valid JSON object.")
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("Conversation manager response must be one valid JSON object.")
+  }
+  const decision = value as Record<string, unknown>
+  if (typeof decision.reply !== "string" || !decision.reply.trim()) {
+    throw new Error("Conversation manager response requires a reply.")
+  }
+  const projectId = typeof decision.projectId === "string" ? decision.projectId : undefined
+  const workflowRunId = typeof decision.workflowRunId === "string" ? decision.workflowRunId : undefined
+  if (!projectId && !workflowRunId) return { body: decision.reply.trim() }
+  if (!projectId || !workflowRunId) {
+    throw new Error("Conversation manager must provide both projectId and workflowRunId when binding.")
+  }
+  const run = runs.find((candidate) => candidate.id === workflowRunId && candidate.projectId === projectId)
+  if (!run) throw new Error("Conversation manager selected an invalid project or workflow run.")
+  return {
+    body: decision.reply.trim(),
+    binding: { projectId: run.projectId, workflowRunId: run.id, projectName: run.projectName }
+  }
 }
 
 function compactResponse(body: string) {

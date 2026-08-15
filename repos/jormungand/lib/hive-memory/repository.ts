@@ -573,6 +573,16 @@ export class HiveMemoryRepository {
     )
   }
 
+  async moveConversation(sourceWorkflowRunId: string, targetWorkflowRunId: string) {
+    await this.database.write((connection) => {
+      connection.prepare(`
+        UPDATE conversation_entries SET workflow_run_id = ?
+        WHERE workflow_run_id = ?
+      `).run(targetWorkflowRunId, sourceWorkflowRunId)
+    })
+    return this.listConversation(targetWorkflowRunId)
+  }
+
   getConversationByIdempotencyKey(idempotencyKey: string) {
     return this.database.read((connection) => {
       const row = connection.prepare(`

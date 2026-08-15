@@ -207,3 +207,15 @@ test("task conversation is durable, targeted, and polls only while pending", () 
   assert.match(conversationSource, /artifactIds/)
   assert.match(conversationSource, /memoryIds/)
 })
+
+test("conversation remains available without a selected project and can adopt manager binding", () => {
+  assert.match(dashboard, /key=\{selectedRun\?\.id \?\? "unbound"\}/)
+  assert.match(dashboard, /onBound=\{\(binding\)/)
+  assert.match(dashboard, /setSelectedProjectId\(binding\.projectId\)/)
+  assert.match(dashboard, /setSelectedRunId\(binding\.workflowRunId\)/)
+
+  const conversationSource = readFileSync("components/task-conversation.tsx", "utf8")
+  assert.match(conversationSource, /run\?: WorkflowRun/)
+  assert.match(conversationSource, /"\/api\/conversation"/)
+  assert.match(conversationSource, /No project or task/)
+})

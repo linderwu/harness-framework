@@ -3,7 +3,12 @@ import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
-import { createConversationService, listAllowedAgents } from "../lib/conversation"
+import {
+  createConversationService,
+  listAllowedAgents,
+  parseUnboundManagerDecision,
+  unboundConversationId
+} from "../lib/conversation"
 import { openHiveDatabase } from "../lib/hive-memory/database"
 import { createHiveMemoryRepository } from "../lib/hive-memory/repository"
 import type { WorkflowRun } from "../lib/types"
@@ -41,7 +46,12 @@ async function fixture(t: test.TestContext, options: {
       return { status: "completed", body: "Isolation verified.\n\nraw evidence" }
     },
     persistRawArtifact: async () => "artifact-1",
-    enqueueManagerWake: (input) => repository.enqueueManagerWake(input)
+    enqueueManagerWake: (input) => repository.enqueueManagerWake(input),
+    routeUnbound: async () => ({
+      status: "completed",
+      body: "This belongs to Mission.",
+      binding: { projectId: run.projectId, workflowRunId: run.id, projectName: run.projectName }
+    })
   })
   t.after(async () => {
     database.close()
@@ -94,4 +104,30 @@ test("context failures retain the committed user entry as failed", async (t) => 
     workflowRunId: run.id, targetAgent: "codex", content: "Inspect state", idempotencyKey: "message-fail"
   }), /context unavailable/)
   assert.equal(repository.listConversation(run.id)[0]?.status, "failed")
+})
+
+test("unbound conversation is persisted and moved intact after manager binding", async (t) => {
+  const { repository, run, service } = await fixture(t)
+  assert.deepEqual(service.getUnboundConversation().entries, [])
+
+  const result = await service.postUnboundMessage({
+    content: "Continue the Mission project.",
+    idempotencyKey: "unbound-message"
+  })
+
+  assert.equal(result.binding?.workflowRunId, run.id)
+  assert.equal(repository.listConversation(unboundConversationId).length, 0)
+  assert.deepEqual(repository.listConversation(run.id).map((entry) => entry.role), ["user", "manager"])
+  assert.equal(repository.listConversation(run.id).every((entry) => entry.workflowRunId === run.id), true)
+})
+
+test("manager binding parser keeps ambiguous messages unbound and rejects invented targets", () => {
+  const run = createRun()
+  assert.deepEqual(
+    parseUnboundManagerDecision(JSON.stringify({ reply: "Which project do you mean?", projectId: null, workflowRunId: null }), [run]),
+    { body: "Which project do you mean?" }
+  )
+  assert.throws(() => parseUnboundManagerDecision(JSON.stringify({
+    reply: "Bound.", projectId: run.projectId, workflowRunId: "invented"
+  }), [run]), /invalid project or workflow run/)
 })

@@ -1787,6 +1787,7 @@ small,
 }
 
 .taskConversationHeader h2 { margin-top: 3px; }
+.conversationBindingStatus { color: var(--muted); font-size: 12px; font-weight: 800; }
 .conversationEntries { display: grid; gap: 12px; list-style: none; margin: 0; overflow-y: auto; padding: 18px; }
 .conversationEntry { align-self: start; background: #f1f5f9; border: 1px solid var(--border); border-radius: 10px; max-width: 88%; padding: 12px 14px; }
 .conversationEntry.user { background: #ecfeff; border-color: #a5f3fc; justify-self: end; }

@@ -3,16 +3,19 @@
 import { FormEvent, useEffect, useMemo, useState } from "react"
 import { Send } from "lucide-react"
 import { getAgentLabel } from "@/lib/agents"
+import type { ConversationBinding } from "@/lib/conversation"
 import type { ConversationEntry } from "@/lib/hive-memory/types"
 import type { AgentKind, WorkflowRun } from "@/lib/types"
 
 export function TaskConversation(props: {
-  run: WorkflowRun
+  run?: WorkflowRun
   initialEntries: ConversationEntry[]
   allowedAgents: AgentKind[]
   onEntriesChanged: (entries: ConversationEntry[]) => void
+  onBound?: (binding: ConversationBinding) => void
 }) {
-  const runId = props.run.id
+  const runId = props.run?.id
+  const conversationPath = runId ? `/api/workflow-runs/${runId}/conversation` : "/api/conversation"
   const onEntriesChanged = props.onEntriesChanged
   const [entries, setEntries] = useState(props.initialEntries)
   const [allowedAgents, setAllowedAgents] = useState(props.allowedAgents)
@@ -23,7 +26,7 @@ export function TaskConversation(props: {
 
   useEffect(() => {
     let active = true
-    void loadConversation(runId).then((data) => {
+    void loadConversation(conversationPath).then((data) => {
       if (!active) return
       setEntries(data.entries)
       setAllowedAgents(data.allowedAgents)
@@ -31,18 +34,18 @@ export function TaskConversation(props: {
       onEntriesChanged(data.entries)
     }).catch((loadError) => active && setError(formatError(loadError)))
     return () => { active = false }
-  }, [onEntriesChanged, runId])
+  }, [conversationPath, onEntriesChanged])
 
   useEffect(() => {
     if (!pending) return
     const timer = window.setInterval(() => {
-      void loadConversation(runId).then((data) => {
+      void loadConversation(conversationPath).then((data) => {
         setEntries(data.entries)
         onEntriesChanged(data.entries)
       }).catch((loadError) => setError(formatError(loadError)))
     }, 3_000)
     return () => window.clearInterval(timer)
-  }, [onEntriesChanged, pending, runId])
+  }, [conversationPath, onEntriesChanged, pending])
 
   async function submit(event: FormEvent) {
     event.preventDefault()
@@ -51,7 +54,7 @@ export function TaskConversation(props: {
     const idempotencyKey = crypto.randomUUID()
     const optimistic: ConversationEntry = {
       id: `optimistic:${idempotencyKey}`,
-      workflowRunId: props.run.id,
+      workflowRunId: runId ?? "global:unbound-conversation",
       role: "user",
       agentId: targetAgent,
       content: message,
@@ -66,7 +69,7 @@ export function TaskConversation(props: {
     setContent("")
     setError(undefined)
     try {
-      const response = await fetch(`/api/workflow-runs/${props.run.id}/conversation`, {
+      const response = await fetch(conversationPath, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ targetAgent, content: message, idempotencyKey })
@@ -75,9 +78,11 @@ export function TaskConversation(props: {
         error?: string
         userEntry?: ConversationEntry
         responseEntry?: ConversationEntry
+        binding?: ConversationBinding
       }
       if (!response.ok || !result.userEntry) throw new Error(result.error ?? "Message dispatch failed")
       setEntries((current) => mergeResult(current, optimistic.id, result.userEntry!, result.responseEntry))
+      if (result.binding) props.onBound?.(result.binding)
     } catch (submitError) {
       setEntries((current) => current.map((entry) => entry.id === optimistic.id ? { ...entry, status: "failed" } : entry))
       setError(formatError(submitError))
@@ -85,10 +90,10 @@ export function TaskConversation(props: {
   }
 
   return (
-    <section className="panel taskConversation" aria-label="Task conversation">
+    <section className="panel taskConversation" aria-label="Conversation">
       <header className="taskConversationHeader">
-        <div><p className="eyebrow">Task Conversation</p><h2>{props.run.projectName}</h2></div>
-        <span className={`status ${props.run.status}`}>{props.run.status.replaceAll("_", " ")}</span>
+        <div><p className="eyebrow">Conversation</p><h2>{props.run?.projectName ?? "Unbound conversation"}</h2></div>
+        {props.run ? <span className={`status ${props.run.status}`}>{props.run.status.replaceAll("_", " ")}</span> : <span className="conversationBindingStatus">No project or task</span>}
       </header>
       <ol className="conversationEntries">
         {entries.length ? entries.map((entry) => (
@@ -105,11 +110,11 @@ export function TaskConversation(props: {
               </div>
             ) : null}
           </li>
-        )) : <li className="conversationEmpty">Send a message to begin the durable task conversation.</li>}
+        )) : <li className="conversationEmpty">Start anywhere. The manager will bind this conversation only when a project is clear.</li>}
       </ol>
       <form className="conversationComposer" onSubmit={submit}>
-        <label><span>Agent</span><select value={targetAgent} disabled={props.run.projectType === "arceus_maintenance" || allowedAgents.length <= 1} onChange={(event) => setTargetAgent(event.target.value as AgentKind)}>{allowedAgents.map((agent) => <option value={agent} key={agent}>{getAgentLabel(agent)}</option>)}</select></label>
-        <label className="conversationInput"><span>Message</span><textarea value={content} onChange={(event) => setContent(event.target.value)} placeholder="Ask for progress, evidence, or a scoped action…" /></label>
+        <label><span>Agent</span><select value={targetAgent} disabled={!props.run || props.run.projectType === "arceus_maintenance" || allowedAgents.length <= 1} onChange={(event) => setTargetAgent(event.target.value as AgentKind)}>{allowedAgents.map((agent) => <option value={agent} key={agent}>{getAgentLabel(agent)}</option>)}</select></label>
+        <label className="conversationInput"><span>Message</span><textarea value={content} onChange={(event) => setContent(event.target.value)} placeholder={props.run ? "Ask for progress, evidence, or a scoped action" : "Ask anything; the manager will decide whether it belongs to a project"} /></label>
         <button className="primaryButton" disabled={!content.trim() || !allowedAgents.length}><Send size={16} />Send</button>
       </form>
       {error ? <p className="formError" role="alert">{error}</p> : null}
@@ -117,8 +122,8 @@ export function TaskConversation(props: {
   )
 }
 
-async function loadConversation(workflowRunId: string) {
-  const response = await fetch(`/api/workflow-runs/${workflowRunId}/conversation`, { cache: "no-store" })
+async function loadConversation(path: string) {
+  const response = await fetch(path, { cache: "no-store" })
   const data = await response.json() as { error?: string; entries: ConversationEntry[]; allowedAgents: AgentKind[] }
   if (!response.ok) throw new Error(data.error ?? "Conversation could not be loaded")
   return data

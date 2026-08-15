@@ -146,12 +146,8 @@ export function HarnessDashboard({
   const [runs, setRuns] = useState<WorkflowRun[]>(initialState.workflowRuns)
   const [selectedProjectId, setSelectedProjectId] = useState<
     string | undefined
-  >(initialState.projects[0]?.id)
-  const [selectedRunId, setSelectedRunId] = useState<string | undefined>(
-    initialState.workflowRuns.find(
-      (run) => run.projectId === initialState.projects[0]?.id
-    )?.id
-  )
+  >()
+  const [selectedRunId, setSelectedRunId] = useState<string | undefined>()
   const [isLoading, setIsLoading] = useState(false)
   const [isMutating, setIsMutating] = useState(false)
   const [isNavigationExpanded, setIsNavigationExpanded] = useState(true)
@@ -184,7 +180,7 @@ export function HarnessDashboard({
   const selectedProject = useMemo(
     () =>
       projectSelectorItems.find((item) => item.project.id === selectedProjectId)
-        ?.project ?? projectSelectorItems[0]?.project,
+        ?.project,
     [projectSelectorItems, selectedProjectId]
   )
   const selectedProjectRuns = useMemo(
@@ -255,25 +251,21 @@ export function HarnessDashboard({
     ])
     const nextProjects = (await projectsResponse.json()) as Project[]
     const nextRuns = (await runsResponse.json()) as WorkflowRun[]
-    const nextSelectorItems = buildProjectSelectorItems(nextProjects, nextRuns)
-    const fallbackProjectId = nextSelectorItems[0]?.project.id
-
     setProjects(nextProjects)
     setRuns(nextRuns)
     setSelectedProjectId((current) =>
       nextProjects.some((project) => project.id === current)
         ? current
-        : fallbackProjectId
+        : undefined
     )
     setSelectedRunId((current) => {
       if (nextRuns.some((run) => run.id === current)) {
         return current
       }
 
-      const activeProjectId =
-        nextProjects.some((project) => project.id === selectedProjectId)
-          ? selectedProjectId
-          : fallbackProjectId
+      const activeProjectId = nextProjects.some((project) => project.id === selectedProjectId)
+        ? selectedProjectId
+        : undefined
       const latestRun = nextRuns
         .filter((run) => run.projectId === activeProjectId)
         .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0]
@@ -1033,20 +1025,17 @@ export function HarnessDashboard({
         </aside>
 
         <section className="conversationWorkspace">
-          {selectedRun ? (
-            <TaskConversation
-              key={selectedRun.id}
-              run={selectedRun}
-              initialEntries={[]}
-              allowedAgents={selectedRun.projectType === "arceus_maintenance" ? ["codex"] : agentProfiles.map((profile) => profile.id)}
-              onEntriesChanged={setConversationEntries}
-            />
-          ) : (
-            <div className="panel emptyState">
-              <Bot size={22} />
-              <p>Create or select a run to begin its task conversation.</p>
-            </div>
-          )}
+          <TaskConversation
+            key={selectedRun?.id ?? "unbound"}
+            run={selectedRun}
+            initialEntries={[]}
+            allowedAgents={selectedRun?.projectType === "arceus_maintenance" ? ["codex"] : selectedRun ? agentProfiles.map((profile) => profile.id) : ["codex"]}
+            onEntriesChanged={setConversationEntries}
+            onBound={(binding) => {
+              setSelectedProjectId(binding.projectId)
+              setSelectedRunId(binding.workflowRunId)
+            }}
+          />
           {selectedProject && selectedOverview ? (
             <details className="projectDetailsDisclosure">
               <summary>Project and workflow details</summary>
@@ -1105,7 +1094,7 @@ function ProjectSelector({
   const [query, setQuery] = useState("")
   const [filter, setFilter] = useState<ProjectSelectorFilter>("all")
   const selectedItem =
-    items.find((item) => item.project.id === selectedProjectId) ?? items[0]
+    items.find((item) => item.project.id === selectedProjectId)
   const visibleItems = filterProjectSelectorItems(items, query, filter)
 
   function clearFilters() {
@@ -1148,7 +1137,7 @@ function ProjectSelector({
             </span>
           </span>
         ) : (
-          <span className="muted">No projects yet</span>
+          <span className="muted">No project selected</span>
         )}
       </button>
 
