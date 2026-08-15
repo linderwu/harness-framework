@@ -2146,11 +2146,12 @@ function AgentBridgeRow({
 
 function AgentQuotaBar({ quota }: { quota?: AgentQuota }) {
   const status = quota?.status ?? "unavailable"
+  const isUnavailable = !quota || status === "unavailable"
   const remainingPercent = Math.max(
     0,
     Math.min(100, Math.round(quota?.remainingPercent ?? 0))
   )
-  const label = quota ? `${remainingPercent}%` : "Unavailable"
+  const label = isUnavailable ? "Unavailable" : `${remainingPercent}%`
 
   return (
     <div className={`agentQuotaBar status-${status}`}>
