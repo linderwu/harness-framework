@@ -13,6 +13,7 @@ import {
   FileUp,
   FolderUp,
   GitBranch,
+  Menu,
   Play,
   RefreshCw,
   RotateCcw,
@@ -30,6 +31,7 @@ import {
 import {
   ChangeEvent,
   FormEvent,
+  useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -116,6 +118,7 @@ type ApprovalDecision = "approved" | "rejected" | "changes_requested"
 type BridgeHealthStatus = "online" | "offline"
 type BridgePanelStatus = BridgeHealthStatus | "checking" | "stale"
 type BridgeId = "codex-bridge" | "openclaw-bridge"
+type MobilePanel = "modes" | "navigation" | "monitoring"
 
 interface BridgeHealth {
   id: BridgeId
@@ -152,6 +155,7 @@ export function HarnessDashboard({
   const [isMutating, setIsMutating] = useState(false)
   const [isNavigationExpanded, setIsNavigationExpanded] = useState(true)
   const [isMonitoringExpanded, setIsMonitoringExpanded] = useState(true)
+  const [mobilePanel, setMobilePanel] = useState<MobilePanel>()
   const [mutationError, setMutationError] = useState<string | undefined>()
   const [conversationEntries, setConversationEntries] = useState<ConversationEntry[]>([])
   const [openComposeSection, setOpenComposeSection] = useState<
@@ -537,31 +541,55 @@ export function HarnessDashboard({
     throw new Error(("error" in data && data.error) || "Project mutation failed")
   }
 
+  useEffect(() => {
+    if (!mobilePanel) return
+
+    function closeOnEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") setMobilePanel(undefined)
+    }
+
+    window.addEventListener("keydown", closeOnEscape)
+    return () => window.removeEventListener("keydown", closeOnEscape)
+  }, [mobilePanel])
+
   return (
     <main className={`shell mode-${form.projectType}`}>
-      <GlobalModeNav
-        value={form.projectType}
-        onChange={selectProjectType}
-      />
-      <header className="topbar">
-        <div>
-          <p className="eyebrow modeEyebrow">{getProjectTemplate(form.projectType).label} mode</p>
-          <h1>{"Jormungand"}</h1>
+      <div className={`appChrome${mobilePanel === "modes" ? " mobilePanelOpen" : ""}`}>
+        <div className="mobileDrawerHeader">
+          <strong>Mode &amp; workspace</strong>
+          <button aria-label="Close mode menu" className="iconButton" onClick={() => setMobilePanel(undefined)} type="button"><X size={18} /></button>
         </div>
-        <div className="topbarActions">
-          <a className={`hiveHealthBadge ${initialHiveHealth.status}`} href="/api/hive-memory/health" title={`Hive memory integrity: ${initialHiveHealth.integrity}`}>
-            <CircleDot size={13} />Memory {initialHiveHealth.status}
-          </a>
-          <button className="iconButton" onClick={refreshWorkspace} title="Refresh"><RefreshCw size={18} /></button>
-        </div>
-      </header>
+        <GlobalModeNav
+          value={form.projectType}
+          onChange={(projectType) => {
+            selectProjectType(projectType)
+            setMobilePanel(undefined)
+          }}
+        />
+        <header className="topbar">
+          <div>
+            <p className="eyebrow modeEyebrow">{getProjectTemplate(form.projectType).label} mode</p>
+            <h1>{"Jormungand"}</h1>
+          </div>
+          <div className="topbarActions">
+            <a className={`hiveHealthBadge ${initialHiveHealth.status}`} href="/api/hive-memory/health" title={`Hive memory integrity: ${initialHiveHealth.integrity}`}>
+              <CircleDot size={13} />Memory {initialHiveHealth.status}
+            </a>
+            <button className="iconButton" onClick={refreshWorkspace} title="Refresh"><RefreshCw size={18} /></button>
+          </div>
+        </header>
+      </div>
 
       <section
         className="taskWorkspaceGrid"
         data-left-collapsed={!isNavigationExpanded}
         data-right-collapsed={!isMonitoringExpanded}
       >
-        <aside className={`taskNavigation${isNavigationExpanded ? "" : " collapsed"}`}>
+        <aside className={`taskNavigation${isNavigationExpanded ? "" : " collapsed"}${mobilePanel === "navigation" ? " mobilePanelOpen" : ""}`}>
+          <div className="mobileDrawerHeader">
+            <strong>Projects &amp; runs</strong>
+            <button aria-label="Close projects menu" className="iconButton" onClick={() => setMobilePanel(undefined)} type="button"><X size={18} /></button>
+          </div>
           <button
             aria-expanded={isNavigationExpanded}
             aria-label={isNavigationExpanded ? "Collapse project navigation" : "Expand project navigation"}
@@ -579,6 +607,7 @@ export function HarnessDashboard({
             onSelectProject={(item) => {
               setSelectedProjectId(item.project.id)
               setSelectedRunId(item.latestRun?.id)
+              setMobilePanel(undefined)
             }}
           />
           <form className="panel composePanel" onSubmit={createProject}>
@@ -1025,6 +1054,11 @@ export function HarnessDashboard({
         </aside>
 
         <section className="conversationWorkspace">
+          <nav aria-label="Mobile workspace controls" className="mobileTaskToolbar">
+            <button aria-expanded={mobilePanel === "modes"} onClick={() => setMobilePanel("modes")} type="button"><SlidersHorizontal size={18} /><span>Mode</span></button>
+            <button aria-expanded={mobilePanel === "navigation"} onClick={() => { setIsNavigationExpanded(true); setMobilePanel("navigation") }} type="button"><Menu size={18} /><span>Projects</span></button>
+            <button aria-expanded={mobilePanel === "monitoring"} onClick={() => { setIsMonitoringExpanded(true); setMobilePanel("monitoring") }} type="button"><CircleDot size={18} /><span>Status</span></button>
+          </nav>
           <TaskConversation
             key={selectedRun?.id ?? "unbound"}
             run={selectedRun}
@@ -1057,11 +1091,17 @@ export function HarnessDashboard({
             bridgeConnections={<BridgeStatusPanel run={selectedRun} showHeading={false} />}
             entries={conversationEntries.filter((entry) => entry.workflowRunId === selectedRun.id)}
             isExpanded={isMonitoringExpanded}
+            isMobileOpen={mobilePanel === "monitoring"}
+            onMobileClose={() => setMobilePanel(undefined)}
             onExpandedChange={setIsMonitoringExpanded}
             run={selectedRun}
           />
         ) : (
-          <aside className={`panel taskStatusSidebar${isMonitoringExpanded ? "" : " collapsed"}`} data-right-collapsed={!isMonitoringExpanded}>
+          <aside className={`panel taskStatusSidebar${isMonitoringExpanded ? "" : " collapsed"}${mobilePanel === "monitoring" ? " mobilePanelOpen" : ""}`} data-right-collapsed={!isMonitoringExpanded}>
+            <div className="mobileDrawerHeader">
+              <strong>Task monitoring</strong>
+              <button aria-label="Close task monitoring" className="iconButton" onClick={() => setMobilePanel(undefined)} type="button"><X size={18} /></button>
+            </div>
             <button
               aria-expanded={isMonitoringExpanded}
               aria-label={isMonitoringExpanded ? "Collapse task monitoring" : "Expand task monitoring"}
@@ -1080,6 +1120,7 @@ export function HarnessDashboard({
           </aside>
         )}
       </section>
+      {mobilePanel ? <button aria-label="Close open menu" className="mobilePanelBackdrop" onClick={() => setMobilePanel(undefined)} type="button" /> : null}
     </main>
   )
 }

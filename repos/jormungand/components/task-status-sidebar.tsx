@@ -21,12 +21,16 @@ export function TaskStatusSidebar({
   entries,
   bridgeConnections,
   isExpanded,
+  isMobileOpen,
+  onMobileClose,
   onExpandedChange
 }: {
   run: WorkflowRun
   entries: ConversationEntry[]
   bridgeConnections: ReactNode
   isExpanded: boolean
+  isMobileOpen?: boolean
+  onMobileClose?: () => void
   onExpandedChange: (expanded: boolean) => void
 }) {
   const memoryIds = Array.from(new Set(entries.flatMap((entry) => entry.memoryIds))).slice(-8)
@@ -38,9 +42,13 @@ export function TaskStatusSidebar({
 
   return (
     <aside
-      className={`panel taskStatusSidebar${isExpanded ? "" : " collapsed"}`}
+      className={`panel taskStatusSidebar${isExpanded ? "" : " collapsed"}${isMobileOpen ? " mobilePanelOpen" : ""}`}
       data-right-collapsed={!isExpanded}
     >
+      <div className="mobileDrawerHeader">
+        <strong>Task monitoring</strong>
+        <button aria-label="Close task monitoring" className="iconButton" onClick={onMobileClose} type="button">×</button>
+      </div>
       <button
         aria-expanded={isExpanded}
         aria-label={isExpanded ? "Collapse task monitoring" : "Expand task monitoring"}
