@@ -110,11 +110,11 @@ export function TaskConversation(props: {
               </div>
             ) : null}
           </li>
-        )) : <li className="conversationEmpty">Start anywhere. The manager will bind this conversation only when a project is clear.</li>}
+        )) : <li className="conversationEmpty">Ask Codex to inspect or use the harness. The conversation stays unbound until a project is clear.</li>}
       </ol>
       <form className="conversationComposer" onSubmit={submit}>
         <label><span>Agent</span><select value={targetAgent} disabled={props.run?.projectType === "arceus_maintenance" || allowedAgents.length <= 1} onChange={(event) => setTargetAgent(event.target.value as AgentKind)}>{allowedAgents.map((agent) => <option value={agent} key={agent}>{getAgentLabel(agent)}</option>)}</select></label>
-        <label className="conversationInput"><span>Message</span><textarea value={content} onChange={(event) => setContent(event.target.value)} placeholder={props.run ? "Ask for progress, evidence, or a scoped action" : targetAgent === "codex" ? "Ask anything; the manager will decide whether it belongs to a project" : "Limited mode: ask guidance or questions only; no project/workflow actions."} /></label>
+        <label className="conversationInput"><span>Message</span><textarea value={content} onChange={(event) => setContent(event.target.value)} placeholder={props.run ? "Ask for progress, evidence, or a scoped action" : targetAgent === "codex" ? "Ask Codex to inspect or use the harness; it will bind a clear project automatically" : "Limited mode: ask guidance or questions only; no project/workflow actions."} /></label>
         <button className="primaryButton" disabled={!content.trim() || !allowedAgents.length}><Send size={16} />Send</button>
       </form>
       {error ? <p className="formError" role="alert">{error}</p> : null}

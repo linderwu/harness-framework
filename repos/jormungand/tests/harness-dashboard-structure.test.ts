@@ -219,4 +219,5 @@ test("conversation remains available without a selected project and can adopt ma
   assert.match(conversationSource, /run\?: WorkflowRun/)
   assert.match(conversationSource, /"\/api\/conversation"/)
   assert.match(conversationSource, /No project or task/)
+  assert.match(conversationSource, /Ask Codex to inspect or use the harness/)
 })

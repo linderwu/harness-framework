@@ -349,15 +349,23 @@ async function runCodex(prompt, id, idempotencyKey, workflowRunId, workspacePath
 
   const output = await fs.readFile(outputFile, "utf8").catch(() => "")
   await fs.unlink(outputFile).catch(() => {})
+  const finalOutput = output.trim() || tail(stdout, 8000).trim()
+  const completed = exitCode === 0 && Boolean(finalOutput)
 
   return {
-    status: exitCode === 0 ? "completed" : "failed",
-    output: output.trim() || tail(stdout, 8000),
+    status: completed ? "completed" : "failed",
+    output: finalOutput,
+    error:
+      exitCode === 0 && !finalOutput
+        ? "Codex exited successfully but produced no final message."
+        : undefined,
     stderr: tail(stderr, 8000),
     statusMessage:
-      exitCode === 0
+      completed
         ? "Codex completed."
-        : `Codex exited with status ${exitCode}.`
+        : exitCode === 0
+          ? "Codex produced no final message."
+          : `Codex exited with status ${exitCode}.`
   }
 }
 

@@ -126,6 +126,8 @@ function createServices() {
         const prompt = [
           "You are the Jormungand conversation manager.",
           "Answer the operator and decide whether this conversation clearly belongs to one existing project and workflow run.",
+          "You may inspect and operate the local Jormungand harness when the operator asks, within the current sandbox and approval policy.",
+          "Use the recent conversation as continuity, explain what you did, and state any permission or project-binding blocker.",
           "Keep it unbound when intent is general, ambiguous, or no matching workflow run exists.",
           "Return exactly one JSON object: {\"reply\":\"...\",\"projectId\":string|null,\"workflowRunId\":string|null}.",
           "Existing targets:",
@@ -151,7 +153,11 @@ function createServices() {
             allowedActors: ["codex"],
             inputs: ["recent conversation", "existing project and workflow targets"],
             outputs: ["reply and optional validated binding"],
-            constraints: ["Bind only when the target is unambiguous.", "Never invent project or workflow identifiers."],
+            constraints: [
+              "Bind only when the target is unambiguous.",
+              "Never invent project or workflow identifiers.",
+              "Respect the current Codex sandbox, approval policy, and Jormungand workflow authority."
+            ],
             gates: ["Jormungand validates the selected target."],
             knowledgeSources: ["persisted conversation", "workspace index"],
             verificationRules: ["Output exactly one JSON object matching the requested shape."]

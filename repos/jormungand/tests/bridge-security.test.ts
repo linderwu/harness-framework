@@ -4,6 +4,7 @@ import test from "node:test"
 
 const codexBridgeSource = readFileSync("scripts/codex-bridge.mjs", "utf8")
 const agentBridgeSource = readFileSync("lib/agent-bridge.ts", "utf8")
+const hiveServicesSource = readFileSync("lib/hive-services.ts", "utf8")
 const openClawBridgeSource = readFileSync(
   "scripts/openclaw-bridge.mjs",
   "utf8"
@@ -32,6 +33,17 @@ test("Codex bridge gives Agent Tasks a standalone prompt", () => {
   assert.match(codexBridgeSource, /Do not produce artifact metadata/)
   assert.match(codexBridgeSource, /artifact_type, stage, workflow_run/)
   assert.match(codexBridgeSource, /agent_response/)
+})
+
+test("Codex bridge rejects a successful exit without a final response", () => {
+  assert.match(codexBridgeSource, /const completed = exitCode === 0 && Boolean\(finalOutput\)/)
+  assert.match(codexBridgeSource, /Codex exited successfully but produced no final message/)
+})
+
+test("unbound Codex conversation can operate the harness within current permissions", () => {
+  assert.match(hiveServicesSource, /inspect and operate the local Jormungand harness/)
+  assert.match(hiveServicesSource, /current sandbox and approval policy/)
+  assert.match(hiveServicesSource, /Recent conversation:/)
 })
 
 test("agent bridges mark memory as evidence rather than authority", () => {
