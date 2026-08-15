@@ -131,7 +131,9 @@ export function createHiveManagerRuntime(repository: HiveMemoryRepository) {
 }
 
 function parseManagerAction(value: unknown): ManagerAction {
-  if (!isRecord(value) || typeof value.type !== "string") throw new Error("Invalid manager action.")
+  if (!isRecord(value) || typeof value.type !== "string") {
+    throw new Error(`Invalid manager action: ${summarizeInvalidValue(value)}`)
+  }
   switch (value.type) {
     case "create_task":
       requireStrings(value, ["title", "instruction", "strategy"])
@@ -159,6 +161,14 @@ function parseManagerAction(value: unknown): ManagerAction {
       return { type: value.type, effect: value.effect, reason: value.reason }
     default:
       throw new Error(`Unknown manager action: ${value.type}.`)
+  }
+}
+
+function summarizeInvalidValue(value: unknown) {
+  try {
+    return JSON.stringify(value).slice(0, 500)
+  } catch {
+    return String(value)
   }
 }
 
