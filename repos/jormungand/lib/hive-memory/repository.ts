@@ -465,6 +465,144 @@ export class HiveMemoryRepository {
     })
   }
 
+  async enqueueManagerWake(input: { workflowRunId: string; reason: string; idempotencyKey: string }) {
+    const id = crypto.randomUUID()
+    const createdAt = new Date().toISOString()
+    return this.database.write((connection) => {
+      const result = connection.prepare(`
+        INSERT OR IGNORE INTO manager_wakes(
+          id, workflow_run_id, reason, idempotency_key, status, created_at, processed_at
+        ) VALUES (?, ?, ?, ?, 'pending', ?, NULL)
+      `).run(id, input.workflowRunId, input.reason, input.idempotencyKey, createdAt)
+      return result.changes > 0
+    })
+  }
+
+  listManagerWakes(workflowRunId: string) {
+    return this.database.read((connection) =>
+      (connection.prepare(`
+        SELECT * FROM manager_wakes WHERE workflow_run_id = ? ORDER BY created_at ASC, id ASC
+      `).all(workflowRunId) as Array<{
+        id: string; workflow_run_id: string; reason: string; idempotency_key: string;
+        status: "pending" | "processing" | "processed"; created_at: string; processed_at: string | null
+      }>).map((row) => ({
+        id: row.id,
+        workflowRunId: row.workflow_run_id,
+        reason: row.reason,
+        idempotencyKey: row.idempotency_key,
+        status: row.status,
+        createdAt: row.created_at,
+        processedAt: row.processed_at ?? undefined
+      }))
+    )
+  }
+
+  getNextPendingManagerWake(workflowRunId: string) {
+    return this.listManagerWakes(workflowRunId).find((wake) => wake.status === "pending")
+  }
+
+  async markManagerWake(id: string, status: "processing" | "processed") {
+    await this.database.write((connection) => {
+      connection.prepare(`
+        UPDATE manager_wakes SET status = ?, processed_at = ? WHERE id = ?
+      `).run(status, status === "processed" ? new Date().toISOString() : null, id)
+    })
+  }
+
+  async appendEvent(input: {
+    eventType: string
+    actor: string
+    workflowRunId?: string
+    taskId?: string
+    payload: Record<string, unknown>
+    idempotencyKey?: string
+  }) {
+    await this.database.write((connection) => this.insertEvent(connection, input))
+  }
+
+  async createManagerTask(input: {
+    workflowRunId: string
+    parentTaskId?: string
+    title: string
+    instruction: string
+    successCriteria: string[]
+    assignedAgent?: string
+    strategy: string
+  }) {
+    const now = new Date().toISOString()
+    const task = {
+      id: crypto.randomUUID(), workflowRunId: input.workflowRunId,
+      parentTaskId: input.parentTaskId, title: input.title,
+      instruction: input.instruction, successCriteria: input.successCriteria,
+      assignedAgent: input.assignedAgent, status: "pending" as const,
+      strategy: input.strategy, attemptCount: 0, lastError: undefined,
+      createdAt: now, updatedAt: now
+    }
+    await this.database.transaction((connection) => {
+      connection.prepare(`
+        INSERT INTO manager_tasks(
+          id, workflow_run_id, parent_task_id, title, instruction,
+          success_criteria_json, assigned_agent, status, strategy,
+          attempt_count, last_error, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
+      `).run(
+        task.id, task.workflowRunId, task.parentTaskId ?? null, task.title,
+        task.instruction, JSON.stringify(task.successCriteria), task.assignedAgent ?? null,
+        task.status, task.strategy, task.attemptCount, task.createdAt, task.updatedAt
+      )
+      this.insertEvent(connection, {
+        eventType: "manager_task_created", actor: "codex",
+        workflowRunId: input.workflowRunId, taskId: task.id,
+        payload: { taskId: task.id, strategy: task.strategy }
+      })
+    })
+    return task
+  }
+
+  listManagerTasks(workflowRunId: string) {
+    return this.database.read((connection) =>
+      (connection.prepare(`SELECT * FROM manager_tasks WHERE workflow_run_id = ? ORDER BY created_at ASC, id ASC`).all(workflowRunId) as Array<{
+        id: string; workflow_run_id: string; parent_task_id: string | null; title: string;
+        instruction: string; success_criteria_json: string; assigned_agent: string | null;
+        status: "pending" | "running" | "completed" | "failed" | "stopped";
+        strategy: string; attempt_count: number; last_error: string | null; created_at: string; updated_at: string
+      }>).map((row) => ({
+        id: row.id, workflowRunId: row.workflow_run_id,
+        parentTaskId: row.parent_task_id ?? undefined, title: row.title,
+        instruction: row.instruction, successCriteria: parseStringArray(row.success_criteria_json),
+        assignedAgent: row.assigned_agent ?? undefined, status: row.status,
+        strategy: row.strategy, attemptCount: row.attempt_count,
+        lastError: row.last_error ?? undefined, createdAt: row.created_at, updatedAt: row.updated_at
+      }))
+    )
+  }
+
+  async updateManagerTask(input: {
+    id: string
+    status?: "pending" | "running" | "completed" | "failed" | "stopped"
+    assignedAgent?: string
+    strategy?: string
+    incrementAttempt?: boolean
+    lastError?: string
+  }) {
+    await this.database.write((connection) => {
+      connection.prepare(`
+        UPDATE manager_tasks SET
+          status = COALESCE(?, status),
+          assigned_agent = COALESCE(?, assigned_agent),
+          strategy = COALESCE(?, strategy),
+          attempt_count = attempt_count + ?,
+          last_error = ?,
+          updated_at = ?
+        WHERE id = ?
+      `).run(
+        input.status ?? null, input.assignedAgent ?? null, input.strategy ?? null,
+        input.incrementAttempt ? 1 : 0, input.lastError ?? null,
+        new Date().toISOString(), input.id
+      )
+    })
+  }
+
   private requireMemory(id: string) {
     const memory = this.getMemory(id)
     if (!memory) throw new Error(`Memory ${id} not found.`)

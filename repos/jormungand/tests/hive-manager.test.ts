@@ -11,6 +11,8 @@ import {
 import { openHiveDatabase } from "../lib/hive-memory/database"
 import { createHiveMemoryRepository } from "../lib/hive-memory/repository"
 import type { ManagerProposal } from "../lib/types"
+import { createManagerScheduler } from "../lib/manager-scheduler"
+import { createWorkflowRun } from "../lib/workflow"
 
 function proposal(overrides: Partial<ManagerProposal> = {}): ManagerProposal {
   return {
@@ -107,4 +109,89 @@ test("manager runtime persists an atomic checkpoint and resumes without chat his
   assert.equal(resumed?.cycle, 1)
   secondDatabase.close()
   await rm(dataDir, { recursive: true, force: true })
+})
+
+test("scheduler deduplicates wakes and accounts for one manager call", async (t) => {
+  const dataDir = await mkdtemp(join(tmpdir(), "jormungand-scheduler-"))
+  const database = openHiveDatabase({ dataDir })
+  t.after(async () => {
+    database.close()
+    await rm(dataDir, { recursive: true, force: true })
+  })
+  const repository = createHiveMemoryRepository(database)
+  let run = createWorkflowRun({
+    projectId: "project-1", projectName: "Mission", repository: "owner/repo",
+    requirement: "Verify memory isolation", selectedAgent: "codex",
+    designApprovalActor: "human", verificationApprovalActor: "human"
+  })
+  run = {
+    ...run,
+    managed: {
+      manager: "codex", state: "idle", checkpointId: undefined,
+      taskCounts: { pending: 0, running: 0, completed: 0, failed: 0, stopped: 0 },
+      budget: {
+        callLimit: 3, callsUsed: 0, timeLimitMs: 60000,
+        startedAt: new Date().toISOString(), costLimitUsd: 1, costUsedUsd: 0
+      },
+      circuitBreakerOpen: false
+    }
+  }
+  let invocations = 0
+  const scheduler = createManagerScheduler({
+    repository,
+    getRun: async () => run,
+    saveRun: async (next) => { run = next; return next },
+    invokeManager: async () => {
+      invocations += 1
+      return JSON.stringify(proposal({ proposed_actions: [] }))
+    },
+    allowedAgents: () => ["codex", "openclaw.rowlet"]
+  })
+
+  await scheduler.enqueue({ workflowRunId: run.id, reason: "mission_created", idempotencyKey: "wake-1" })
+  await scheduler.enqueue({ workflowRunId: run.id, reason: "mission_created", idempotencyKey: "wake-1" })
+  assert.equal(repository.listManagerWakes(run.id).length, 1)
+  const result = await scheduler.runNext(run.id)
+  assert.equal(result.status, "completed")
+  assert.equal(invocations, 1)
+  assert.equal(run.managed?.budget.callsUsed, 1)
+  assert.equal((await scheduler.runNext(run.id)).status, "idle")
+})
+
+test("scheduler pauses before invoking manager when budget is exhausted", async (t) => {
+  const dataDir = await mkdtemp(join(tmpdir(), "jormungand-scheduler-"))
+  const database = openHiveDatabase({ dataDir })
+  t.after(async () => {
+    database.close()
+    await rm(dataDir, { recursive: true, force: true })
+  })
+  const repository = createHiveMemoryRepository(database)
+  let run = createWorkflowRun({
+    projectId: "project-1", projectName: "Mission", repository: "owner/repo",
+    requirement: "Verify memory isolation", selectedAgent: "codex",
+    designApprovalActor: "human", verificationApprovalActor: "human"
+  })
+  run = {
+    ...run,
+    managed: {
+      manager: "codex", state: "idle",
+      taskCounts: { pending: 0, running: 0, completed: 0, failed: 0, stopped: 0 },
+      budget: {
+        callLimit: 1, callsUsed: 1, timeLimitMs: 60000,
+        startedAt: new Date().toISOString(), costLimitUsd: 1, costUsedUsd: 0
+      },
+      circuitBreakerOpen: false
+    }
+  }
+  const scheduler = createManagerScheduler({
+    repository,
+    getRun: async () => run,
+    saveRun: async (next) => { run = next; return next },
+    invokeManager: async () => { throw new Error("manager must not be invoked") },
+    allowedAgents: () => ["codex"]
+  })
+  await scheduler.enqueue({ workflowRunId: run.id, reason: "health_check", idempotencyKey: "wake-budget" })
+  const result = await scheduler.runNext(run.id)
+  assert.deepEqual(result, { status: "paused", reason: "budget_exhausted" })
+  assert.equal(run.managed?.state, "paused")
 })
