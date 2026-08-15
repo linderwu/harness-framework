@@ -101,6 +101,17 @@ test("bridge status polling and stale thresholds match the accepted design", () 
   assert.match(dashboard, /const bridgeOfflineFailureThreshold = 2/)
 })
 
+test("workflow mutation errors surface failed-run diagnostics", () => {
+  assert.match(dashboard, /response\.status === 409 && "latestRun" in data && data\.latestRun/)
+
+  const route = readFileSync(
+    "app/api/projects/[id]/workflow-runs/route.ts",
+    "utf8"
+  )
+  assert.match(route, /console\.error\("Managed workflow start failed"/)
+  assert.match(route, /\{ error: message, latestRun: failedRun \}/)
+})
+
 test("bridge status panel polls quotas and forwards only codex quota to the Arceus row", () => {
   const panel = functionBody("BridgeStatusPanel")
   const card = functionBody("BridgeStatusCard")

@@ -63,13 +63,22 @@ export async function POST(
       await scheduler.runNext(runningRun.id)
       return NextResponse.json(runningRun, { status: 201 })
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
       const failedRun = await upsertWorkflowRun({
         ...run,
         status: "failed",
-        eventLogWarning: `Hive control plane unavailable: ${error instanceof Error ? error.message : String(error)}`,
+        eventLogWarning: `Hive control plane unavailable: ${message}`,
         updatedAt: new Date().toISOString()
       })
-      return NextResponse.json(failedRun, { status: 503 })
+      console.error("Managed workflow start failed", {
+        projectId: project.id,
+        workflowRunId: failedRun.id,
+        error: message
+      })
+      return NextResponse.json(
+        { error: message, latestRun: failedRun },
+        { status: 503 }
+      )
     }
   }
 

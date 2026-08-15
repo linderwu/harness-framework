@@ -539,7 +539,7 @@ export function HarnessDashboard({
       return data as WorkflowRun
     }
 
-    if ("latestRun" in data && data.latestRun) {
+    if (response.status === 409 && "latestRun" in data && data.latestRun) {
       return data.latestRun
     }
 
