@@ -37,6 +37,18 @@ function proposal(overrides: Partial<ManagerProposal> = {}): ManagerProposal {
 
 test("manager parser accepts one JSON object and rejects unknown actions", () => {
   assert.deepEqual(parseManagerProposal(JSON.stringify(proposal())), proposal())
+  assert.deepEqual(
+    parseManagerProposal(JSON.stringify(proposal({
+      proposed_actions: ["Run the focused conversation composer test."] as never
+    }))).proposed_actions[0],
+    {
+      type: "create_task",
+      title: "Manager-proposed task",
+      instruction: "Run the focused conversation composer test.",
+      successCriteria: ["Run the focused conversation composer test."],
+      strategy: "manager-compat-string"
+    }
+  )
   assert.throws(
     () => parseManagerProposal(JSON.stringify(proposal({
       proposed_actions: [{ type: "raise_permissions", permission: "production.deploy" } as never]
