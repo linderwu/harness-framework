@@ -1,6 +1,6 @@
 "use client"
 
-import { FormEvent, useEffect, useMemo, useState } from "react"
+import { FormEvent, KeyboardEvent, useEffect, useMemo, useState } from "react"
 import { Send } from "lucide-react"
 import { getAgentLabel } from "@/lib/agents"
 import type { ConversationBinding } from "@/lib/conversation"
@@ -47,8 +47,8 @@ export function TaskConversation(props: {
     return () => window.clearInterval(timer)
   }, [conversationPath, onEntriesChanged, pending])
 
-  async function submit(event: FormEvent) {
-    event.preventDefault()
+  async function submit(event?: FormEvent) {
+    event?.preventDefault()
     const message = content.trim()
     if (!message || allowedAgents.length === 0) return
     const idempotencyKey = crypto.randomUUID()
@@ -89,6 +89,15 @@ export function TaskConversation(props: {
     }
   }
 
+  function handleComposerKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing || event.keyCode === 229) {
+      return
+    }
+
+    event.preventDefault()
+    void submit()
+  }
+
   return (
     <section className="panel taskConversation" aria-label="Conversation">
       <header className="taskConversationHeader">
@@ -114,7 +123,7 @@ export function TaskConversation(props: {
       </ol>
       <form className="conversationComposer" onSubmit={submit}>
         <label><span>Agent</span><select value={targetAgent} disabled={props.run?.projectType === "arceus_maintenance" || allowedAgents.length <= 1} onChange={(event) => setTargetAgent(event.target.value as AgentKind)}>{allowedAgents.map((agent) => <option value={agent} key={agent}>{getAgentLabel(agent)}</option>)}</select></label>
-        <label className="conversationInput"><span>Message</span><textarea value={content} onChange={(event) => setContent(event.target.value)} placeholder={props.run ? "Ask for progress, evidence, or a scoped action" : targetAgent === "codex" ? "Ask Codex to inspect or use the harness; it will bind a clear project automatically" : "Limited mode: ask guidance or questions only; no project/workflow actions."} /></label>
+        <label className="conversationInput"><span>Message</span><textarea onKeyDown={handleComposerKeyDown} value={content} onChange={(event) => setContent(event.target.value)} placeholder={props.run ? "Ask for progress, evidence, or a scoped action" : targetAgent === "codex" ? "Ask Codex to inspect or use the harness; it will bind a clear project automatically" : "Limited mode: ask guidance or questions only; no project/workflow actions."} /></label>
         <button className="primaryButton" disabled={!content.trim() || !allowedAgents.length}><Send size={16} />Send</button>
       </form>
       {error ? <p className="formError" role="alert">{error}</p> : null}

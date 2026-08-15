@@ -239,6 +239,15 @@ test("task conversation is durable, targeted, and polls only while pending", () 
   assert.match(conversationSource, /memoryIds/)
 })
 
+test("conversation composer sends on Enter but preserves Shift+Enter and IME composition", () => {
+  const conversationSource = readFileSync("components/task-conversation.tsx", "utf8")
+  assert.match(conversationSource, /function handleComposerKeyDown\(event: KeyboardEvent<HTMLTextAreaElement>\)/)
+  assert.match(conversationSource, /event\.shiftKey \|\| event\.nativeEvent\.isComposing \|\| event\.keyCode === 229/)
+  assert.match(conversationSource, /event\.preventDefault\(\)/)
+  assert.match(conversationSource, /onKeyDown=\{handleComposerKeyDown\}/)
+  assert.match(conversationSource, /if \(!message \|\| allowedAgents\.length === 0\) return/)
+})
+
 test("conversation remains available without a selected project and can adopt manager binding", () => {
   assert.match(dashboard, /key=\{selectedRun\?\.id \?\? "unbound"\}/)
   assert.match(dashboard, /onBound=\{\(binding\)/)
