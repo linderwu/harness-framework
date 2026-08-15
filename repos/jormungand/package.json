@@ -7,6 +7,8 @@
     "codex-bridge": "node scripts/codex-bridge.mjs",
     "openclaw-bridge": "node scripts/openclaw-bridge.mjs",
     "c4:diagrams": "node scripts/generate-c4-diagrams.mjs",
+    "memory:backup": "node scripts/backup-hive-memory.mjs",
+    "memory:verify-backup": "node scripts/verify-hive-memory-backup.mjs",
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",

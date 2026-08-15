@@ -21,11 +21,11 @@ export interface HiveDatabase {
 let writeQueue = Promise.resolve()
 
 export function getHiveDataDir() {
-  return resolve(process.env.JORMUNGAND_DATA_DIR?.trim() || resolve(process.cwd(), "data"))
+  return resolve(/* turbopackIgnore: true */ process.env.JORMUNGAND_DATA_DIR?.trim() || resolve(process.cwd(), "data"))
 }
 
 export function openHiveDatabase(options: { dataDir?: string } = {}): HiveDatabase {
-  const dataDir = resolve(options.dataDir ?? getHiveDataDir())
+  const dataDir = resolve(/* turbopackIgnore: true */ options.dataDir ?? getHiveDataDir())
   const databasePath = resolve(dataDir, "hive-memory.sqlite")
   let connection: Database.Database | undefined
   let currentHealth: HiveDatabaseHealth

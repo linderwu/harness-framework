@@ -91,7 +91,8 @@ export function createArceusMaintenanceEventSkills(): WorkflowEventSkill[] {
   ])
 }
 
-export function requiresHumanApproval(_effect: ExternalEffect) {
+export function requiresHumanApproval(effect: ExternalEffect) {
+  void effect
   return true
 }
 

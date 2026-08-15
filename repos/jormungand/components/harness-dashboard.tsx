@@ -56,6 +56,7 @@ import type {
   WorkflowStage
 } from "@/lib/types"
 import type { ConversationEntry } from "@/lib/hive-memory/types"
+import type { HiveMemoryHealthSummary } from "@/lib/hive-health"
 import { getProjectTemplate } from "@/lib/project-templates"
 import { GlobalModeNav } from "@/components/global-mode-nav"
 import {
@@ -134,9 +135,11 @@ const sampleRequirement =
   "Build a Jormungandr dashboard that can select Arceus/OpenClaw agents and control design/verification with approval gates."
 
 export function HarnessDashboard({
-  initialState
+  initialState,
+  initialHiveHealth
 }: {
   initialState: HarnessState
+  initialHiveHealth: HiveMemoryHealthSummary
 }) {
   const [projects, setProjects] = useState<Project[]>(initialState.projects)
   const [runs, setRuns] = useState<WorkflowRun[]>(initialState.workflowRuns)
@@ -550,9 +553,12 @@ export function HarnessDashboard({
           <p className="eyebrow modeEyebrow">{getProjectTemplate(form.projectType).label} mode</p>
           <h1>{"Jormungand"}</h1>
         </div>
-        <button className="iconButton" onClick={refreshWorkspace} title="Refresh">
-          <RefreshCw size={18} />
-        </button>
+        <div className="topbarActions">
+          <a className={`hiveHealthBadge ${initialHiveHealth.status}`} href="/api/hive-memory/health" title={`Hive memory integrity: ${initialHiveHealth.integrity}`}>
+            <CircleDot size={13} />Memory {initialHiveHealth.status}
+          </a>
+          <button className="iconButton" onClick={refreshWorkspace} title="Refresh"><RefreshCw size={18} /></button>
+        </div>
       </header>
 
       <section className="taskWorkspaceGrid">

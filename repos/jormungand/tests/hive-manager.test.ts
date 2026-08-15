@@ -67,7 +67,7 @@ test("manager validator rejects escalation, scope, agent, and budget violations"
   assert.match(checked.rejectedActions[1].reason, /not allowed/i)
 })
 
-test("manager runtime persists an atomic checkpoint and resumes without chat history", async (t) => {
+test("manager runtime persists an atomic checkpoint and resumes without chat history", async () => {
   const dataDir = await mkdtemp(join(tmpdir(), "jormungand-manager-"))
   const firstDatabase = openHiveDatabase({ dataDir })
   const firstRepository = createHiveMemoryRepository(firstDatabase)

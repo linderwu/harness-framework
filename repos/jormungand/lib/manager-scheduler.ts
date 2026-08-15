@@ -147,12 +147,15 @@ export class ManagerScheduler {
     })
     await this.dependencies.repository.markManagerWake(wake.id, "processed")
     const taskCounts = countTasks(currentTasks)
+    const missionCompleted = currentTasks.length > 0 &&
+      taskCounts.pending === 0 && taskCounts.running === 0 &&
+      taskCounts.failed === 0 && proposal.next_wake_condition === "mission_completed"
     await this.dependencies.saveRun({
       ...run,
-      status: application.waitingForApproval ? "waiting_for_approval" : "pending",
+      status: application.waitingForApproval ? "waiting_for_approval" : missionCompleted ? "completed" : "pending",
       managed: {
         ...run.managed!,
-        state: application.waitingForApproval ? "waiting_for_approval" : "idle",
+        state: application.waitingForApproval ? "waiting_for_approval" : missionCompleted ? "completed" : "idle",
         checkpointId: saved.id,
         taskCounts,
         nextWakeCondition: proposal.next_wake_condition
