@@ -18,6 +18,7 @@ import type {
   ProjectType
 } from "./types"
 import { getAgentLabel, normalizeAgentKind, openClawAgentKinds } from "./agents"
+import type { ContextPack } from "./context-builder"
 
 const stages: WorkflowStage[] = [
   "intake",
@@ -84,6 +85,7 @@ export interface AgentInvocationInput {
   title: string
   fallbackBody: string
   runtimeSkillBundles?: RuntimeSkillBundleDescriptor[]
+  contextPack?: ContextPack
 }
 
 export type AgentInvoker = (

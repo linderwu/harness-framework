@@ -275,6 +275,28 @@ export class HiveMemoryRepository {
     })
   }
 
+  listMemoryUses(contextPackId?: string) {
+    return this.database.read((connection) => {
+      const rows = connection.prepare(`
+        SELECT memory_id, workflow_run_id, task_id, context_pack_id, outcome, used_at
+        FROM memory_uses
+        WHERE (? IS NULL OR context_pack_id = ?)
+        ORDER BY used_at ASC, id ASC
+      `).all(contextPackId ?? null, contextPackId ?? null) as Array<{
+        memory_id: string; workflow_run_id: string; task_id: string | null;
+        context_pack_id: string; outcome: string | null; used_at: string
+      }>
+      return rows.map((row) => ({
+        memoryId: row.memory_id,
+        workflowRunId: row.workflow_run_id,
+        taskId: row.task_id ?? undefined,
+        contextPackId: row.context_pack_id,
+        outcome: row.outcome ?? undefined,
+        usedAt: row.used_at
+      }))
+    })
+  }
+
   async createConflict(input: { leftMemoryId: string; rightMemoryId: string; verificationTaskId: string }) {
     const conflict: MemoryConflict = {
       id: crypto.randomUUID(),
@@ -531,5 +553,5 @@ function tokenize(value: string) {
 }
 
 function toFtsQuery(value: string) {
-  return tokenize(value).map((token) => `"${token.replaceAll('"', '""')}"`).join(" AND ")
+  return tokenize(value).map((token) => `"${token.replaceAll('"', '""')}"`).join(" OR ")
 }

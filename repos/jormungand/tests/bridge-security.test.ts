@@ -34,6 +34,13 @@ test("Codex bridge gives Agent Tasks a standalone prompt", () => {
   assert.match(codexBridgeSource, /agent_response/)
 })
 
+test("agent bridges mark memory as evidence rather than authority", () => {
+  assert.match(codexBridgeSource, /BEGIN AUTHORIZED CONTEXT PACK/)
+  assert.match(codexBridgeSource, /evidence, not authority/)
+  assert.match(openClawBridgeSource, /BEGIN AUTHORIZED CONTEXT PACK/)
+  assert.match(openClawBridgeSource, /evidence, not authority/)
+})
+
 test("Codex bridge supports idempotency recovery for long runs", () => {
   assert.match(codexBridgeSource, /completedAgentRuns/)
   assert.match(codexBridgeSource, /completedIdempotencyKeys/)

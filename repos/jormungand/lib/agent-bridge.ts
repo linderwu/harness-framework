@@ -15,6 +15,7 @@ import {
 import { getAgentProfile } from "@/lib/agents"
 import { ensureGitHubRepository } from "@/lib/github-repository"
 import type { AgentArtifactResult } from "@/lib/workflow"
+import type { ContextPack } from "@/lib/context-builder"
 
 export interface AgentInvocationInput {
   run: WorkflowRun
@@ -25,6 +26,7 @@ export interface AgentInvocationInput {
   title: string
   fallbackBody: string
   runtimeSkillBundles?: RuntimeSkillBundleDescriptor[]
+  contextPack?: ContextPack
 }
 
 interface BridgeResponse {
@@ -108,7 +110,8 @@ export async function invokeConfiguredAgent(
         skill: input.skill,
         runtimeSkillBundles: input.runtimeSkillBundles ?? [],
         artifacts: input.run.artifacts,
-        fallbackBody: input.fallbackBody
+        fallbackBody: input.fallbackBody,
+        contextPack: input.contextPack
       })
     })
 
