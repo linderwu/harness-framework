@@ -87,7 +87,7 @@ export function TaskStatusSidebar({
             {memoryIds.length ? <div className="monitoringMemoryLinks"><Archive size={14} />{memoryIds.map((id) => <a id={`memory-${id}`} href={`#memory-${id}`} key={id}>Memory {id.slice(0, 8)}</a>)}</div> : null}
           </MonitoringSection>
 
-          <MonitoringSection defaultOpen={false} icon={<Network size={16} />} title="Bridge Connections">
+          <MonitoringSection icon={<Network size={16} />} title="Bridge Connections">
             {bridgeConnections}
           </MonitoringSection>
         </div>

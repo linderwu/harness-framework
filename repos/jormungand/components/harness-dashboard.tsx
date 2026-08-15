@@ -1071,7 +1071,12 @@ export function HarnessDashboard({
             >
               {isMonitoringExpanded ? <><span>Task monitoring</span><ChevronDown size={16} /></> : <ChevronLeft size={18} />}
             </button>
-            {isMonitoringExpanded ? <p>No active task.</p> : null}
+            {isMonitoringExpanded ? (
+              <>
+                <p>No active task.</p>
+                <BridgeStatusPanel />
+              </>
+            ) : null}
           </aside>
         )}
       </section>

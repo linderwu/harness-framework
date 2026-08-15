@@ -72,6 +72,7 @@ test("dashboard renders bridge status inside the right monitoring rail", () => {
 
   assert.doesNotMatch(composePanel, /<BridgeStatusPanel/)
   assert.match(workspace, /<TaskStatusSidebar[\s\S]*bridgeConnections=\{<BridgeStatusPanel/)
+  assert.match(workspace, /No active task\.[\s\S]*<BridgeStatusPanel \/>/)
 })
 
 test("bridge status panel renders endpoint bridges instead of fixed bridge definitions", () => {
@@ -192,7 +193,7 @@ test("right monitoring rail keeps role cards and collapsible bridge connections"
   assert.match(sidebar, /className="agentRoleStatusCard"/)
   assert.match(sidebar, /getAgentRole\(/)
   assert.match(sidebar, /title="Bridge Connections"/)
-  assert.match(sidebar, /defaultOpen=\{false\}/)
+  assert.doesNotMatch(sidebar, /defaultOpen=\{false\}/)
   assert.match(sidebar, /aria-expanded=\{isOpen\}/)
   assert.match(sidebar, /isOpen \? <ChevronDown[\s\S]*: <ChevronLeft/)
 })
