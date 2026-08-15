@@ -9,10 +9,11 @@ import {
 import { getProjectTemplate, projectTypeOptions } from "../lib/project-templates"
 import { createWorkflowRun } from "../lib/workflow"
 
-test("Global mode exposes nine project types in the accepted order", () => {
+test("Global mode exposes ten project types in the accepted order", () => {
   assert.deepEqual(projectTypeOptions.map((option) => option.type), [
     "research", "development", "testing", "documentation", "diagnosis",
-    "decision", "agent_task", "hive_mission", "arceus_maintenance"
+    "decision", "llm_wiki_maintenance", "agent_task", "hive_mission",
+    "arceus_maintenance"
   ])
   assert.deepEqual(getProjectTemplate("hive_mission").phases, [
     "Goal", "Plan", "Dispatch", "Monitor", "Verify", "Completed"

@@ -8,6 +8,7 @@ import {
   Code2,
   FlaskConical,
   GitFork,
+  NotebookText,
   Network,
   Search,
   Wrench
@@ -23,6 +24,7 @@ const icons: Record<ProjectType, typeof Search> = {
   documentation: BookOpenText,
   diagnosis: Bug,
   decision: GitFork,
+  llm_wiki_maintenance: NotebookText,
   agent_task: Bot,
   hive_mission: Network,
   arceus_maintenance: Wrench

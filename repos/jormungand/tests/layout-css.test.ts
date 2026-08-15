@@ -72,14 +72,14 @@ test("bridge status panel expands in the monitoring rail without nested scrollin
   assert.doesNotMatch(cardsRule, /overflow(?:-y)?:\s*(?:auto|scroll);/)
 })
 
-test("global mode navigator spans nine modes and scrolls at narrow widths", () => {
+test("global mode navigator spans ten modes and scrolls at narrow widths", () => {
   const navRule = ruleBody(/\.globalModeNav/, ".globalModeNav")
   const segmentsRule = ruleBody(/\.globalModeSegments/, ".globalModeSegments")
   const segmentRule = ruleBody(/\.globalModeSegment/, ".globalModeSegment")
   const selectedRule = ruleBody(/\.globalModeSegment\.selected/, ".globalModeNav selected")
 
   assert.match(navRule, /width:\s*100%;/)
-  assert.match(segmentsRule, /grid-template-columns:\s*repeat\(9,/)
+  assert.match(segmentsRule, /grid-template-columns:\s*repeat\(10,/)
   assert.match(segmentRule, /clip-path:\s*polygon\(/)
   assert.match(segmentRule, /filter:\s*drop-shadow\(/)
   assert.match(segmentRule, /background:\s*linear-gradient\(/)

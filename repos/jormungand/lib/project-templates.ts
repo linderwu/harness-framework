@@ -7,6 +7,7 @@ export const projectTypeOptions: Array<{ type: ProjectType; label: string }> = [
   { type: "documentation", label: "Documentation" },
   { type: "diagnosis", label: "Diagnosis" },
   { type: "decision", label: "Decision" },
+  { type: "llm_wiki_maintenance", label: "LLM Wiki Maintenance" },
   { type: "agent_task", label: "Agent Task" },
   { type: "hive_mission", label: "Hive Mission" },
   { type: "arceus_maintenance", label: "Arceus Maintenance" }
@@ -60,6 +61,14 @@ export const projectTemplates: Record<ProjectType, ProjectTemplate> = {
     defaultArtifacts: ["requirement", "finding", "design", "log"],
     creationPrompts: ["Decision question", "Options", "Decision owner"],
     defaultNextAction: "Frame the decision question."
+  },
+  llm_wiki_maintenance: {
+    type: "llm_wiki_maintenance",
+    label: "LLM Wiki Maintenance",
+    phases: ["Intake", "Plan", "Update", "Verify", "Publish", "Completed"],
+    defaultArtifacts: ["requirement", "plan", "patch", "test_report", "log"],
+    creationPrompts: ["Wiki namespace", "Maintenance goal", "Constraints", "Validation checklist"],
+    defaultNextAction: "Audit the wiki target and prepare a safe update plan."
   },
   agent_task: {
     type: "agent_task",

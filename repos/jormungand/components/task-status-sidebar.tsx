@@ -149,6 +149,7 @@ function getAgentStatuses(run: WorkflowRun) {
 function getAgentRole(agent: AgentKind, run: WorkflowRun) {
   if (agent === "codex") {
     if (run.projectType === "hive_mission") return "Hive Manager"
+    if (run.projectType === "llm_wiki_maintenance") return "Wiki Steward"
     if (run.projectType === "arceus_maintenance") return "Arceus Maintainer"
     return "Orchestrator"
   }

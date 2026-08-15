@@ -59,6 +59,7 @@ test("project templates expose project types with phase labels", () => {
       "documentation",
       "diagnosis",
       "decision",
+      "llm_wiki_maintenance",
       "agent_task",
       "hive_mission",
       "arceus_maintenance"
@@ -71,6 +72,7 @@ test("project templates expose project types with phase labels", () => {
   assert.deepEqual(getProjectTemplate("documentation").phases, ["Brief", "Outline", "Draft", "Review", "Publish", "Completed"])
   assert.deepEqual(getProjectTemplate("diagnosis").phases, ["Report", "Reproduce", "Diagnose", "Fix Plan", "Verify", "Completed"])
   assert.deepEqual(getProjectTemplate("decision").phases, ["Question", "Options", "Evidence", "Tradeoff", "Record", "Completed"])
+  assert.deepEqual(getProjectTemplate("llm_wiki_maintenance").phases, ["Intake", "Plan", "Update", "Verify", "Publish", "Completed"])
   assert.deepEqual(getProjectTemplate("agent_task").phases, ["Instruction", "Response", "Completed"])
 })
 

@@ -499,6 +499,98 @@ export function createResearchEventSkills(): WorkflowEventSkill[] {
   ]
 }
 
+export function createLlmWikiMaintenanceEventSkills(): WorkflowEventSkill[] {
+  const defaultSkills = createDefaultEventSkills()
+  const wikiOverrides: Record<string, Partial<WorkflowEventSkill>> = {
+    "intake.requirement": {
+      name: "LLM Wiki Intake Skill",
+      purpose: "Capture a scoped wiki maintenance request for the LLM knowledge base.",
+      trigger: "A maintenance request for LLM wiki content appears.",
+      inputs: ["wiki scope", "maintenance objective", "source metadata"],
+      outputs: ["requirement artifact", "wiki target artifact"],
+      constraints: [
+        "Preserve the original request text.",
+        "Keep maintenance scope within the requested wiki namespace.",
+        "Avoid unrelated file edits in the target repository."
+      ],
+      knowledgeSources: ["omx_wiki", "wiki contribution policy", "dashboard requirement"],
+      verificationRules: ["Requirement artifact is non-empty.", "Wiki namespace is declared."]
+    },
+    "plan.interview": {
+      name: "LLM Wiki Plan Skill",
+      purpose: "Define safe maintenance scope, validation criteria, and review checkpoints.",
+      trigger: "Wiki maintenance request is captured.",
+      inputs: ["requirement artifact", "wiki structure", "contribution constraints"],
+      outputs: ["plan artifact", "update checklist"],
+      constraints: [
+        "Document exactly what will change and what will not.",
+        "Avoid duplicate edits across existing wiki sections.",
+        "Define validation steps before publishing updates."
+      ],
+      knowledgeSources: ["omx_wiki", "omx_wiki/llm", "wiki contribution policy"],
+      verificationRules: [
+        "Plan includes validation criteria and change boundaries.",
+        "Plan names review checkpoints."
+      ]
+    },
+    "implementation.dispatch": {
+      name: "LLM Wiki Dispatch Skill",
+      purpose: "Apply targeted updates to wiki pages and supporting artifacts.",
+      trigger: "A wiki maintenance plan is approved by workflow policy.",
+      outputs: ["patch artifact", "wiki change summary", "agent run record"],
+      constraints: [
+        "Keep edits scoped to approved sections.",
+        "Prefer small incremental updates over broad rewrites.",
+        "Call out unresolved uncertainties in the output."
+      ],
+      knowledgeSources: ["omx_wiki/conventions", "omx_wiki/llm", "project repository"],
+      verificationRules: ["Patch artifact is available for review."]
+    },
+    "verification.generate": {
+      name: "LLM Wiki Verification Skill",
+      purpose: "Run deterministic checks for consistency, links, and policy conformance.",
+      trigger: "Wiki patch is generated.",
+      constraints: [
+        "Run at least one consistency check before marking verification complete.",
+        "Report broken link candidates and unresolved references.",
+        "Highlight policy mismatches with actionable follow-ups."
+      ],
+      knowledgeSources: ["wiki contribution policy", "CI logs", "omx_wiki/standards"],
+      verificationRules: [
+        "Verification report includes validation evidence and exception handling."
+      ]
+    },
+    "verification.implementation_review": {
+      name: "LLM Wiki Review Skill",
+      purpose: "Review the wiki patch for semantic correctness and downstream impact.",
+      trigger: "Code review passes and wiki verification is in-progress.",
+      constraints: [
+        "Require explicit severity labels for each finding.",
+        "Separate factual errors from style recommendations.",
+        "Do not mark blocking findings as no when unresolved."
+      ],
+      knowledgeSources: ["omx_wiki", "LLM knowledge context", "implementation diff"],
+      verificationRules: ["Findings and severity labels are explicit."]
+    },
+    "closeout.archive": {
+      name: "LLM Wiki Closeout Skill",
+      purpose: "Finalize the wiki maintenance run and archive review evidence.",
+      trigger: "VerificationApproval is approved.",
+      outputs: ["completed workflow run", "wiki capture candidate"],
+      knowledgeSources: ["omx_wiki/session-log", "wiki contribution policy"],
+      verificationRules: [
+        "Workflow status is completed.",
+        "Run evidence references are preserved."
+      ]
+    }
+  }
+
+  return defaultSkills.map((skill) => ({
+    ...skill,
+    ...wikiOverrides[skill.id]
+  }))
+}
+
 export function getDefaultSkillExecutor(
   skillId: string,
   selectedAgent: AgentKind
@@ -543,6 +635,8 @@ export function createWorkflowRun(input: {
           ? createHiveMissionEventSkills()
           : projectType === "arceus_maintenance"
             ? createArceusMaintenanceEventSkills()
+            : projectType === "llm_wiki_maintenance"
+              ? createLlmWikiMaintenanceEventSkills()
             : createDefaultEventSkills()
   const selectedAgent = input.managedConfig
     ? "codex"
@@ -1804,6 +1898,8 @@ function ensureEventSkillState(run: WorkflowRun) {
     run.eventSkills ??
     (run.projectType === "agent_task"
       ? createAgentTaskEventSkills()
+      : run.projectType === "llm_wiki_maintenance"
+        ? createLlmWikiMaintenanceEventSkills()
       : createDefaultEventSkills())
   run.events = run.events ?? []
   run.contextFiles = run.contextFiles ?? []

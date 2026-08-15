@@ -42,6 +42,11 @@ body {
   overflow: auto;
 }
 
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
 body {
   margin: 0;
   background:
@@ -53,6 +58,7 @@ body {
     Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
     sans-serif;
   isolation: isolate;
+  overflow-x: hidden;
 }
 
 body::before {
@@ -79,6 +85,7 @@ textarea {
 
 button {
   cursor: pointer;
+  touch-action: manipulation;
 }
 
 .shell {
@@ -86,6 +93,7 @@ button {
   gap: 14px;
   grid-template-rows: auto minmax(0, 1fr);
   min-height: 100vh;
+  min-height: 100dvh;
   overflow: visible;
   padding: 20px 28px;
   position: relative;
@@ -99,6 +107,7 @@ button {
 .shell.mode-documentation { background: radial-gradient(circle at 12% 16%, rgba(103, 232, 249, 0.25), transparent 35%), rgba(8, 51, 68, 0.12); }
 .shell.mode-diagnosis { background: radial-gradient(circle at 12% 16%, rgba(248, 113, 113, 0.25), transparent 35%), rgba(127, 29, 29, 0.12); }
 .shell.mode-decision { background: radial-gradient(circle at 12% 16%, rgba(147, 197, 253, 0.26), transparent 35%), rgba(30, 58, 138, 0.12); }
+.shell.mode-llm_wiki_maintenance { background: radial-gradient(circle at 12% 16%, rgba(74, 222, 128, 0.25), transparent 35%), rgba(20, 83, 45, 0.13); }
 .shell.mode-agent_task { background: radial-gradient(circle at 12% 16%, rgba(196, 181, 253, 0.27), transparent 35%), rgba(76, 29, 149, 0.13); }
 
 .shell.mode-hive_mission { background: radial-gradient(circle at 12% 16%, rgba(250, 204, 21, 0.22), transparent 35%), rgba(113, 63, 18, 0.12); }
@@ -138,7 +147,7 @@ button {
   display: grid;
   flex: 1 1 auto;
   gap: 4px;
-  grid-template-columns: repeat(9, minmax(0, 1fr));
+  grid-template-columns: repeat(10, minmax(0, 1fr));
   min-width: 0;
 }
 
@@ -163,12 +172,13 @@ button {
 
 .globalModeSegment svg { color: #b8ccdc; opacity: 0.62; }
 .globalModeSegment:nth-child(2),
-.globalModeSegment:nth-child(8) { transform: translateY(3px); }
+.globalModeSegment:nth-child(9) { transform: translateY(3px); }
 .globalModeSegment:nth-child(3),
-.globalModeSegment:nth-child(7) { transform: translateY(6px); }
+.globalModeSegment:nth-child(8) { transform: translateY(6px); }
 .globalModeSegment:nth-child(4),
-.globalModeSegment:nth-child(6) { transform: translateY(9px); }
-.globalModeSegment:nth-child(5) { transform: translateY(11px); }
+.globalModeSegment:nth-child(7) { transform: translateY(9px); }
+.globalModeSegment:nth-child(5),
+.globalModeSegment:nth-child(6) { transform: translateY(11px); }
 .globalModeSegment:last-child { clip-path: polygon(10% 0, 76% 0, 100% 50%, 76% 100%, 10% 100%, 0 50%); }
 
 .globalModeSegment:hover,
@@ -1256,7 +1266,7 @@ textarea:focus {
   display: grid;
   gap: 12px;
   left: 0;
-  max-height: min(520px, calc(100vh - 190px));
+  max-height: min(520px, calc(100dvh - 190px));
   overflow: hidden;
   padding: 12px;
   position: absolute;
@@ -1375,9 +1385,9 @@ textarea:focus {
   display: grid;
   gap: 18px;
   grid-template-rows: auto minmax(0, 1fr) auto;
-  max-height: calc(100vh - 48px);
+  max-height: calc(100dvh - 48px);
   max-width: 1120px;
-  min-height: min(760px, calc(100vh - 48px));
+  min-height: min(760px, calc(100dvh - 48px));
   overflow: hidden;
   padding: 20px;
   width: min(1120px, 100%);
@@ -2304,6 +2314,7 @@ pre {
 
   .shell {
     min-height: 100vh;
+    min-height: 100dvh;
   }
 
   .layoutGrid,
@@ -2369,6 +2380,12 @@ pre {
 }
 
 @media (max-width: 640px) {
+  html,
+  body {
+    max-width: 100%;
+    overscroll-behavior-x: none;
+  }
+
   body::before {
     background-position: right -148px top 18px;
     background-size: 560px;
@@ -2376,7 +2393,38 @@ pre {
   }
 
   .shell {
-    padding: 18px;
+    gap: 12px;
+    padding:
+      max(12px, env(safe-area-inset-top))
+      max(12px, env(safe-area-inset-right))
+      max(12px, env(safe-area-inset-bottom))
+      max(12px, env(safe-area-inset-left));
+  }
+
+  .globalModeNav {
+    border-radius: 10px;
+    min-width: 0;
+  }
+
+  .globalModeDragonHead {
+    display: none;
+  }
+
+  .globalModeSegments {
+    gap: 3px;
+    grid-auto-columns: minmax(96px, 1fr);
+    overscroll-behavior-inline: contain;
+    scroll-snap-type: inline proximity;
+    scrollbar-width: none;
+  }
+
+  .globalModeSegments::-webkit-scrollbar {
+    display: none;
+  }
+
+  .globalModeSegment {
+    min-height: 48px;
+    scroll-snap-align: start;
   }
 
   .topbar,
@@ -2385,9 +2433,92 @@ pre {
     flex-direction: column;
   }
 
-  .taskConversation { min-height: 72vh; }
-  .conversationEntry { max-width: 96%; }
-  .conversationComposer { bottom: 0; grid-template-columns: 1fr; position: sticky; z-index: 4; }
+  .topbar {
+    gap: 12px;
+  }
+
+  .topbarActions {
+    flex-wrap: wrap;
+    width: 100%;
+  }
+
+  .topbarActions > * {
+    flex: 1 1 auto;
+  }
+
+  .taskWorkspaceGrid,
+  .taskNavigation,
+  .conversationWorkspace,
+  .taskStatusSidebar {
+    gap: 12px;
+    min-width: 0;
+  }
+
+  .panel {
+    max-width: 100%;
+    padding: 12px;
+  }
+
+  .taskConversation {
+    grid-template-rows: auto minmax(160px, 1fr) auto auto;
+    height: calc(100dvh - 24px);
+    min-height: min(560px, calc(100dvh - 24px));
+    padding: 0;
+  }
+
+  .taskConversationHeader,
+  .conversationEntries {
+    padding-inline: 12px;
+  }
+
+  .conversationEntry {
+    max-width: 96%;
+    min-width: 0;
+  }
+
+  .conversationEntry p,
+  .conversationRefs a,
+  .taskStatusSidebar dd,
+  .contextFileChip strong {
+    overflow-wrap: anywhere;
+  }
+
+  .conversationComposer {
+    bottom: 0;
+    grid-template-columns: 1fr;
+    padding: 12px 12px max(12px, env(safe-area-inset-bottom));
+    position: sticky;
+    z-index: 4;
+  }
+
+  .conversationComposer select,
+  .conversationComposer textarea,
+  input:not([type="file"]),
+  select,
+  textarea {
+    font-size: 16px;
+    min-width: 0;
+    width: 100%;
+  }
+
+  button,
+  input:not([type="file"]),
+  select {
+    min-height: 44px;
+  }
+
+  .iconButton,
+  .compactPanelButton,
+  .agentSelect,
+  .agentSelectOption,
+  .iconTextButton {
+    min-height: 44px;
+  }
+
+  .iconButton {
+    min-width: 44px;
+    width: 44px;
+  }
 
   .projectActionStack {
     align-items: stretch;
@@ -2399,7 +2530,7 @@ pre {
   }
 
   h1 {
-    font-size: 28px;
+    font-size: 24px;
   }
 
   .segmented {
@@ -2408,10 +2539,6 @@ pre {
 
   .runActionRow {
     grid-template-columns: 1fr;
-  }
-
-  .globalModeSegment {
-    min-height: 48px;
   }
 
   .projectTypeGrid {
@@ -2433,11 +2560,36 @@ pre {
 
   .composeOverlay {
     align-items: stretch;
-    padding: 12px;
+    padding:
+      max(8px, env(safe-area-inset-top))
+      max(8px, env(safe-area-inset-right))
+      max(8px, env(safe-area-inset-bottom))
+      max(8px, env(safe-area-inset-left));
   }
 
   .composeSheet {
-    max-height: calc(100vh - 24px);
+    gap: 12px;
+    max-height: 100dvh;
+    min-height: 0;
+    padding: 14px;
+  }
+
+  .composeSheetBody {
+    padding-right: 0;
+  }
+
+  .composeSheetBody textarea {
+    min-height: 180px;
+  }
+
+  .projectSelectorPopover {
+    bottom: max(12px, env(safe-area-inset-bottom));
+    left: 12px;
+    max-height: min(70dvh, 520px);
+    position: fixed;
+    right: 12px;
+    top: auto;
+    z-index: 30;
   }
 
   .stageTrack {

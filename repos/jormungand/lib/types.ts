@@ -24,6 +24,7 @@ export type ProjectType =
   | "documentation"
   | "diagnosis"
   | "decision"
+  | "llm_wiki_maintenance"
   | "agent_task"
   | "hive_mission"
   | "arceus_maintenance"
