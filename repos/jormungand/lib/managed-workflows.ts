@@ -41,7 +41,11 @@ export function createArceusMaintenanceConfig(input: {
   constraints: string[]
   nonGoals: string[]
 }): ArceusMaintenanceConfig {
-  if (!input.repository.trim()) throw new Error("JORMUNGAND_REPOSITORY is required for Arceus Maintenance.")
+  if (!input.repository.trim()) {
+    throw new Error(
+      "JORMUNGAND_REPOSITORY is required for Arceus Maintenance. Set it in the server environment and redeploy."
+    )
+  }
   requireNonEmptyStrings(input.successCriteria, "successCriteria")
   return {
     kind: "arceus_maintenance",
