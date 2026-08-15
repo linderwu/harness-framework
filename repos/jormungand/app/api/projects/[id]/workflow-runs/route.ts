@@ -6,6 +6,7 @@ import { createRuntimeSkillResolver } from "@/lib/runtime-skills"
 import { getProject, upsertWorkflowRun } from "@/lib/store"
 import { advanceWorkflow, createWorkflowRun } from "@/lib/workflow"
 import type { AgentKind, ApprovalActorType, WorkflowRun } from "@/lib/types"
+import { getDefaultHiveServices } from "@/lib/hive-services"
 
 export async function POST(
   request: Request,
@@ -34,8 +35,43 @@ export async function POST(
     selectedAgent: normalizeAgentKind(body.selectedAgent ?? defaultAgentKind),
     skillAssignments: body.skillAssignments,
     designApprovalActor: body.designApprovalActor ?? "independent_agent",
-    verificationApprovalActor: body.verificationApprovalActor ?? "verification_subagent"
+    verificationApprovalActor: body.verificationApprovalActor ?? "verification_subagent",
+    managedConfig: project.managedConfig
   })
+
+  if (project.managedConfig) {
+    try {
+      const runningRun = await upsertWorkflowRun({
+        ...run,
+        status: "running",
+        updatedAt: new Date().toISOString()
+      })
+      const { repository, scheduler } = getDefaultHiveServices()
+      await repository.createManagerTask({
+        workflowRunId: runningRun.id,
+        title: project.name,
+        instruction: project.goal,
+        successCriteria: project.managedConfig.successCriteria,
+        assignedAgent: "codex",
+        strategy: "manager-decomposition"
+      })
+      await scheduler.enqueue({
+        workflowRunId: runningRun.id,
+        reason: "mission_created",
+        idempotencyKey: `mission-created:${runningRun.id}`
+      })
+      void scheduler.runNext(runningRun.id)
+      return NextResponse.json(runningRun, { status: 201 })
+    } catch (error) {
+      const failedRun = await upsertWorkflowRun({
+        ...run,
+        status: "failed",
+        eventLogWarning: `Hive control plane unavailable: ${error instanceof Error ? error.message : String(error)}`,
+        updatedAt: new Date().toISOString()
+      })
+      return NextResponse.json(failedRun, { status: 503 })
+    }
+  }
 
   if (project.type === "agent_task") {
     const runningRun = await upsertWorkflowRun({

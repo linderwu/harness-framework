@@ -7,7 +7,8 @@ import type {
   ProjectStatus,
   ProjectType,
   WorkspaceWarning,
-  WorkflowRun
+  WorkflowRun,
+  ManagedProjectConfig
 } from "./types"
 
 const workspaceSchemaVersion = 3
@@ -20,6 +21,7 @@ export interface CreateProjectInput {
   source: Project["source"]
   sourceRef?: string
   contextFiles?: ProjectContextFile[]
+  managedConfig?: ManagedProjectConfig
 }
 
 export function createProject(input: CreateProjectInput): Project {
@@ -38,6 +40,7 @@ export function createProject(input: CreateProjectInput): Project {
     source: input.source,
     sourceRef: input.sourceRef,
     contextFiles: input.contextFiles ?? [],
+    managedConfig: input.managedConfig,
     artifactIds: [],
     workflowRunIds: [],
     createdAt: now,
@@ -121,6 +124,7 @@ function createLegacyProject(run: WorkflowRun): Project {
     source: run.source ?? "dashboard",
     sourceRef: run.sourceRef,
     contextFiles: run.contextFiles ?? [],
+    managedConfig: run.managedConfig,
     artifactIds: run.artifacts.map((artifact) => artifact.id),
     workflowRunIds: [run.id],
     createdAt: run.createdAt ?? now,

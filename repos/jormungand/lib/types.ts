@@ -25,6 +25,8 @@ export type ProjectType =
   | "diagnosis"
   | "decision"
   | "agent_task"
+  | "hive_mission"
+  | "arceus_maintenance"
 
 export interface MissionBudget {
   callLimit: number
@@ -107,6 +109,31 @@ export interface ManagedRunSummary {
   nextWakeCondition?: string
   circuitBreakerOpen: boolean
 }
+
+export interface HiveMissionConfig {
+  kind: "hive_mission"
+  manager: "codex"
+  successCriteria: string[]
+  repositoryScope: string
+  constraints: string[]
+  nonGoals: string[]
+  budget: { callLimit: number; timeLimitMs: number; costLimitUsd: number }
+  approvalPolicy: "external_and_irreversible"
+}
+
+export interface ArceusMaintenanceConfig {
+  kind: "arceus_maintenance"
+  target: "Jormungand"
+  executor: "codex"
+  repository: string
+  successCriteria: string[]
+  constraints: string[]
+  nonGoals: string[]
+  stages: ["Intake", "Plan", "Modify", "Test", "Code Review", "Ready"]
+  approvalPolicy: "external_and_irreversible"
+}
+
+export type ManagedProjectConfig = HiveMissionConfig | ArceusMaintenanceConfig
 
 export type ProjectStatus =
   | "active"
@@ -326,6 +353,7 @@ export interface Project {
   source: "dashboard" | "github_issue" | "github_pr"
   sourceRef?: string
   contextFiles: ProjectContextFile[]
+  managedConfig?: ManagedProjectConfig
   artifactIds: string[]
   workflowRunIds: string[]
   createdAt: string
@@ -423,6 +451,7 @@ export interface WorkflowRun {
   repository: string
   requirement: string
   contextFiles: ProjectContextFile[]
+  managedConfig?: ManagedProjectConfig
   source: "dashboard" | "github_issue" | "github_pr"
   sourceRef?: string
   currentStage: WorkflowStage

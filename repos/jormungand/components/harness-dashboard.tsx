@@ -174,6 +174,16 @@ const projectTypeVisuals: Record<
     icon: Bot,
     accent: "violet",
     description: "Send a focused instruction to an agent."
+  },
+  hive_mission: {
+    icon: Bot,
+    accent: "cyan",
+    description: "Give Codex a goal and coordinate multiple workers."
+  },
+  arceus_maintenance: {
+    icon: ShieldCheck,
+    accent: "orange",
+    description: "Let Codex maintain Jormungand under approval policy."
   }
 }
 
@@ -184,7 +194,9 @@ const projectModeDescriptions: Record<ProjectType, string> = {
   documentation: "Shape source material into a reviewed, publishable artifact.",
   diagnosis: "Trace a failure from symptom to cause and recovery plan.",
   decision: "Compare options, expose tradeoffs, and record the call.",
-  agent_task: "Send one focused instruction and receive an agent response."
+  agent_task: "Send one focused instruction and receive an agent response.",
+  hive_mission: "Let Codex plan, dispatch, recover, and verify a multi-agent mission.",
+  arceus_maintenance: "Let Codex inspect, modify, test, and review Jormungand."
 }
 
 export function HarnessDashboard({
