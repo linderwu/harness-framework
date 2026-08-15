@@ -1029,7 +1029,7 @@ export function HarnessDashboard({
             key={selectedRun?.id ?? "unbound"}
             run={selectedRun}
             initialEntries={[]}
-            allowedAgents={selectedRun?.projectType === "arceus_maintenance" ? ["codex"] : selectedRun ? agentProfiles.map((profile) => profile.id) : ["codex"]}
+            allowedAgents={selectedRun ? agentProfiles.map((profile) => profile.id) : agentProfiles.map((profile) => profile.id)}
             onEntriesChanged={setConversationEntries}
             onBound={(binding) => {
               setSelectedProjectId(binding.projectId)

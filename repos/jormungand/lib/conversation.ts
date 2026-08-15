@@ -1,4 +1,4 @@
-import { agentProfiles } from "./agents"
+import { agentProfiles, normalizeAgentKind } from "./agents"
 import type { ContextPack } from "./context-builder"
 import type { HiveMemoryRepository } from "./hive-memory/repository"
 import type { ConversationEntry } from "./hive-memory/types"
@@ -22,8 +22,14 @@ export class ConversationError extends Error {
   }
 }
 
-export function listAllowedAgents(run: WorkflowRun, health: AgentHealth = {}) {
-  if (run.projectType === "arceus_maintenance") return health.codex === "offline" || health.codex === "disabled" ? [] : ["codex"] satisfies AgentKind[]
+export function listAllowedAgents(
+  projectType: WorkflowRun["projectType"],
+  health: AgentHealth = {}
+) {
+  if (projectType === "arceus_maintenance") {
+    return health.codex === "offline" || health.codex === "disabled" ? [] : ["codex"] satisfies AgentKind[]
+  }
+
   return agentProfiles
     .map((profile) => profile.id)
     .filter((agent) => health[agent] !== "offline" && health[agent] !== "disabled")
@@ -59,6 +65,7 @@ interface ConversationDependencies {
   routeUnbound?: (input: {
     content: string
     entries: ConversationEntry[]
+    targetAgent: AgentKind
   }) => Promise<{
     status: "completed" | "failed"
     body: string
@@ -74,25 +81,34 @@ export class ConversationService {
     const health = await this.dependencies.getHealth?.() ?? {}
     return {
       entries: this.dependencies.repository.listConversation(workflowRunId),
-      allowedAgents: listAllowedAgents(run, health)
+      allowedAgents: listAllowedAgents(run.projectType, health)
     }
   }
 
-  getUnboundConversation() {
+  async getUnboundConversation() {
+    const health = await this.dependencies.getHealth?.() ?? {}
     return {
       entries: this.dependencies.repository.listConversation(unboundConversationId),
-      allowedAgents: ["codex"] satisfies AgentKind[],
+      allowedAgents: listAllowedAgents("development", health),
       binding: undefined
     }
   }
 
   async postUnboundMessage(input: {
     content: string
+    targetAgent?: AgentKind
     idempotencyKey: string
   }) {
     const content = input.content.trim()
+    const targetAgent = normalizeAgentKind(input.targetAgent)
+    const health = await this.dependencies.getHealth?.() ?? {}
+    const allowedAgents = listAllowedAgents("development", health)
+
     if (!content) throw new ConversationError("content is required", 400)
     if (!input.idempotencyKey.trim()) throw new ConversationError("idempotencyKey is required", 400)
+    if (!allowedAgents.includes(targetAgent)) {
+      throw new ConversationError("Target agent is not allowed for unbound conversation", 403)
+    }
     if (!this.dependencies.routeUnbound) throw new ConversationError("Conversation manager is unavailable", 503)
 
     const existing = this.dependencies.repository.getConversationByIdempotencyKey(input.idempotencyKey)
@@ -101,7 +117,7 @@ export class ConversationService {
     const userInsert = await this.dependencies.repository.insertConversation({
       workflowRunId: unboundConversationId,
       role: "user",
-      agentId: "codex",
+      agentId: targetAgent,
       content,
       importance: "normal",
       status: "queued",
@@ -115,13 +131,14 @@ export class ConversationService {
     try {
       await this.dependencies.repository.updateConversation({ id: userEntry.id, status: "running" })
       const decision = await this.dependencies.routeUnbound({
+        targetAgent,
         content,
         entries: this.dependencies.repository.listConversation(unboundConversationId)
       })
       const responseInsert = await this.dependencies.repository.insertConversation({
         workflowRunId: unboundConversationId,
-        role: "manager",
-        agentId: "codex",
+        role: targetAgent === "codex" ? "manager" : "agent",
+        agentId: targetAgent,
         content: compactResponse(decision.body),
         importance: decision.status === "failed" ? "critical" : "important",
         status: decision.status,
@@ -134,7 +151,7 @@ export class ConversationService {
         id: userEntry.id,
         status: decision.status === "completed" ? "completed" : "failed"
       })
-      if (decision.binding) {
+      if (targetAgent === "codex" && decision.binding) {
         await this.dependencies.repository.moveConversation(unboundConversationId, decision.binding.workflowRunId)
       }
       return {
@@ -165,7 +182,7 @@ export class ConversationService {
 
     const run = await this.requireRun(input.workflowRunId)
     const health = await this.dependencies.getHealth?.() ?? {}
-    if (!listAllowedAgents(run, health).includes(input.targetAgent)) {
+    if (!listAllowedAgents(run.projectType, health).includes(input.targetAgent)) {
       throw new ConversationError("Target agent is not allowed for this workflow run", 403)
     }
     if (input.replyToId) {
@@ -313,5 +330,5 @@ export function parseUnboundManagerDecision(raw: string, runs: WorkflowRun[]) {
 
 function compactResponse(body: string) {
   const normalized = body.trim()
-  return normalized.length <= 4_000 ? normalized : `${normalized.slice(0, 3_999)}…`
+  return normalized.length <= 4_000 ? normalized : normalized.slice(0, 4_000)
 }

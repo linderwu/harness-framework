@@ -106,57 +106,94 @@ function createServices() {
       return artifact.id
     },
     enqueueManagerWake: (input) => scheduler.enqueue(input),
-    routeUnbound: async ({ content, entries }) => {
-      const [projects, runs] = await Promise.all([listProjects(), listWorkflowRuns()])
-      const candidateLines = projects.map((project) => {
-        const projectRuns = runs.filter((run) => run.projectId === project.id)
-        return `- ${project.name}: projectId=${project.id}; workflowRuns=${projectRuns.map((run) => `${run.id} (${run.status})`).join(", ") || "none"}`
-      })
-      const prompt = [
-        "You are the Jormungand conversation manager.",
-        "Answer the operator and decide whether this conversation clearly belongs to one existing project and workflow run.",
-        "Keep it unbound when intent is general, ambiguous, or no matching workflow run exists.",
-        "Return exactly one JSON object: {\"reply\":\"...\",\"projectId\":string|null,\"workflowRunId\":string|null}.",
-        "Existing targets:",
-        ...(candidateLines.length ? candidateLines : ["- none"]),
-        "Recent conversation:",
-        ...entries.slice(-12).map((entry) => `${entry.role}: ${entry.content}`),
-        `Latest operator message: ${content}`
-      ].join("\n")
+    routeUnbound: async ({ targetAgent, content, entries }) => {
       const syntheticRun = createWorkflowRun({
         projectId: "",
         projectName: "Unbound conversation",
         repository: "",
         requirement: content,
-        selectedAgent: "codex",
+        selectedAgent: targetAgent,
         designApprovalActor: "human",
         verificationApprovalActor: "human"
       })
+
+      if (targetAgent === "codex") {
+        const [projects, runs] = await Promise.all([listProjects(), listWorkflowRuns()])
+        const candidateLines = projects.map((project) => {
+          const projectRuns = runs.filter((run) => run.projectId === project.id)
+          return `- ${project.name}: projectId=${project.id}; workflowRuns=${projectRuns.map((run) => `${run.id} (${run.status})`).join(", ") || "none"}`
+        })
+        const prompt = [
+          "You are the Jormungand conversation manager.",
+          "Answer the operator and decide whether this conversation clearly belongs to one existing project and workflow run.",
+          "Keep it unbound when intent is general, ambiguous, or no matching workflow run exists.",
+          "Return exactly one JSON object: {\"reply\":\"...\",\"projectId\":string|null,\"workflowRunId\":string|null}.",
+          "Existing targets:",
+          ...(candidateLines.length ? candidateLines : ["- none"]),
+          "Recent conversation:",
+          ...entries.slice(-12).map((entry) => `${entry.role}: ${entry.content}`),
+          `Latest operator message: ${content}`
+        ].join("\n")
+        const result = await invokeConfiguredAgent({
+          run: syntheticRun,
+          executor: "codex",
+          stage: "intake",
+          artifactType: "log",
+          title: "Route unbound conversation",
+          fallbackBody: JSON.stringify({ reply: content, projectId: null, workflowRunId: null }),
+          skill: {
+            id: "hive_manager.route_conversation",
+            eventType: "requirement_intake",
+            stage: "intake",
+            name: "Route unbound conversation",
+            purpose: prompt,
+            trigger: "The operator posted to the persistent unbound conversation.",
+            allowedActors: ["codex"],
+            inputs: ["recent conversation", "existing project and workflow targets"],
+            outputs: ["reply and optional validated binding"],
+            constraints: ["Bind only when the target is unambiguous.", "Never invent project or workflow identifiers."],
+            gates: ["Jormungand validates the selected target."],
+            knowledgeSources: ["persisted conversation", "workspace index"],
+            verificationRules: ["Output exactly one JSON object matching the requested shape."]
+          }
+        })
+        if (result.status === "failed") return { status: "failed" as const, body: result.body }
+        return { status: "completed" as const, ...parseUnboundManagerDecision(result.body, runs) }
+      }
+
       const result = await invokeConfiguredAgent({
         run: syntheticRun,
-        executor: "codex",
+        executor: targetAgent,
         stage: "intake",
         artifactType: "log",
-        title: "Route unbound conversation",
-        fallbackBody: JSON.stringify({ reply: content, projectId: null, workflowRunId: null }),
+        title: "Unbound limited conversation",
+        fallbackBody: "The requested agent can only reply in unbound conversation mode.",
         skill: {
-          id: "hive_manager.route_conversation",
+          id: "conversation.unbound_limited",
           eventType: "requirement_intake",
           stage: "intake",
-          name: "Route unbound conversation",
-          purpose: prompt,
+          name: "Unbound limited conversation",
+          purpose:
+            "Respond to operator questions in safe, unbound mode without project binding, workflow mutation, or manager action.",
           trigger: "The operator posted to the persistent unbound conversation.",
-          allowedActors: ["codex"],
-          inputs: ["recent conversation", "existing project and workflow targets"],
-          outputs: ["reply and optional validated binding"],
-          constraints: ["Bind only when the target is unambiguous.", "Never invent project or workflow identifiers."],
-          gates: ["Jormungand validates the selected target."],
-          knowledgeSources: ["persisted conversation", "workspace index"],
-          verificationRules: ["Output exactly one JSON object matching the requested shape."]
+          allowedActors: [targetAgent],
+          inputs: ["recent conversation text", "agent style guidance"],
+          outputs: ["final response without workflow side effects"],
+          constraints: [
+            "Do not perform project binding or manager routing.",
+            "Do not invoke external systems or irreversible actions.",
+            "Keep the answer focused on user support and guidance."
+          ],
+          gates: ["Unbound conversation is read-only and non-mutating."],
+          knowledgeSources: ["persisted unbound conversation"],
+          verificationRules: ["Return one concise text response."]
         }
       })
-      if (result.status === "failed") return { status: "failed" as const, body: result.body }
-      return { status: "completed" as const, ...parseUnboundManagerDecision(result.body, runs) }
+
+      return {
+        status: result.status === "failed" ? "failed" : "completed",
+        body: result.body
+      }
     }
   })
   return { database, repository, scheduler, conversation }

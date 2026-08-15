@@ -47,10 +47,12 @@ async function fixture(t: test.TestContext, options: {
     },
     persistRawArtifact: async () => "artifact-1",
     enqueueManagerWake: (input) => repository.enqueueManagerWake(input),
-    routeUnbound: async () => ({
+    routeUnbound: async ({ targetAgent }) => ({
       status: "completed",
       body: "This belongs to Mission.",
-      binding: { projectId: run.projectId, workflowRunId: run.id, projectName: run.projectName }
+      binding: targetAgent === "codex"
+        ? { projectId: run.projectId, workflowRunId: run.id, projectName: run.projectName }
+        : undefined
     })
   })
   t.after(async () => {
@@ -93,8 +95,8 @@ test("busy Hive worker remains queued and is visible to the manager", async (t) 
 })
 
 test("routing excludes unavailable agents and fixes Arceus to Codex", () => {
-  assert.deepEqual(listAllowedAgents(createRun("arceus_maintenance"), {}), ["codex"])
-  assert.equal(listAllowedAgents(createRun("agent_task"), { "openclaw.gengar": "offline" }).includes("openclaw.gengar"), false)
+  assert.deepEqual(listAllowedAgents("arceus_maintenance", {}), ["codex"])
+  assert.equal(listAllowedAgents("agent_task", { "openclaw.gengar": "offline" }).includes("openclaw.gengar"), false)
 })
 
 test("context failures retain the committed user entry as failed", async (t) => {
@@ -108,7 +110,7 @@ test("context failures retain the committed user entry as failed", async (t) => 
 
 test("unbound conversation is persisted and moved intact after manager binding", async (t) => {
   const { repository, run, service } = await fixture(t)
-  assert.deepEqual(service.getUnboundConversation().entries, [])
+  assert.deepEqual((await service.getUnboundConversation()).entries, [])
 
   const result = await service.postUnboundMessage({
     content: "Continue the Mission project.",
