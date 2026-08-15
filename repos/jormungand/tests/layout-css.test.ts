@@ -73,33 +73,16 @@ test("bridge status panel is embedded in the compose panel", () => {
   assert.doesNotMatch(css, /\.bridgeStatusCards:not\(\.open\)/)
 })
 
-test("global mode dock forms one continuous armor-spine dragon body", () => {
-  const dockRule = ruleBody(/\.modeDock/, ".modeDock")
-  const spineRule = ruleBody(/\.modeDock::before/, ".modeDock::before")
-  const segmentRule = ruleBody(/\.modeDock button/, ".modeDock button")
-  const headRule = ruleBody(
-    /\.modeDock button:first-child/,
-    ".modeDock dragon head"
-  )
-  const tailRule = ruleBody(
-    /\.modeDock button:last-child/,
-    ".modeDock dragon tail"
-  )
-  const selectedRule = ruleBody(
-    /\.modeDock button\.selected/,
-    ".modeDock selected segment"
-  )
+test("global mode navigator spans nine modes and scrolls at narrow widths", () => {
+  const navRule = ruleBody(/\.globalModeNav/, ".globalModeNav")
+  const selectedRule = ruleBody(/\.globalModeNav button\.selected/, ".globalModeNav selected")
 
-  assert.match(dockRule, /grid-template-columns:\s*repeat\(7,/)
-  assert.match(dockRule, /isolation:\s*isolate;/)
-  assert.match(spineRule, /linear-gradient/)
-  assert.match(segmentRule, /clip-path:\s*polygon/)
-  assert.match(headRule, /clip-path:\s*polygon/)
-  assert.match(tailRule, /clip-path:\s*polygon/)
-  assert.match(selectedRule, /z-index:\s*3;/)
-  assert.match(selectedRule, /translateY\(-4px\)/)
+  assert.match(navRule, /grid-template-columns:\s*repeat\(9,/)
+  assert.match(navRule, /width:\s*100%;/)
+  assert.match(selectedRule, /aria-current|transform|box-shadow/)
+  assert.doesNotMatch(css, /\.modeEdgeButton/)
   assert.match(
     css,
-    /@media \(max-width: 640px\)[\s\S]*?\.modeDock\s*\{[\s\S]*?grid-template-columns:\s*repeat\(7,[\s\S]*?overflow-x:\s*auto;/
+    /@media \(max-width: 980px\)[\s\S]*?\.globalModeNav\s*\{[\s\S]*?grid-auto-flow:\s*column;[\s\S]*?overflow-x:\s*auto;/
   )
 })

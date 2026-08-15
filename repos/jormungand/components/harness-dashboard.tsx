@@ -4,11 +4,7 @@ import Image from "next/image"
 import { createPortal } from "react-dom"
 import {
   Bot,
-  BookOpenText,
-  Bug,
   Check,
-  Code2,
-  ChevronLeft,
   ChevronDown,
   ChevronRight,
   CircleDot,
@@ -59,8 +55,8 @@ import type {
 } from "@/lib/types"
 import {
   getProjectTemplate,
-  projectTypeOptions
 } from "@/lib/project-templates"
+import { GlobalModeNav } from "@/components/global-mode-nav"
 import {
   buildProjectSelectorItems,
   filterProjectSelectorItems,
@@ -135,69 +131,6 @@ interface AgentHealthResponse {
 
 const sampleRequirement =
   "Build a Jormungandr dashboard that can select Arceus/OpenClaw agents and control design/verification with approval gates."
-
-const projectTypeVisuals: Record<
-  ProjectType,
-  { icon: typeof ClipboardList; accent: string; description: string }
-> = {
-  research: {
-    icon: Search,
-    accent: "violet",
-    description: "Collect evidence and produce a research report."
-  },
-  development: {
-    icon: Code2,
-    accent: "orange",
-    description: "Ship a feature from intake through verification."
-  },
-  testing: {
-    icon: Check,
-    accent: "green",
-    description: "Plan, execute, and document test coverage."
-  },
-  documentation: {
-    icon: BookOpenText,
-    accent: "cyan",
-    description: "Draft, review, and publish clear documentation."
-  },
-  diagnosis: {
-    icon: Bug,
-    accent: "red",
-    description: "Reproduce, diagnose, and verify a problem."
-  },
-  decision: {
-    icon: GitBranch,
-    accent: "blue",
-    description: "Compare options and record a confident decision."
-  },
-  agent_task: {
-    icon: Bot,
-    accent: "violet",
-    description: "Send a focused instruction to an agent."
-  },
-  hive_mission: {
-    icon: Bot,
-    accent: "cyan",
-    description: "Give Codex a goal and coordinate multiple workers."
-  },
-  arceus_maintenance: {
-    icon: ShieldCheck,
-    accent: "orange",
-    description: "Let Codex maintain Jormungand under approval policy."
-  }
-}
-
-const projectModeDescriptions: Record<ProjectType, string> = {
-  research: "Explore evidence and turn uncertainty into a clear report.",
-  development: "Move from idea to verified software with approval gates.",
-  testing: "Design coverage, execute scenarios, and preserve evidence.",
-  documentation: "Shape source material into a reviewed, publishable artifact.",
-  diagnosis: "Trace a failure from symptom to cause and recovery plan.",
-  decision: "Compare options, expose tradeoffs, and record the call.",
-  agent_task: "Send one focused instruction and receive an agent response.",
-  hive_mission: "Let Codex plan, dispatch, recover, and verify a multi-agent mission.",
-  arceus_maintenance: "Let Codex inspect, modify, test, and review Jormungand."
-}
 
 export function HarnessDashboard({
   initialState
@@ -502,17 +435,6 @@ export function HarnessDashboard({
     setMutationError(template.warning)
   }
 
-  function cycleProjectType(direction: -1 | 1) {
-    const currentIndex = projectTypeOptions.findIndex(
-      (option) => option.type === form.projectType
-    )
-    const nextIndex =
-      (currentIndex + direction + projectTypeOptions.length) %
-      projectTypeOptions.length
-
-    selectProjectType(projectTypeOptions[nextIndex].type)
-  }
-
   function updateSkillAssignment(skillId: string, agent: AgentKind) {
     setForm({
       ...form,
@@ -617,26 +539,10 @@ export function HarnessDashboard({
 
   return (
     <main className={`shell mode-${form.projectType}`}>
-      <button
-        aria-label="Previous project mode"
-        className="modeEdgeButton modeEdgeButtonLeft"
-        onClick={() => cycleProjectType(-1)}
-        title="Previous project mode"
-        type="button"
-      >
-        <ChevronLeft size={20} />
-        <span>Previous</span>
-      </button>
-      <button
-        aria-label="Next project mode"
-        className="modeEdgeButton modeEdgeButtonRight"
-        onClick={() => cycleProjectType(1)}
-        title="Next project mode"
-        type="button"
-      >
-        <span>Next</span>
-        <ChevronRight size={20} />
-      </button>
+      <GlobalModeNav
+        value={form.projectType}
+        onChange={selectProjectType}
+      />
       <header className="topbar">
         <div>
           <p className="eyebrow modeEyebrow">{getProjectTemplate(form.projectType).label} mode</p>
@@ -652,36 +558,6 @@ export function HarnessDashboard({
           <div className="panelHeader">
             <CircleDot size={18} />
             <h2>New Project</h2>
-          </div>
-
-          <div className="modeSurface" aria-labelledby="mode-surface-heading">
-            <div className="modeSurfaceHeader">
-              <div>
-                <p className="eyebrow">Global mode</p>
-                <h3 id="mode-surface-heading">{getProjectTemplate(form.projectType).label}</h3>
-                <p>{projectModeDescriptions[form.projectType]}</p>
-              </div>
-              <span className="modeSurfacePhase">{getProjectTemplate(form.projectType).phases.length} phases</span>
-            </div>
-            <div className="modeDock" aria-label="Project modes">
-              {projectTypeOptions.map((option) => {
-                const visual = projectTypeVisuals[option.type]
-                const Icon = visual.icon
-                return (
-                  <button
-                    aria-label={option.label}
-                    aria-pressed={form.projectType === option.type}
-                    className={form.projectType === option.type ? "selected" : ""}
-                    key={option.type}
-                    onClick={() => selectProjectType(option.type)}
-                    type="button"
-                  >
-                    <Icon size={16} />
-                    <span>{option.label}</span>
-                  </button>
-                )
-              })}
-            </div>
           </div>
 
           <button
