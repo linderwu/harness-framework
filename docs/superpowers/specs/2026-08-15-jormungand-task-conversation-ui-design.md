@@ -347,6 +347,8 @@ The UI must not simulate successful dispatch in production. Until the endpoint e
 ## 12. Styling Contract
 
 - Preserve the existing navy/cyan Jormungand visual language.
+- Preserve every existing mode-specific page background and accent treatment when the workspace is rearranged.
+- Preserve the established tactile button treatment: layered fills, inset highlights, short lower shadows, hover lift, and pressed displacement. New Global mode segments and rail controls must use the same depth vocabulary rather than flattening adjacent controls.
 - Keep typography compact and operational rather than decorative.
 - Use cyan for active/selected state and muted light icon color for unselected mode icons.
 - Keep every body-segment icon visible.
@@ -417,6 +419,7 @@ Also perform browser checks at desktop, tablet, and mobile widths. Verify keyboa
 - Bridge Connections defaults to one collapsed row and expands downward on demand.
 - The full right rail is viewable through normal page scrolling.
 - Existing workflow controls, bridge-health security, and approval behavior do not regress.
+- Existing mode backgrounds and three-dimensional button details remain recognizable after the layout change.
 
 ## 16. Non-Goals
 

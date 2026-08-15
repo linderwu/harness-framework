@@ -60,38 +60,57 @@ test("project selector keeps the workspace header stable and overlays its popove
   assert.match(popoverRule, /z-index:\s*10;/)
 })
 
-test("bridge status panel is embedded in the compose panel", () => {
+test("bridge status panel expands in the monitoring rail without nested scrolling", () => {
   const panelRule = ruleBody(/\.bridgeStatusPanel/, ".bridgeStatusPanel")
   const cardsRule = ruleBody(/\.bridgeStatusCards/, ".bridgeStatusCards")
 
   assert.doesNotMatch(panelRule, /position:\s*fixed;/)
   assert.doesNotMatch(panelRule, /bottom:\s*18px;/)
   assert.doesNotMatch(panelRule, /right:\s*18px;/)
-  assert.match(panelRule, /background:\s*rgba\(255, 255, 255, 0\.08\);/)
+  assert.doesNotMatch(panelRule, /overflow(?:-y)?:\s*(?:auto|scroll);/)
   assert.match(cardsRule, /grid-template-columns:\s*1fr;/)
-  assert.doesNotMatch(css, /\.bridgeStatusToggle/)
-  assert.doesNotMatch(css, /\.bridgeStatusCards:not\(\.open\)/)
+  assert.doesNotMatch(cardsRule, /overflow(?:-y)?:\s*(?:auto|scroll);/)
 })
 
 test("global mode navigator spans nine modes and scrolls at narrow widths", () => {
   const navRule = ruleBody(/\.globalModeNav/, ".globalModeNav")
-  const selectedRule = ruleBody(/\.globalModeNav button\.selected/, ".globalModeNav selected")
+  const segmentsRule = ruleBody(/\.globalModeSegments/, ".globalModeSegments")
+  const segmentRule = ruleBody(/\.globalModeSegment/, ".globalModeSegment")
+  const selectedRule = ruleBody(/\.globalModeSegment\.selected/, ".globalModeNav selected")
 
-  assert.match(navRule, /grid-template-columns:\s*repeat\(9,/)
   assert.match(navRule, /width:\s*100%;/)
+  assert.match(segmentsRule, /grid-template-columns:\s*repeat\(9,/)
+  assert.match(segmentRule, /clip-path:\s*polygon\(/)
+  assert.match(segmentRule, /filter:\s*drop-shadow\(/)
+  assert.match(segmentRule, /background:\s*linear-gradient\(/)
   assert.match(selectedRule, /aria-current|transform|box-shadow/)
+  assert.doesNotMatch(css, /\.globalModeSegments::before/)
   assert.doesNotMatch(css, /\.modeEdgeButton/)
   assert.match(
     css,
-    /@media \(max-width: 980px\)[\s\S]*?\.globalModeNav\s*\{[\s\S]*?grid-auto-flow:\s*column;[\s\S]*?overflow-x:\s*auto;/
+    /@media \(max-width: 980px\)[\s\S]*?\.globalModeSegments\s*\{[\s\S]*?grid-auto-flow:\s*column;[\s\S]*?overflow-x:\s*auto;/
   )
+})
+
+test("new rail controls and role cards retain tactile button depth", () => {
+  const railRule = ruleBody(/\.railToggle/, ".railToggle")
+  const roleCardRule = ruleBody(/\.agentRoleStatusCard/, ".agentRoleStatusCard")
+
+  assert.match(railRule, /box-shadow:\s*inset/)
+  assert.match(railRule, /transform:\s*translateY/)
+  assert.match(roleCardRule, /linear-gradient\(/)
+  assert.match(roleCardRule, /box-shadow:\s*inset/)
 })
 
 test("task workspace makes conversation the largest responsive column", () => {
   const rule = ruleBody(/\.taskWorkspaceGrid/, ".taskWorkspaceGrid")
   assert.match(rule, /minmax\(240px, 0\.72fr\) minmax\(520px, 2fr\) minmax\(260px, 0\.8fr\)/)
+  assert.match(css, /\.taskWorkspaceGrid\[data-left-collapsed="true"\]/)
+  assert.match(css, /\.taskWorkspaceGrid\[data-right-collapsed="true"\]/)
+  assert.match(css, /\.taskWorkspaceGrid\[data-left-collapsed="true"\]\[data-right-collapsed="true"\]/)
   assert.match(ruleBody(/\.taskConversation/, ".taskConversation"), /min-height:\s*70vh/)
   const tablet = css.slice(css.indexOf("@media (max-width: 980px)"))
   assert.match(tablet, /\.conversationWorkspace\s*\{[\s\S]*?order:\s*-1/)
-  assert.match(tablet, /\.taskNavigation[\s\S]*?details|\.taskStatusSidebar[\s\S]*?details/)
+  assert.match(tablet, /\.taskWorkspaceGrid\[data-left-collapsed="true"\]/)
+  assert.match(tablet, /grid-template-columns:\s*1fr/)
 })

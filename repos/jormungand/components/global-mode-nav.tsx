@@ -1,14 +1,16 @@
 "use client"
 
+import Image from "next/image"
 import {
   Bot,
   BookOpenText,
   Bug,
-  Check,
   Code2,
-  GitBranch,
+  FlaskConical,
+  GitFork,
+  Network,
   Search,
-  ShieldCheck
+  Wrench
 } from "lucide-react"
 import { useLayoutEffect, useRef } from "react"
 import { projectTypeOptions } from "@/lib/project-templates"
@@ -17,13 +19,13 @@ import type { ProjectType } from "@/lib/types"
 const icons: Record<ProjectType, typeof Search> = {
   research: Search,
   development: Code2,
-  testing: Check,
+  testing: FlaskConical,
   documentation: BookOpenText,
   diagnosis: Bug,
-  decision: GitBranch,
+  decision: GitFork,
   agent_task: Bot,
-  hive_mission: Bot,
-  arceus_maintenance: ShieldCheck
+  hive_mission: Network,
+  arceus_maintenance: Wrench
 }
 
 export function GlobalModeNav({
@@ -45,24 +47,29 @@ export function GlobalModeNav({
 
   return (
     <nav aria-label="Global mode" className="globalModeNav">
-      {projectTypeOptions.map((option) => {
-        const Icon = icons[option.type]
-        const selected = option.type === value
-        return (
-          <button
-            aria-current={selected ? "page" : undefined}
-            aria-label={option.label}
-            className={selected ? "selected" : undefined}
-            key={option.type}
-            onClick={() => onChange(option.type)}
-            ref={selected ? selectedRef : undefined}
-            type="button"
-          >
-            <Icon size={16} />
-            <span>{option.label}</span>
-          </button>
-        )
-      })}
+      <div aria-hidden="true" className="globalModeDragonHead">
+        <Image alt="" height={64} priority src="/jormungand-dragon-head.svg" width={108} />
+      </div>
+      <div className="globalModeSegments">
+        {projectTypeOptions.map((option) => {
+          const Icon = icons[option.type]
+          const selected = option.type === value
+          return (
+            <button
+              aria-pressed={selected}
+              aria-label={option.label}
+              className={`globalModeSegment${selected ? " selected" : ""}`}
+              key={option.type}
+              onClick={() => onChange(option.type)}
+              ref={selected ? selectedRef : undefined}
+              title={option.label}
+              type="button"
+            >
+              <Icon aria-hidden="true" size={18} />
+            </button>
+          )
+        })}
+      </div>
     </nav>
   )
 }

@@ -57,7 +57,7 @@ test("dashboard health endpoint only returns registered HTTP bridge URL records"
   assert.doesNotMatch(route, /not_configured/)
 })
 
-test("dashboard renders bridge status inside the compose panel action area", () => {
+test("dashboard renders bridge status inside the right monitoring rail", () => {
   const composePanel = dashboard.slice(
     dashboard.indexOf('<form className="panel composePanel"'),
     dashboard.indexOf(
@@ -65,17 +65,13 @@ test("dashboard renders bridge status inside the compose panel action area", () 
       dashboard.indexOf('<form className="panel composePanel"')
     )
   )
-  const actionRowIndex = composePanel.indexOf('className="runActionRow"')
-  const bridgePanelIndex = composePanel.indexOf("<BridgeStatusPanel")
-  const errorIndex = composePanel.indexOf("{mutationError ?")
-
-  assert.ok(actionRowIndex > -1, "Expected action row in compose panel")
-  assert.ok(bridgePanelIndex > actionRowIndex, "Expected bridge panel after action row")
-  assert.ok(errorIndex > bridgePanelIndex, "Expected mutation error after bridge panel")
-  assert.doesNotMatch(
-    dashboard.slice(dashboard.indexOf("</section>"), dashboard.indexOf("</main>")),
-    /<BridgeStatusPanel/
+  const workspace = dashboard.slice(
+    dashboard.indexOf('className="taskWorkspaceGrid"'),
+    dashboard.indexOf("</main>")
   )
+
+  assert.doesNotMatch(composePanel, /<BridgeStatusPanel/)
+  assert.match(workspace, /<TaskStatusSidebar[\s\S]*bridgeConnections=\{<BridgeStatusPanel/)
 })
 
 test("bridge status panel renders endpoint bridges instead of fixed bridge definitions", () => {
@@ -160,7 +156,10 @@ test("dashboard exposes all project modes in a topmost global navigator", () => 
 test("global navigator renders the shared nine-mode option list", () => {
   const globalNav = readFileSync("components/global-mode-nav.tsx", "utf8")
   assert.match(globalNav, /projectTypeOptions\.map/)
-  assert.match(globalNav, /aria-current=\{selected \? "page" : undefined\}/)
+  assert.match(globalNav, /className="globalModeDragonHead"/)
+  assert.match(globalNav, /alt=""/)
+  assert.match(globalNav, /aria-hidden="true"/)
+  assert.match(globalNav, /aria-pressed=\{selected\}/)
   assert.match(globalNav, /scrollIntoView/)
   assert.doesNotMatch(globalNav, /const projectTypeOptions/)
 })
@@ -171,6 +170,31 @@ test("selected task uses a conversation-first three-column workspace", () => {
   assert.match(dashboard, /<ProjectSelector[\s\S]*className="panel composePanel"/)
   assert.match(dashboard, /initialEntries=/)
   assert.match(dashboard, /allowedAgents=/)
+})
+
+test("workspace rails collapse inward and preserve the conversation column", () => {
+  assert.match(dashboard, /const \[isNavigationExpanded, setIsNavigationExpanded\] = useState\(true\)/)
+  assert.match(dashboard, /const \[isMonitoringExpanded, setIsMonitoringExpanded\] = useState\(true\)/)
+  assert.match(dashboard, /data-left-collapsed=\{!isNavigationExpanded\}/)
+  assert.match(dashboard, /data-right-collapsed=\{!isMonitoringExpanded\}/)
+  assert.match(dashboard, /aria-expanded=\{isNavigationExpanded\}/)
+  assert.match(dashboard, /isNavigationExpanded \? <>[\s\S]*<ChevronDown[\s\S]*: <ChevronRight/)
+
+  const sidebar = readFileSync("components/task-status-sidebar.tsx", "utf8")
+  assert.match(sidebar, /isExpanded: boolean/)
+  assert.match(sidebar, /data-right-collapsed=\{!isExpanded\}/)
+  assert.match(sidebar, /isExpanded \? <>[\s\S]*<ChevronDown[\s\S]*: <ChevronLeft/)
+})
+
+test("right monitoring rail keeps role cards and collapsible bridge connections", () => {
+  const sidebar = readFileSync("components/task-status-sidebar.tsx", "utf8")
+  assert.match(sidebar, /title="Agent Role Status"/)
+  assert.match(sidebar, /className="agentRoleStatusCard"/)
+  assert.match(sidebar, /getAgentRole\(/)
+  assert.match(sidebar, /title="Bridge Connections"/)
+  assert.match(sidebar, /defaultOpen=\{false\}/)
+  assert.match(sidebar, /aria-expanded=\{isOpen\}/)
+  assert.match(sidebar, /isOpen \? <ChevronDown[\s\S]*: <ChevronLeft/)
 })
 
 test("task conversation is durable, targeted, and polls only while pending", () => {

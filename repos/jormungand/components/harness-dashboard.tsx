@@ -6,6 +6,7 @@ import {
   Bot,
   Check,
   ChevronDown,
+  ChevronLeft,
   ChevronRight,
   CircleDot,
   ClipboardList,
@@ -153,6 +154,8 @@ export function HarnessDashboard({
   )
   const [isLoading, setIsLoading] = useState(false)
   const [isMutating, setIsMutating] = useState(false)
+  const [isNavigationExpanded, setIsNavigationExpanded] = useState(true)
+  const [isMonitoringExpanded, setIsMonitoringExpanded] = useState(true)
   const [mutationError, setMutationError] = useState<string | undefined>()
   const [conversationEntries, setConversationEntries] = useState<ConversationEntry[]>([])
   const [openComposeSection, setOpenComposeSection] = useState<
@@ -561,8 +564,22 @@ export function HarnessDashboard({
         </div>
       </header>
 
-      <section className="taskWorkspaceGrid">
-        <aside className="taskNavigation">
+      <section
+        className="taskWorkspaceGrid"
+        data-left-collapsed={!isNavigationExpanded}
+        data-right-collapsed={!isMonitoringExpanded}
+      >
+        <aside className={`taskNavigation${isNavigationExpanded ? "" : " collapsed"}`}>
+          <button
+            aria-expanded={isNavigationExpanded}
+            aria-label={isNavigationExpanded ? "Collapse project navigation" : "Expand project navigation"}
+            className="railToggle navigationRailToggle"
+            onClick={() => setIsNavigationExpanded((current) => !current)}
+            type="button"
+          >
+            {isNavigationExpanded ? <><span>Projects &amp; runs</span><ChevronDown size={16} /></> : <ChevronRight size={18} />}
+          </button>
+          {isNavigationExpanded ? <>
           <ProjectSelector
             isLoading={isLoading}
             items={projectSelectorItems}
@@ -667,8 +684,6 @@ export function HarnessDashboard({
               Cancel Run
             </button>
           </div>
-
-          <BridgeStatusPanel run={selectedRun} />
 
           {mutationError ? (
             <p className="formError" role="alert">
@@ -1014,6 +1029,7 @@ export function HarnessDashboard({
             </div>
           ) : null}
           </form>
+          </> : null}
         </aside>
 
         <section className="conversationWorkspace">
@@ -1047,7 +1063,28 @@ export function HarnessDashboard({
             </details>
           ) : null}
         </section>
-        {selectedRun ? <TaskStatusSidebar run={selectedRun} entries={conversationEntries.filter((entry) => entry.workflowRunId === selectedRun.id)} /> : <aside className="panel taskStatusSidebar"><p>No active task.</p></aside>}
+        {selectedRun ? (
+          <TaskStatusSidebar
+            bridgeConnections={<BridgeStatusPanel run={selectedRun} showHeading={false} />}
+            entries={conversationEntries.filter((entry) => entry.workflowRunId === selectedRun.id)}
+            isExpanded={isMonitoringExpanded}
+            onExpandedChange={setIsMonitoringExpanded}
+            run={selectedRun}
+          />
+        ) : (
+          <aside className={`panel taskStatusSidebar${isMonitoringExpanded ? "" : " collapsed"}`} data-right-collapsed={!isMonitoringExpanded}>
+            <button
+              aria-expanded={isMonitoringExpanded}
+              aria-label={isMonitoringExpanded ? "Collapse task monitoring" : "Expand task monitoring"}
+              className="railToggle monitoringRailToggle"
+              onClick={() => setIsMonitoringExpanded((current) => !current)}
+              type="button"
+            >
+              {isMonitoringExpanded ? <><span>Task monitoring</span><ChevronDown size={16} /></> : <ChevronLeft size={18} />}
+            </button>
+            {isMonitoringExpanded ? <p>No active task.</p> : null}
+          </aside>
+        )}
       </section>
     </main>
   )
@@ -1798,7 +1835,13 @@ function formatFileSize(bytes: number) {
   return `${size.toFixed(size >= 10 || unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`
 }
 
-function BridgeStatusPanel({ run }: { run?: WorkflowRun }) {
+function BridgeStatusPanel({
+  run,
+  showHeading = true
+}: {
+  run?: WorkflowRun
+  showHeading?: boolean
+}) {
   const [health, setHealth] = useState<Partial<Record<BridgeId, BridgeHealth>>>(
     {}
   )
@@ -1864,7 +1907,7 @@ function BridgeStatusPanel({ run }: { run?: WorkflowRun }) {
       <div className="bridgeStatusPanelHeader">
         <span>
           {panelStatus === "online" ? <Wifi size={16} /> : <WifiOff size={16} />}
-          <strong>Bridge Connections</strong>
+          {showHeading ? <strong>Bridge Connections</strong> : <span>{panelStatus}</span>}
         </span>
         <button
           className="iconButton bridgeRefreshButton"
