@@ -11,11 +11,21 @@ test("app project is rooted under repos/jormungand", () => {
   assert.equal(path.basename(path.dirname(appRoot)), "repos")
   assert.equal(existsSync(path.join(appRoot, "package.json")), true)
 
-  for (const rootLocalPath of ["app", "components", "lib", "scripts", "tests"]) {
+  for (const rootLocalPath of ["components", "lib", "tests"]) {
     assert.equal(
       existsSync(path.join(workspaceRoot, rootLocalPath)),
       false,
       `${rootLocalPath} should live under repos/jormungand`
+    )
+  }
+  for (const compatibilityScript of ["openclaw-bridge.mjs", "openclaw-a2a.ps1", "start-openclaw-bridge.ps1"]) {
+    assert.equal(existsSync(path.join(workspaceRoot, "scripts", compatibilityScript)), true)
+  }
+  for (const compatibilityRoute of ["agent-health", "agent-quotas"]) {
+    assert.equal(
+      existsSync(path.join(workspaceRoot, "app", "api", compatibilityRoute, "route.ts")),
+      true,
+      `${compatibilityRoute} remains an intentional workspace compatibility proxy`
     )
   }
 })

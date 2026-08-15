@@ -2,6 +2,9 @@
 node_modules/
 data/harness-state.json
 repos/*/data/harness-state.json
+repos/*/data/hive-memory.sqlite*
+repos/*/data/backups/
+repos/*/data/artifacts/
 .env
 .env.local
 repos/*/.env

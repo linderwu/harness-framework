@@ -139,7 +139,7 @@ test("compose form uses research-specific workflow skills", () => {
   assert.match(dashboard, /assignmentStages\.includes\(stage\)/)
 })
 
-test("compose panel exposes all project modes as a global mode surface", () => {
+test("dashboard exposes all project modes in a topmost global navigator", () => {
   const composePanel = dashboard.slice(
     dashboard.indexOf('<form className="panel composePanel"'),
     dashboard.indexOf(
@@ -148,11 +148,38 @@ test("compose panel exposes all project modes as a global mode surface", () => {
     )
   )
 
-  assert.match(dashboard, /className="modeEdgeButton modeEdgeButtonLeft"/)
-  assert.match(dashboard, /className="modeEdgeButton modeEdgeButtonRight"/)
-  assert.match(composePanel, /className="modeSurface"/)
-  assert.match(composePanel, /className="modeDock"/)
-  assert.match(composePanel, /projectTypeOptions.map/)
-  assert.match(composePanel, /aria-label=\{option\.label\}/)
+  const globalNavIndex = dashboard.indexOf("<GlobalModeNav")
+  const headerIndex = dashboard.indexOf('<header className="topbar">')
+  assert.ok(globalNavIndex > -1 && globalNavIndex < headerIndex)
+  assert.doesNotMatch(dashboard, /modeEdgeButton/)
+  assert.doesNotMatch(composePanel, /modeSurface|modeDock/)
+  assert.match(dashboard, /value=\{form\.projectType\}/)
   assert.match(dashboard, /className=\{`shell mode-\$\{form\.projectType\}`\}/)
+})
+
+test("global navigator renders the shared nine-mode option list", () => {
+  const globalNav = readFileSync("components/global-mode-nav.tsx", "utf8")
+  assert.match(globalNav, /projectTypeOptions\.map/)
+  assert.match(globalNav, /aria-current=\{selected \? "page" : undefined\}/)
+  assert.match(globalNav, /scrollIntoView/)
+  assert.doesNotMatch(globalNav, /const projectTypeOptions/)
+})
+
+test("selected task uses a conversation-first three-column workspace", () => {
+  assert.match(dashboard, /className="taskWorkspaceGrid"/)
+  assert.match(dashboard, /<TaskConversation[\s\S]*<TaskStatusSidebar/)
+  assert.match(dashboard, /<ProjectSelector[\s\S]*className="panel composePanel"/)
+  assert.match(dashboard, /initialEntries=/)
+  assert.match(dashboard, /allowedAgents=/)
+})
+
+test("task conversation is durable, targeted, and polls only while pending", () => {
+  const conversationSource = readFileSync("components/task-conversation.tsx", "utf8")
+  assert.match(conversationSource, /crypto\.randomUUID\(\)/)
+  assert.match(conversationSource, /targetAgent/)
+  assert.match(conversationSource, /queued|running/)
+  assert.match(conversationSource, /3_000/)
+  assert.match(conversationSource, /\/conversation/)
+  assert.match(conversationSource, /artifactIds/)
+  assert.match(conversationSource, /memoryIds/)
 })

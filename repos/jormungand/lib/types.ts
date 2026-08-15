@@ -25,6 +25,115 @@ export type ProjectType =
   | "diagnosis"
   | "decision"
   | "agent_task"
+  | "hive_mission"
+  | "arceus_maintenance"
+
+export interface MissionBudget {
+  callLimit: number
+  callsUsed: number
+  timeLimitMs: number
+  startedAt: string
+  costLimitUsd: number
+  costUsedUsd: number
+}
+
+export type ExternalEffect =
+  | "physical_delete"
+  | "protected_push"
+  | "merge"
+  | "production_deploy"
+  | "paid_operation"
+  | "external_message"
+  | "other_irreversible"
+
+export type ManagerAction =
+  | { type: "create_task"; title: string; instruction: string; successCriteria: string[]; strategy: string }
+  | { type: "dispatch_task"; taskId: string; agentId: AgentKind }
+  | { type: "retry_task"; taskId: string; strategy: string }
+  | { type: "reassign_task"; taskId: string; agentId: AgentKind; reason: string }
+  | { type: "pause_task"; taskId: string; reason: string }
+  | { type: "stop_task"; taskId: string; reason: string }
+  | { type: "request_review"; taskId: string; reviewer: AgentKind; independent: true }
+  | { type: "request_approval"; effect: ExternalEffect; reason: string }
+
+export type ProposedMemoryChange =
+  | { type: "promote_candidate"; candidateId: string }
+  | { type: "supersede"; memoryId: string; replacementCandidateId: string }
+  | { type: "retract"; memoryId: string; reason: string }
+  | { type: "expire"; memoryId: string; reason: string }
+
+export interface ManagerApprovalRequest {
+  effect: ExternalEffect
+  reason: string
+  taskId?: string
+}
+
+export interface ManagerProposal {
+  observation: string
+  decision: string
+  reason: string
+  proposed_actions: ManagerAction[]
+  memory_changes: ProposedMemoryChange[]
+  approval_requests: ManagerApprovalRequest[]
+  next_wake_condition: string
+}
+
+export interface ManagerTaskSnapshot {
+  id: string
+  title: string
+  status: "pending" | "running" | "completed" | "failed" | "stopped"
+  assignedAgent?: AgentKind
+  strategy: string
+  attemptCount: number
+}
+
+export interface ManagerCheckpoint {
+  currentGoal: string
+  taskGraph: ManagerTaskSnapshot[]
+  workerAssignments: Array<{ taskId: string; agentId: AgentKind; reason?: string }>
+  blockers: string[]
+  risks: string[]
+  recentDecisions: string[]
+  pendingApprovals: ManagerApprovalRequest[]
+  memoryMutations: ProposedMemoryChange[]
+  budget: MissionBudget
+  nextWakeCondition: string
+}
+
+export interface ManagedRunSummary {
+  manager: "codex"
+  state: "idle" | "running" | "paused" | "blocked" | "waiting_for_approval" | "completed"
+  checkpointId?: string
+  taskCounts: Record<"pending" | "running" | "completed" | "failed" | "stopped", number>
+  budget: MissionBudget
+  nextWakeCondition?: string
+  circuitBreakerOpen: boolean
+}
+
+export interface HiveMissionConfig {
+  kind: "hive_mission"
+  manager: "codex"
+  successCriteria: string[]
+  repositoryScope: string
+  constraints: string[]
+  nonGoals: string[]
+  budget: { callLimit: number; timeLimitMs: number; costLimitUsd: number }
+  approvalPolicy: "external_and_irreversible"
+}
+
+export interface ArceusMaintenanceConfig {
+  kind: "arceus_maintenance"
+  target: "Jormungand"
+  executor: "codex"
+  repository: string
+  successCriteria: string[]
+  constraints: string[]
+  nonGoals: string[]
+  stages: ["Intake", "Plan", "Modify", "Test", "Code Review", "Ready"]
+  approvalPolicy: "external_and_irreversible"
+}
+
+export type ManagedProjectConfig = HiveMissionConfig | ArceusMaintenanceConfig
 
 export type ProjectStatus =
   | "active"
@@ -244,6 +353,7 @@ export interface Project {
   source: "dashboard" | "github_issue" | "github_pr"
   sourceRef?: string
   contextFiles: ProjectContextFile[]
+  managedConfig?: ManagedProjectConfig
   artifactIds: string[]
   workflowRunIds: string[]
   createdAt: string
@@ -341,6 +451,7 @@ export interface WorkflowRun {
   repository: string
   requirement: string
   contextFiles: ProjectContextFile[]
+  managedConfig?: ManagedProjectConfig
   source: "dashboard" | "github_issue" | "github_pr"
   sourceRef?: string
   currentStage: WorkflowStage
@@ -357,6 +468,7 @@ export interface WorkflowRun {
   revisions: WorkflowRevision[]
   eventLogStatus: EventLogStatus
   eventLogWarning?: string
+  managed?: ManagedRunSummary
   createdAt: string
   updatedAt: string
 }

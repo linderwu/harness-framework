@@ -18,6 +18,13 @@ import type {
   ProjectType
 } from "./types"
 import { getAgentLabel, normalizeAgentKind, openClawAgentKinds } from "./agents"
+import type { ContextPack } from "./context-builder"
+import {
+  createArceusMaintenanceEventSkills,
+  createHiveMissionEventSkills,
+  createManagedRunSummary
+} from "./managed-workflows"
+import type { ManagedProjectConfig } from "./types"
 
 const stages: WorkflowStage[] = [
   "intake",
@@ -84,6 +91,7 @@ export interface AgentInvocationInput {
   title: string
   fallbackBody: string
   runtimeSkillBundles?: RuntimeSkillBundleDescriptor[]
+  contextPack?: ContextPack
 }
 
 export type AgentInvoker = (
@@ -521,6 +529,7 @@ export function createWorkflowRun(input: {
   skillAssignments?: Record<string, AgentKind>
   designApprovalActor: ApprovalActorType
   verificationApprovalActor: ApprovalActorType
+  managedConfig?: ManagedProjectConfig
 }): WorkflowRun {
   const now = new Date().toISOString()
   const id = crypto.randomUUID()
@@ -530,8 +539,14 @@ export function createWorkflowRun(input: {
       ? createAgentTaskEventSkills()
       : projectType === "research"
         ? createResearchEventSkills()
-      : createDefaultEventSkills()
-  const selectedAgent = normalizeAgentKind(input.selectedAgent)
+        : projectType === "hive_mission"
+          ? createHiveMissionEventSkills()
+          : projectType === "arceus_maintenance"
+            ? createArceusMaintenanceEventSkills()
+            : createDefaultEventSkills()
+  const selectedAgent = input.managedConfig
+    ? "codex"
+    : normalizeAgentKind(input.selectedAgent)
   const stageModes = Object.fromEntries(
     stages.map((stage) => [stage, stage === "completed" ? "manual" : "hybrid"])
   ) as Record<WorkflowStage, ExecutionMode>
@@ -579,6 +594,7 @@ export function createWorkflowRun(input: {
     repository: input.repository,
     requirement: input.requirement,
     contextFiles: input.contextFiles ?? [],
+    managedConfig: input.managedConfig,
     source: "dashboard",
     currentStage: "intake",
     status: "pending",
@@ -593,6 +609,9 @@ export function createWorkflowRun(input: {
     agentRuns: [],
     revisions: [],
     eventLogStatus: "consistent",
+    managed: input.managedConfig
+      ? createManagedRunSummary(input.managedConfig)
+      : undefined,
     createdAt: now,
     updatedAt: now
   }
@@ -616,6 +635,10 @@ export async function advanceWorkflow(
 
   const nextRun = cloneRun(run)
   ensureEventSkillState(nextRun)
+
+  if (nextRun.projectType === "hive_mission" || nextRun.projectType === "arceus_maintenance") {
+    return nextRun
+  }
 
   if (nextRun.projectType === "agent_task") {
     return advanceAgentTask(nextRun, options)

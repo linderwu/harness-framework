@@ -59,7 +59,9 @@ test("project templates expose project types with phase labels", () => {
       "documentation",
       "diagnosis",
       "decision",
-      "agent_task"
+      "agent_task",
+      "hive_mission",
+      "arceus_maintenance"
     ]
   )
 

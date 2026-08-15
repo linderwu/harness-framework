@@ -6,6 +6,7 @@ import {
   withWorkflowRunLock
 } from "@/lib/store"
 import { decideApprovalGate } from "@/lib/workflow"
+import { getDefaultHiveServices } from "@/lib/hive-services"
 
 export async function POST(
   request: Request,
@@ -42,6 +43,16 @@ export async function POST(
         decideApprovalGate(latestRun, id, body.decision!, body.note),
         { expectedVersion: latestRun.version }
       )
+      if (nextRun.managed) {
+        const { scheduler } = getDefaultHiveServices()
+        const decidedGate = nextRun.approvalGates.find((gate) => gate.id === id)
+        await scheduler.enqueue({
+          workflowRunId: nextRun.id,
+          reason: "approval_decided",
+          idempotencyKey: `approval:${id}:${body.decision}:${decidedGate?.decidedAt ?? nextRun.updatedAt}`
+        })
+        void scheduler.runNext(nextRun.id)
+      }
       return NextResponse.json(nextRun)
     } catch (error) {
       if (error instanceof StateConflictError) {

@@ -4,11 +4,7 @@ import Image from "next/image"
 import { createPortal } from "react-dom"
 import {
   Bot,
-  BookOpenText,
-  Bug,
   Check,
-  Code2,
-  ChevronLeft,
   ChevronDown,
   ChevronRight,
   CircleDot,
@@ -39,6 +35,8 @@ import {
   useState
 } from "react"
 import type { CSSProperties } from "react"
+import { TaskConversation } from "@/components/task-conversation"
+import { TaskStatusSidebar } from "@/components/task-status-sidebar"
 import {
   agentProfiles,
   defaultAgentKind,
@@ -57,10 +55,10 @@ import type {
   WorkflowRun,
   WorkflowStage
 } from "@/lib/types"
-import {
-  getProjectTemplate,
-  projectTypeOptions
-} from "@/lib/project-templates"
+import type { ConversationEntry } from "@/lib/hive-memory/types"
+import type { HiveMemoryHealthSummary } from "@/lib/hive-health"
+import { getProjectTemplate } from "@/lib/project-templates"
+import { GlobalModeNav } from "@/components/global-mode-nav"
 import {
   buildProjectSelectorItems,
   filterProjectSelectorItems,
@@ -136,61 +134,12 @@ interface AgentHealthResponse {
 const sampleRequirement =
   "Build a Jormungandr dashboard that can select Arceus/OpenClaw agents and control design/verification with approval gates."
 
-const projectTypeVisuals: Record<
-  ProjectType,
-  { icon: typeof ClipboardList; accent: string; description: string }
-> = {
-  research: {
-    icon: Search,
-    accent: "violet",
-    description: "Collect evidence and produce a research report."
-  },
-  development: {
-    icon: Code2,
-    accent: "orange",
-    description: "Ship a feature from intake through verification."
-  },
-  testing: {
-    icon: Check,
-    accent: "green",
-    description: "Plan, execute, and document test coverage."
-  },
-  documentation: {
-    icon: BookOpenText,
-    accent: "cyan",
-    description: "Draft, review, and publish clear documentation."
-  },
-  diagnosis: {
-    icon: Bug,
-    accent: "red",
-    description: "Reproduce, diagnose, and verify a problem."
-  },
-  decision: {
-    icon: GitBranch,
-    accent: "blue",
-    description: "Compare options and record a confident decision."
-  },
-  agent_task: {
-    icon: Bot,
-    accent: "violet",
-    description: "Send a focused instruction to an agent."
-  }
-}
-
-const projectModeDescriptions: Record<ProjectType, string> = {
-  research: "Explore evidence and turn uncertainty into a clear report.",
-  development: "Move from idea to verified software with approval gates.",
-  testing: "Design coverage, execute scenarios, and preserve evidence.",
-  documentation: "Shape source material into a reviewed, publishable artifact.",
-  diagnosis: "Trace a failure from symptom to cause and recovery plan.",
-  decision: "Compare options, expose tradeoffs, and record the call.",
-  agent_task: "Send one focused instruction and receive an agent response."
-}
-
 export function HarnessDashboard({
-  initialState
+  initialState,
+  initialHiveHealth
 }: {
   initialState: HarnessState
+  initialHiveHealth: HiveMemoryHealthSummary
 }) {
   const [projects, setProjects] = useState<Project[]>(initialState.projects)
   const [runs, setRuns] = useState<WorkflowRun[]>(initialState.workflowRuns)
@@ -205,6 +154,7 @@ export function HarnessDashboard({
   const [isLoading, setIsLoading] = useState(false)
   const [isMutating, setIsMutating] = useState(false)
   const [mutationError, setMutationError] = useState<string | undefined>()
+  const [conversationEntries, setConversationEntries] = useState<ConversationEntry[]>([])
   const [openComposeSection, setOpenComposeSection] = useState<
     "requirement" | "automation" | undefined
   >()
@@ -490,17 +440,6 @@ export function HarnessDashboard({
     setMutationError(template.warning)
   }
 
-  function cycleProjectType(direction: -1 | 1) {
-    const currentIndex = projectTypeOptions.findIndex(
-      (option) => option.type === form.projectType
-    )
-    const nextIndex =
-      (currentIndex + direction + projectTypeOptions.length) %
-      projectTypeOptions.length
-
-    selectProjectType(projectTypeOptions[nextIndex].type)
-  }
-
   function updateSkillAssignment(skillId: string, agent: AgentKind) {
     setForm({
       ...form,
@@ -605,71 +544,38 @@ export function HarnessDashboard({
 
   return (
     <main className={`shell mode-${form.projectType}`}>
-      <button
-        aria-label="Previous project mode"
-        className="modeEdgeButton modeEdgeButtonLeft"
-        onClick={() => cycleProjectType(-1)}
-        title="Previous project mode"
-        type="button"
-      >
-        <ChevronLeft size={20} />
-        <span>Previous</span>
-      </button>
-      <button
-        aria-label="Next project mode"
-        className="modeEdgeButton modeEdgeButtonRight"
-        onClick={() => cycleProjectType(1)}
-        title="Next project mode"
-        type="button"
-      >
-        <span>Next</span>
-        <ChevronRight size={20} />
-      </button>
+      <GlobalModeNav
+        value={form.projectType}
+        onChange={selectProjectType}
+      />
       <header className="topbar">
         <div>
           <p className="eyebrow modeEyebrow">{getProjectTemplate(form.projectType).label} mode</p>
           <h1>{"Jormungand"}</h1>
         </div>
-        <button className="iconButton" onClick={refreshWorkspace} title="Refresh">
-          <RefreshCw size={18} />
-        </button>
+        <div className="topbarActions">
+          <a className={`hiveHealthBadge ${initialHiveHealth.status}`} href="/api/hive-memory/health" title={`Hive memory integrity: ${initialHiveHealth.integrity}`}>
+            <CircleDot size={13} />Memory {initialHiveHealth.status}
+          </a>
+          <button className="iconButton" onClick={refreshWorkspace} title="Refresh"><RefreshCw size={18} /></button>
+        </div>
       </header>
 
-      <section className="layoutGrid">
-        <form className="panel composePanel" onSubmit={createProject}>
+      <section className="taskWorkspaceGrid">
+        <aside className="taskNavigation">
+          <ProjectSelector
+            isLoading={isLoading}
+            items={projectSelectorItems}
+            selectedProjectId={selectedProject?.id}
+            onSelectProject={(item) => {
+              setSelectedProjectId(item.project.id)
+              setSelectedRunId(item.latestRun?.id)
+            }}
+          />
+          <form className="panel composePanel" onSubmit={createProject}>
           <div className="panelHeader">
             <CircleDot size={18} />
             <h2>New Project</h2>
-          </div>
-
-          <div className="modeSurface" aria-labelledby="mode-surface-heading">
-            <div className="modeSurfaceHeader">
-              <div>
-                <p className="eyebrow">Global mode</p>
-                <h3 id="mode-surface-heading">{getProjectTemplate(form.projectType).label}</h3>
-                <p>{projectModeDescriptions[form.projectType]}</p>
-              </div>
-              <span className="modeSurfacePhase">{getProjectTemplate(form.projectType).phases.length} phases</span>
-            </div>
-            <div className="modeDock" aria-label="Project modes">
-              {projectTypeOptions.map((option) => {
-                const visual = projectTypeVisuals[option.type]
-                const Icon = visual.icon
-                return (
-                  <button
-                    aria-label={option.label}
-                    aria-pressed={form.projectType === option.type}
-                    className={form.projectType === option.type ? "selected" : ""}
-                    key={option.type}
-                    onClick={() => selectProjectType(option.type)}
-                    type="button"
-                  >
-                    <Icon size={16} />
-                    <span>{option.label}</span>
-                  </button>
-                )
-              })}
-            </div>
           </div>
 
           <button
@@ -1107,37 +1013,41 @@ export function HarnessDashboard({
               </div>
             </div>
           ) : null}
-        </form>
+          </form>
+        </aside>
 
-        <section className="workspace">
-          <ProjectSelector
-            isLoading={isLoading}
-            items={projectSelectorItems}
-            selectedProjectId={selectedProject?.id}
-            onSelectProject={(item) => {
-              setSelectedProjectId(item.project.id)
-              setSelectedRunId(item.latestRun?.id)
-            }}
-          />
-
-          {selectedProject && selectedOverview ? (
-            <ProjectDetail
-              overview={selectedOverview}
-              selectedRun={selectedRun}
-              isMutating={isMutating}
-              onStartRun={startProjectRun}
-              onAdvance={advanceRun}
-              onDecideGate={decideGate}
-              onCancelRun={cancelRun}
-              onStopRun={stopRun}
+        <section className="conversationWorkspace">
+          {selectedRun ? (
+            <TaskConversation
+              key={selectedRun.id}
+              run={selectedRun}
+              initialEntries={[]}
+              allowedAgents={selectedRun.projectType === "arceus_maintenance" ? ["codex"] : agentProfiles.map((profile) => profile.id)}
+              onEntriesChanged={setConversationEntries}
             />
           ) : (
             <div className="panel emptyState">
               <Bot size={22} />
-              <p>Create a project to start.</p>
+              <p>Create or select a run to begin its task conversation.</p>
             </div>
           )}
+          {selectedProject && selectedOverview ? (
+            <details className="projectDetailsDisclosure">
+              <summary>Project and workflow details</summary>
+              <ProjectDetail
+                overview={selectedOverview}
+                selectedRun={selectedRun}
+                isMutating={isMutating}
+                onStartRun={startProjectRun}
+                onAdvance={advanceRun}
+                onDecideGate={decideGate}
+                onCancelRun={cancelRun}
+                onStopRun={stopRun}
+              />
+            </details>
+          ) : null}
         </section>
+        {selectedRun ? <TaskStatusSidebar run={selectedRun} entries={conversationEntries.filter((entry) => entry.workflowRunId === selectedRun.id)} /> : <aside className="panel taskStatusSidebar"><p>No active task.</p></aside>}
       </section>
     </main>
   )

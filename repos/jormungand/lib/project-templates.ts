@@ -7,7 +7,9 @@ export const projectTypeOptions: Array<{ type: ProjectType; label: string }> = [
   { type: "documentation", label: "Documentation" },
   { type: "diagnosis", label: "Diagnosis" },
   { type: "decision", label: "Decision" },
-  { type: "agent_task", label: "Agent Task" }
+  { type: "agent_task", label: "Agent Task" },
+  { type: "hive_mission", label: "Hive Mission" },
+  { type: "arceus_maintenance", label: "Arceus Maintenance" }
 ]
 
 export const projectTemplates: Record<ProjectType, ProjectTemplate> = {
@@ -66,6 +68,22 @@ export const projectTemplates: Record<ProjectType, ProjectTemplate> = {
     defaultArtifacts: ["log"],
     creationPrompts: ["Instruction"],
     defaultNextAction: "Run the agent task."
+  },
+  hive_mission: {
+    type: "hive_mission",
+    label: "Hive Mission",
+    phases: ["Goal", "Plan", "Dispatch", "Monitor", "Verify", "Completed"],
+    defaultArtifacts: ["requirement", "plan", "log", "test_report"],
+    creationPrompts: ["Mission name", "Goal", "Success criteria", "Repository scope", "Budgets"],
+    defaultNextAction: "Wake the Codex hive manager."
+  },
+  arceus_maintenance: {
+    type: "arceus_maintenance",
+    label: "Arceus Maintenance",
+    phases: ["Intake", "Plan", "Modify", "Test", "Code Review", "Ready"],
+    defaultArtifacts: ["requirement", "plan", "patch", "test_report", "code_review_report"],
+    creationPrompts: ["Maintenance goal", "Success criteria", "Constraints", "Non-goals"],
+    defaultNextAction: "Let Codex inspect Jormungand."
   }
 }
 
