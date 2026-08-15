@@ -35,6 +35,8 @@ import {
   useState
 } from "react"
 import type { CSSProperties } from "react"
+import { TaskConversation } from "@/components/task-conversation"
+import { TaskStatusSidebar } from "@/components/task-status-sidebar"
 import {
   agentProfiles,
   defaultAgentKind,
@@ -53,9 +55,8 @@ import type {
   WorkflowRun,
   WorkflowStage
 } from "@/lib/types"
-import {
-  getProjectTemplate,
-} from "@/lib/project-templates"
+import type { ConversationEntry } from "@/lib/hive-memory/types"
+import { getProjectTemplate } from "@/lib/project-templates"
 import { GlobalModeNav } from "@/components/global-mode-nav"
 import {
   buildProjectSelectorItems,
@@ -150,6 +151,7 @@ export function HarnessDashboard({
   const [isLoading, setIsLoading] = useState(false)
   const [isMutating, setIsMutating] = useState(false)
   const [mutationError, setMutationError] = useState<string | undefined>()
+  const [conversationEntries, setConversationEntries] = useState<ConversationEntry[]>([])
   const [openComposeSection, setOpenComposeSection] = useState<
     "requirement" | "automation" | undefined
   >()
@@ -553,8 +555,18 @@ export function HarnessDashboard({
         </button>
       </header>
 
-      <section className="layoutGrid">
-        <form className="panel composePanel" onSubmit={createProject}>
+      <section className="taskWorkspaceGrid">
+        <aside className="taskNavigation">
+          <ProjectSelector
+            isLoading={isLoading}
+            items={projectSelectorItems}
+            selectedProjectId={selectedProject?.id}
+            onSelectProject={(item) => {
+              setSelectedProjectId(item.project.id)
+              setSelectedRunId(item.latestRun?.id)
+            }}
+          />
+          <form className="panel composePanel" onSubmit={createProject}>
           <div className="panelHeader">
             <CircleDot size={18} />
             <h2>New Project</h2>
@@ -995,37 +1007,41 @@ export function HarnessDashboard({
               </div>
             </div>
           ) : null}
-        </form>
+          </form>
+        </aside>
 
-        <section className="workspace">
-          <ProjectSelector
-            isLoading={isLoading}
-            items={projectSelectorItems}
-            selectedProjectId={selectedProject?.id}
-            onSelectProject={(item) => {
-              setSelectedProjectId(item.project.id)
-              setSelectedRunId(item.latestRun?.id)
-            }}
-          />
-
-          {selectedProject && selectedOverview ? (
-            <ProjectDetail
-              overview={selectedOverview}
-              selectedRun={selectedRun}
-              isMutating={isMutating}
-              onStartRun={startProjectRun}
-              onAdvance={advanceRun}
-              onDecideGate={decideGate}
-              onCancelRun={cancelRun}
-              onStopRun={stopRun}
+        <section className="conversationWorkspace">
+          {selectedRun ? (
+            <TaskConversation
+              key={selectedRun.id}
+              run={selectedRun}
+              initialEntries={[]}
+              allowedAgents={selectedRun.projectType === "arceus_maintenance" ? ["codex"] : agentProfiles.map((profile) => profile.id)}
+              onEntriesChanged={setConversationEntries}
             />
           ) : (
             <div className="panel emptyState">
               <Bot size={22} />
-              <p>Create a project to start.</p>
+              <p>Create or select a run to begin its task conversation.</p>
             </div>
           )}
+          {selectedProject && selectedOverview ? (
+            <details className="projectDetailsDisclosure">
+              <summary>Project and workflow details</summary>
+              <ProjectDetail
+                overview={selectedOverview}
+                selectedRun={selectedRun}
+                isMutating={isMutating}
+                onStartRun={startProjectRun}
+                onAdvance={advanceRun}
+                onDecideGate={decideGate}
+                onCancelRun={cancelRun}
+                onStopRun={stopRun}
+              />
+            </details>
+          ) : null}
         </section>
+        {selectedRun ? <TaskStatusSidebar run={selectedRun} entries={conversationEntries.filter((entry) => entry.workflowRunId === selectedRun.id)} /> : <aside className="panel taskStatusSidebar"><p>No active task.</p></aside>}
       </section>
     </main>
   )

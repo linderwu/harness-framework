@@ -164,3 +164,22 @@ test("global navigator renders the shared nine-mode option list", () => {
   assert.match(globalNav, /scrollIntoView/)
   assert.doesNotMatch(globalNav, /const projectTypeOptions/)
 })
+
+test("selected task uses a conversation-first three-column workspace", () => {
+  assert.match(dashboard, /className="taskWorkspaceGrid"/)
+  assert.match(dashboard, /<TaskConversation[\s\S]*<TaskStatusSidebar/)
+  assert.match(dashboard, /<ProjectSelector[\s\S]*className="panel composePanel"/)
+  assert.match(dashboard, /initialEntries=/)
+  assert.match(dashboard, /allowedAgents=/)
+})
+
+test("task conversation is durable, targeted, and polls only while pending", () => {
+  const conversationSource = readFileSync("components/task-conversation.tsx", "utf8")
+  assert.match(conversationSource, /crypto\.randomUUID\(\)/)
+  assert.match(conversationSource, /targetAgent/)
+  assert.match(conversationSource, /queued|running/)
+  assert.match(conversationSource, /3_000/)
+  assert.match(conversationSource, /\/conversation/)
+  assert.match(conversationSource, /artifactIds/)
+  assert.match(conversationSource, /memoryIds/)
+})

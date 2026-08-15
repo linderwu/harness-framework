@@ -86,3 +86,12 @@ test("global mode navigator spans nine modes and scrolls at narrow widths", () =
     /@media \(max-width: 980px\)[\s\S]*?\.globalModeNav\s*\{[\s\S]*?grid-auto-flow:\s*column;[\s\S]*?overflow-x:\s*auto;/
   )
 })
+
+test("task workspace makes conversation the largest responsive column", () => {
+  const rule = ruleBody(/\.taskWorkspaceGrid/, ".taskWorkspaceGrid")
+  assert.match(rule, /minmax\(240px, 0\.72fr\) minmax\(520px, 2fr\) minmax\(260px, 0\.8fr\)/)
+  assert.match(ruleBody(/\.taskConversation/, ".taskConversation"), /min-height:\s*70vh/)
+  const tablet = css.slice(css.indexOf("@media (max-width: 980px)"))
+  assert.match(tablet, /\.conversationWorkspace\s*\{[\s\S]*?order:\s*-1/)
+  assert.match(tablet, /\.taskNavigation[\s\S]*?details|\.taskStatusSidebar[\s\S]*?details/)
+})

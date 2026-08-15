@@ -1665,6 +1665,72 @@ small,
   overflow: hidden;
 }
 
+.taskWorkspaceGrid {
+  display: grid;
+  gap: 18px;
+  grid-template-columns: minmax(240px, 0.72fr) minmax(520px, 2fr) minmax(260px, 0.8fr);
+  margin: 0 auto;
+  max-width: 1440px;
+  min-height: 0;
+  width: 100%;
+}
+
+.taskNavigation,
+.conversationWorkspace {
+  align-content: start;
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+
+.taskNavigation .projectSelector { min-height: 96px; }
+.taskNavigation .composePanel { height: auto; position: static; }
+
+.taskConversation {
+  display: grid;
+  grid-template-rows: auto minmax(320px, 1fr) auto auto;
+  min-height: 70vh;
+  overflow: hidden;
+  padding: 0;
+}
+
+.taskConversationHeader {
+  align-items: center;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  justify-content: space-between;
+  padding: 16px 18px;
+}
+
+.taskConversationHeader h2 { margin-top: 3px; }
+.conversationEntries { display: grid; gap: 12px; list-style: none; margin: 0; overflow-y: auto; padding: 18px; }
+.conversationEntry { align-self: start; background: #f1f5f9; border: 1px solid var(--border); border-radius: 10px; max-width: 88%; padding: 12px 14px; }
+.conversationEntry.user { background: #ecfeff; border-color: #a5f3fc; justify-self: end; }
+.conversationEntry.critical { border-color: #f87171; }
+.conversationEntry p { line-height: 1.55; margin: 8px 0 0; white-space: pre-wrap; }
+.conversationMeta { align-items: center; color: var(--muted); display: flex; font-size: 11px; gap: 8px; text-transform: capitalize; }
+.conversationMeta strong { color: var(--ink); margin-right: auto; }
+.conversationRefs { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.conversationRefs a, .taskStatusSidebar a { color: #0e7490; display: block; font-size: 12px; }
+.conversationEmpty { align-self: center; color: var(--muted); justify-self: center; }
+
+.conversationComposer { align-items: end; background: rgba(248, 250, 252, 0.98); border-top: 1px solid var(--border); display: grid; gap: 10px; grid-template-columns: minmax(120px, 0.32fr) minmax(0, 1fr) auto; padding: 14px; }
+.conversationComposer label { display: grid; gap: 5px; }
+.conversationComposer label > span { color: var(--muted); font-size: 11px; font-weight: 800; text-transform: uppercase; }
+.conversationComposer select, .conversationComposer textarea { border: 1px solid var(--border); border-radius: 7px; font: inherit; padding: 9px; }
+.conversationComposer textarea { min-height: 58px; resize: vertical; }
+
+.taskStatusSidebar { align-content: start; display: grid; gap: 8px; }
+.taskStatusSidebar details { border-bottom: 1px solid var(--border); padding: 7px 0 12px; }
+.taskStatusSidebar summary { align-items: center; display: flex; font-weight: 800; gap: 7px; }
+.taskStatusSidebar dl { display: grid; gap: 8px; }
+.taskStatusSidebar dl div { display: flex; justify-content: space-between; }
+.taskStatusSidebar dt { color: var(--muted); }
+.taskStatusSidebar dd { font-weight: 700; margin: 0; text-transform: capitalize; }
+.projectDetailsDisclosure { border: 1px solid rgba(103, 232, 249, 0.24); border-radius: 8px; }
+.projectDetailsDisclosure > summary { color: #dff8ff; font-weight: 800; padding: 12px 14px; }
+.projectDetailsDisclosure[open] > summary { border-bottom: 1px solid rgba(103, 232, 249, 0.24); }
+
 .gateRow,
 .agentRow {
   align-items: center;
@@ -2180,6 +2246,11 @@ pre {
     scroll-behavior: smooth;
   }
 
+  .taskWorkspaceGrid { grid-template-columns: 1fr; }
+  .conversationWorkspace { order: -1; }
+  .taskNavigation details,
+  .taskStatusSidebar details { overflow: hidden; }
+
   .projectTypeGrid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
@@ -2209,6 +2280,10 @@ pre {
     align-items: stretch;
     flex-direction: column;
   }
+
+  .taskConversation { min-height: 72vh; }
+  .conversationEntry { max-width: 96%; }
+  .conversationComposer { bottom: 0; grid-template-columns: 1fr; position: sticky; z-index: 4; }
 
   .projectActionStack {
     align-items: stretch;
