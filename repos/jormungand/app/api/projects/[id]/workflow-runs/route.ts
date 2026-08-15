@@ -60,7 +60,7 @@ export async function POST(
         reason: "mission_created",
         idempotencyKey: `mission-created:${runningRun.id}`
       })
-      void scheduler.runNext(runningRun.id)
+      await scheduler.runNext(runningRun.id)
       return NextResponse.json(runningRun, { status: 201 })
     } catch (error) {
       const failedRun = await upsertWorkflowRun({
