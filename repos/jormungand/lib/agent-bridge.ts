@@ -150,6 +150,42 @@ export async function invokeConfiguredAgent(
   }
 }
 
+export async function invokeConfiguredHiveManager(input: {
+  run: WorkflowRun
+  contextPack: ContextPack
+  cycle: number
+}) {
+  const result = await invokeConfiguredAgent({
+    run: input.run,
+    executor: "codex",
+    stage: input.run.currentStage,
+    artifactType: "log",
+    title: `Hive Manager Cycle ${input.cycle}`,
+    fallbackBody: "Return a manager proposal for the current mission state.",
+    contextPack: input.contextPack,
+    skill: {
+      id: "hive_manager.cycle",
+      eventType: "closeout",
+      stage: input.run.currentStage,
+      name: "Hive Manager Cycle",
+      purpose: "Observe the mission and propose validated control-plane actions.",
+      trigger: "A persisted manager wake event is ready.",
+      allowedActors: ["codex"],
+      inputs: ["bounded manager context pack"],
+      outputs: ["structured manager proposal"],
+      constraints: [
+        "Do not execute external or irreversible effects.",
+        "Do not raise permissions or bypass approval policy."
+      ],
+      gates: ["Jormungand validates every proposed action."],
+      knowledgeSources: ["manager context pack"],
+      verificationRules: ["Output is one JSON object matching the manager contract."]
+    }
+  })
+  if (result.status === "failed") throw new Error(result.body)
+  return result.body
+}
+
 async function pollBridgeRunByIdempotencyKey(input: {
   bridgeUrl: string
   executor: AgentKind

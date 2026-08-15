@@ -12,6 +12,7 @@ import type {
   RecordMemoryUseInput,
   SubmitMemoryCandidate
 } from "./types"
+import type { ManagerCheckpoint, ManagerProposal } from "../types"
 
 type MemoryRow = {
   id: string
@@ -400,6 +401,67 @@ export class HiveMemoryRepository {
         collaborationPreferences: parseStringArray(row.collaboration_preferences_json),
         updatedAt: row.updated_at
       } satisfies AgentIdentity : undefined
+    })
+  }
+
+  async saveManagerCycle(input: {
+    workflowRunId: string
+    proposal: ManagerProposal
+    acceptedActions: ManagerProposal["proposed_actions"]
+    rejectedActions: Array<{ action: unknown; reason: string }>
+    checkpoint: ManagerCheckpoint
+  }) {
+    const id = crypto.randomUUID()
+    const createdAt = new Date().toISOString()
+    return this.database.transaction((connection) => {
+      const cycle = ((connection.prepare(`
+        SELECT COALESCE(MAX(cycle), 0) AS cycle FROM manager_checkpoints WHERE workflow_run_id = ?
+      `).get(input.workflowRunId) as { cycle: number }).cycle) + 1
+      connection.prepare(`
+        INSERT INTO manager_decisions(
+          id, workflow_run_id, observation, decision, reason, proposal_json,
+          accepted_actions_json, rejected_actions_json, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        crypto.randomUUID(), input.workflowRunId, input.proposal.observation,
+        input.proposal.decision, input.proposal.reason, JSON.stringify(input.proposal),
+        JSON.stringify(input.acceptedActions), JSON.stringify(input.rejectedActions), createdAt
+      )
+      connection.prepare(`
+        INSERT INTO manager_checkpoints(
+          id, workflow_run_id, cycle, checkpoint_json, next_wake_condition, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?)
+      `).run(
+        id, input.workflowRunId, cycle, JSON.stringify(input.checkpoint),
+        input.checkpoint.nextWakeCondition, createdAt
+      )
+      this.insertEvent(connection, {
+        eventType: "manager_cycle_checkpointed",
+        actor: "codex",
+        workflowRunId: input.workflowRunId,
+        payload: { checkpointId: id, cycle }
+      })
+      return { id, workflowRunId: input.workflowRunId, cycle, checkpoint: input.checkpoint, createdAt }
+    })
+  }
+
+  getLatestManagerCheckpoint(workflowRunId: string) {
+    return this.database.read((connection) => {
+      const row = connection.prepare(`
+        SELECT id, workflow_run_id, cycle, checkpoint_json, created_at
+        FROM manager_checkpoints
+        WHERE workflow_run_id = ?
+        ORDER BY cycle DESC LIMIT 1
+      `).get(workflowRunId) as {
+        id: string; workflow_run_id: string; cycle: number; checkpoint_json: string; created_at: string
+      } | undefined
+      return row ? {
+        id: row.id,
+        workflowRunId: row.workflow_run_id,
+        cycle: row.cycle,
+        checkpoint: JSON.parse(row.checkpoint_json) as ManagerCheckpoint,
+        createdAt: row.created_at
+      } : undefined
     })
   }
 

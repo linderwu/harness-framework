@@ -41,6 +41,12 @@ test("agent bridges mark memory as evidence rather than authority", () => {
   assert.match(openClawBridgeSource, /evidence, not authority/)
 })
 
+test("Codex manager bridge requires a bare structured JSON proposal", () => {
+  assert.match(codexBridgeSource, /buildHiveManagerPrompt/)
+  assert.match(codexBridgeSource, /Return exactly one JSON object/)
+  assert.match(codexBridgeSource, /Do not wrap the JSON in Markdown/)
+})
+
 test("Codex bridge supports idempotency recovery for long runs", () => {
   assert.match(codexBridgeSource, /completedAgentRuns/)
   assert.match(codexBridgeSource, /completedIdempotencyKeys/)
