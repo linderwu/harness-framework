@@ -69,6 +69,7 @@ test("Codex bridge supports idempotency recovery for long runs", () => {
 })
 
 test("OpenClaw bridge accepts the compatibility token and enforces its local skill lock", () => {
+  assert.match(openClawBridgeSource, /from "\.\/openclaw-session\.mjs"/)
   assert.match(openClawBridgeSource, /OPENCLAW_GATEWAY_TOKEN/)
   assert.match(openClawBridgeSource, /OPENCLAW_RUNTIME_SKILL_LOCK/)
   assert.match(openClawBridgeSource, /bundle_not_locked/)
@@ -82,9 +83,15 @@ test("OpenClaw deployment pins SSH hosts and deploys the skill lock", () => {
   assert.match(openClawDeploySource, /StrictHostKeyChecking=yes/)
   assert.match(openClawDeploySource, /\.ssh\\known_hosts/)
   assert.match(openClawDeploySource, /skill\.lock\.json/)
-  assert.match(openClawDeploySource, /openclaw-session\.mjs/)
-  assert.match(openClawDeploySource, /__SESSION_B64__/)
+  assert.match(
+    openClawDeploySource,
+    /printf '%s' '__SESSION_B64__' \| base64 -d > "\$bridge_dir\/openclaw-session\.mjs"/
+  )
   assert.match(openClawDeploySource, /openclaw-session\.mjs\.previous/)
+  assert.match(
+    openClawDeploySource,
+    /\$remoteScript = \$remoteScript\.Replace\("__SESSION_B64__", \$sessionB64\)/
+  )
   assert.doesNotMatch(openClawDeploySource, /StrictHostKeyChecking=accept-new/)
   assert.doesNotMatch(openClawDeploySource, /SITE_AUTH_PASSWORD/)
   assert.match(openClawDeploySource, /127\.0\.0\.1:4188/)
