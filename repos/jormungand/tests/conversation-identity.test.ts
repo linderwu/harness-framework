@@ -10,15 +10,25 @@ import test from "node:test"
 import { unboundConversationId } from "../lib/conversation"
 
 async function ensureCompiledAlias() {
-  const { lstat, mkdir, symlink } = await import("node:fs/promises")
+  const { lstat, mkdir, realpath, rm, symlink } = await import("node:fs/promises")
   const tmpRoot = join(process.cwd(), ".tmp-tests")
   const scopedRoot = join(tmpRoot, "node_modules", "@")
   const libLink = join(scopedRoot, "lib")
+  const expectedTarget = join(tmpRoot, "lib")
 
   await mkdir(scopedRoot, { recursive: true })
   const existingLink = await lstat(libLink).catch(() => undefined)
-  if (existingLink) return
-  await symlink(join(tmpRoot, "lib"), libLink, "junction").catch(async (error) => {
+  const existingTarget = existingLink?.isSymbolicLink()
+    ? await realpath(libLink).catch(() => undefined)
+    : undefined
+  const expectedRealTarget = await realpath(expectedTarget).catch(() => undefined)
+  if (existingTarget && expectedRealTarget && existingTarget === expectedRealTarget) {
+    return
+  }
+  if (existingLink) {
+    await rm(libLink, { recursive: true, force: true })
+  }
+  await symlink(expectedTarget, libLink, "junction").catch(async (error) => {
     if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error
   })
 }

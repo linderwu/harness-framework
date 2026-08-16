@@ -48,6 +48,46 @@ test("OpenClaw session derivation ignores caller-supplied session keys", async (
   )
 })
 
+test("OpenClaw session keys stay bounded and isolate long identities", async () => {
+  const helper = await loadOpenClawSessionHelper()
+  const maxSessionKeyLength = 160
+  const longIdentity = `conversation:${"x".repeat(2400)}`
+  const longWorkflowRunId = `workflow:${"y".repeat(2400)}`
+  const longFallbackId = `fallback:${"z".repeat(2400)}`
+
+  const conversationKey = helper.deriveOpenClawSessionKey({
+    mainAgent: "gengar",
+    conversationId: longIdentity
+  })
+  const repeatedConversationKey = helper.deriveOpenClawSessionKey({
+    mainAgent: "gengar",
+    conversationId: longIdentity
+  })
+  const otherAgentConversationKey = helper.deriveOpenClawSessionKey({
+    mainAgent: "rowlet",
+    conversationId: longIdentity
+  })
+  const workflowKey = helper.deriveOpenClawSessionKey({
+    mainAgent: "gengar",
+    workflowRunId: longWorkflowRunId
+  })
+  const fallbackKey = helper.deriveOpenClawSessionKey({
+    mainAgent: "gengar",
+    fallbackId: longFallbackId
+  })
+
+  assert.equal(conversationKey, repeatedConversationKey)
+  assert.notEqual(conversationKey, otherAgentConversationKey)
+  for (const key of [
+    conversationKey,
+    otherAgentConversationKey,
+    workflowKey,
+    fallbackKey
+  ]) {
+    assert.ok(key.length <= maxSessionKeyLength)
+  }
+})
+
 test("OpenClaw conversation history is shape-checked and capped at the bridge boundary", async () => {
   const helper = await loadOpenClawSessionHelper()
   const longContent = `${"x".repeat(1500)}\n${"y".repeat(1500)}`

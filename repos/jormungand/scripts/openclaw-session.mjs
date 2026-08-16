@@ -1,6 +1,11 @@
+import { createHash } from "node:crypto"
+
 const defaultMainAgent = "rowlet"
 const conversationHistoryLimit = 12
 const conversationEntryCharacterLimit = 1200
+const sessionSegmentCharacterLimit = 96
+const sessionKeyCharacterLimit = 160
+const sessionKeyHashLength = 16
 
 export function deriveOpenClawSessionKey(input = {}) {
   const mainAgent = sanitizeSessionSegment(
@@ -10,7 +15,9 @@ export function deriveOpenClawSessionKey(input = {}) {
   )
 
   if (typeof input.conversationId === "string" && input.conversationId.trim()) {
-    return `agent:${mainAgent}:harness-conversation-${sanitizeSessionSegment(input.conversationId)}`
+    return capSessionKey(
+      `agent:${mainAgent}:harness-conversation-${sanitizeSessionSegment(input.conversationId)}`
+    )
   }
 
   const fallbackIdentity =
@@ -18,7 +25,9 @@ export function deriveOpenClawSessionKey(input = {}) {
       ? input.workflowRunId
       : input.fallbackId
 
-  return `agent:${mainAgent}:harness-${sanitizeSessionSegment(fallbackIdentity)}`
+  return capSessionKey(
+    `agent:${mainAgent}:harness-${sanitizeSessionSegment(fallbackIdentity)}`
+  )
 }
 
 export function sanitizeConversationHistory(value) {
@@ -56,5 +65,29 @@ function sanitizeSessionSegment(value) {
   const sanitized = String(value ?? "")
     .replaceAll(/[^A-Za-z0-9._-]/g, "-")
 
-  return sanitized || "bundle"
+  return capSessionSegment(sanitized || "bundle")
+}
+
+function capSessionSegment(value) {
+  if (value.length <= sessionSegmentCharacterLimit) {
+    return value
+  }
+
+  const hash = createHash("sha256")
+    .update(value, "utf8")
+    .digest("hex")
+    .slice(0, sessionKeyHashLength)
+  return `${value.slice(0, sessionSegmentCharacterLimit - hash.length - 1)}-${hash}`
+}
+
+function capSessionKey(value) {
+  if (value.length <= sessionKeyCharacterLimit) {
+    return value
+  }
+
+  const hash = createHash("sha256")
+    .update(value, "utf8")
+    .digest("hex")
+    .slice(0, sessionKeyHashLength)
+  return `${value.slice(0, sessionKeyCharacterLimit - hash.length - 1)}-${hash}`
 }
