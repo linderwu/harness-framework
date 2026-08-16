@@ -201,7 +201,7 @@ export function TaskConversation(props: {
         <div><p className="eyebrow">Conversation</p><h2>{props.run?.projectName ?? "Unbound conversation"}</h2></div>
         <div className="taskConversationHeaderActions">
           {props.run ? <span className={`status ${props.run.status}`}>{props.run.status.replaceAll("_", " ")}</span> : <span className="conversationBindingStatus">No project or task · Codex {formatSessionStatus(session)}</span>}
-          <button className="compactPanelButton" disabled={isConversationActionPending} onClick={() => void startNewConversation()} type="button">
+          <button aria-label="New conversation" className="compactPanelButton" disabled={isConversationActionPending} onClick={() => void startNewConversation()} type="button">
             {isLoadingConversation ? "Loading..." : isStartingConversation ? "Starting..." : "New conversation"}
           </button>
         </div>

@@ -1,9 +1,11 @@
 import assert from "node:assert/strict"
 import { readFileSync } from "node:fs"
-import { mkdtemp, mkdir, rm, symlink } from "node:fs/promises"
+import { lstat, mkdir, mkdtemp, realpath, rm, symlink } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { join, resolve } from "node:path"
+import { pathToFileURL } from "node:url"
 import test, { describe } from "node:test"
+import type { AgentKind, WorkflowEventSkill } from "../lib/types"
 import {
   createConversationService,
   type ConversationBinding,
@@ -86,10 +88,23 @@ async function ensureCompiledAlias() {
   const tmpRoot = join(process.cwd(), ".tmp-tests")
   const scopedRoot = join(tmpRoot, "node_modules", "@")
   const libLink = join(scopedRoot, "lib")
+  const expectedTarget = join(tmpRoot, "lib")
 
   await mkdir(scopedRoot, { recursive: true })
-  await rm(libLink, { recursive: true, force: true }).catch(() => undefined)
-  await symlink(join(tmpRoot, "lib"), libLink, "junction")
+  const existingLink = await lstat(libLink).catch(() => undefined)
+  const existingTarget = existingLink?.isSymbolicLink()
+    ? await realpath(libLink).catch(() => undefined)
+    : undefined
+  const expectedRealTarget = await realpath(expectedTarget).catch(() => undefined)
+  if (existingTarget && expectedRealTarget && existingTarget === expectedRealTarget) {
+    return
+  }
+  if (existingLink) {
+    await rm(libLink, { recursive: true, force: true })
+  }
+  await symlink(expectedTarget, libLink, "junction").catch(async (error) => {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error
+  })
 }
 
 function clearRouteModuleCache(routeModulePath: string) {
@@ -125,10 +140,7 @@ async function importRouteWithIsolatedDataDir<T>(t: test.TestContext, routeModul
   return await import(routeModulePath) as T
 }
 
-function restoreEnv(
-  t: test.TestContext,
-  key: "CODEX_BRIDGE_URL" | "CODEX_BRIDGE_TOKEN"
-) {
+function restoreEnv(t: test.TestContext, key: string) {
   const previousValue = process.env[key]
   t.after(() => {
     if (previousValue === undefined) {
@@ -137,6 +149,19 @@ function restoreEnv(
       process.env[key] = previousValue
     }
   })
+}
+
+async function loadOpenClawSessionHelper() {
+  const loadModule = new Function(
+    "modulePath",
+    "return import(modulePath)"
+  ) as (modulePath: string) => Promise<unknown>
+  return await loadModule(pathToFileURL(resolve("scripts/openclaw-session.mjs")).href) as {
+    deriveOpenClawSessionKey: (input: {
+      mainAgent?: string
+      conversationId?: unknown
+    }) => string
+  }
 }
 
 describe("conversation route contracts", { concurrency: false }, () => {
@@ -319,4 +344,121 @@ test("reading Codex conversation state uses the requested conversation id sessio
 test("OpenClaw bridge session identity is derived from stable conversation input instead of only workflow ids", () => {
   assert.match(openClawBridgeSource, /sessionKey/)
   assert.match(openClawBridgeSource, /payload\.conversationId|payload\.sessionKey/)
+})
+
+test("unbound OpenClaw routing preserves conversation and agent identity at the bridge boundary", { concurrency: false }, async (t) => {
+  await ensureCompiledAlias()
+  const { invokeConfiguredAgent } = await import("../lib/agent-bridge") as typeof import("../lib/agent-bridge")
+  const { repository } = await repositoryFixture(t)
+  for (const key of [
+    "OPENCLAW_BRIDGE_URL",
+    "OPENCLAW_BRIDGE_TOKEN",
+    "OPENCLAW_GATEWAY_TOKEN",
+    "OPENCLAW_A2A_COMMAND"
+  ]) {
+    restoreEnv(t, key)
+  }
+  process.env.OPENCLAW_BRIDGE_URL = "http://openclaw.test"
+  delete process.env.OPENCLAW_A2A_COMMAND
+
+  const bridgePayloads: Array<{
+    conversationId?: string
+    executor?: AgentKind
+    mainAgent?: string
+    idempotencyKey?: string
+  }> = []
+  installFetchMock(t, async (input, init) => {
+    assert.equal(String(input), "http://openclaw.test/agent-runs")
+    assert.equal(init?.method, "POST")
+    const payload = JSON.parse(String(init?.body)) as typeof bridgePayloads[number]
+    bridgePayloads.push(payload)
+    return jsonResponse({
+      id: `bridge-run-${bridgePayloads.length}`,
+      status: "completed",
+      output: `OpenClaw reply ${bridgePayloads.length}`,
+      idempotencyKey: payload.idempotencyKey
+    })
+  })
+
+  const routeSkill = {
+    id: "conversation.unbound_limited",
+    eventType: "requirement_intake",
+    stage: "intake",
+    name: "Unbound limited conversation",
+    purpose: "Reply safely without binding a workflow run.",
+    trigger: "An operator posted to an unbound conversation.",
+    allowedActors: ["openclaw.gengar"],
+    inputs: ["conversation text"],
+    outputs: ["one response"],
+    constraints: ["Do not mutate workflow state."],
+    gates: ["Jormungand retains workflow authority."],
+    knowledgeSources: ["persisted conversation"],
+    verificationRules: ["Return one concise response."]
+  } satisfies WorkflowEventSkill
+
+  const service = createConversationService({
+    repository,
+    getRun: async () => undefined,
+    buildContext: async () => undefined,
+    invokeAgent: async () => ({ status: "completed" as const, body: "unused" }),
+    persistRawArtifact: async () => "unused-artifact",
+    enqueueManagerWake: async () => undefined,
+    routeUnbound: async ({ conversationId, targetAgent, content }) => {
+      const syntheticRun = createWorkflowRun({
+        projectId: "",
+        projectName: "Unbound conversation",
+        repository: "",
+        requirement: content,
+        selectedAgent: targetAgent,
+        designApprovalActor: "human",
+        verificationApprovalActor: "human"
+      })
+      const result = await invokeConfiguredAgent({
+        run: syntheticRun,
+        executor: targetAgent,
+        stage: "intake",
+        artifactType: "log",
+        title: "Unbound limited conversation",
+        fallbackBody: "Fallback response",
+        conversationId,
+        skill: { ...routeSkill, allowedActors: [targetAgent] }
+      })
+      return { status: result.status, body: result.body }
+    }
+  })
+
+  const post = (conversationId: string, targetAgent: AgentKind, sequence: number) => service.postUnboundMessage({
+    conversationId,
+    targetAgent,
+    content: `Message ${sequence}`,
+    idempotencyKey: `openclaw-boundary-${sequence}`
+  })
+  await post("conversation-a", "openclaw.gengar", 1)
+  await post("conversation-a", "openclaw.gengar", 2)
+  await post("conversation-a", "openclaw.rowlet", 3)
+  await post("conversation-b", "openclaw.gengar", 4)
+
+  assert.equal(bridgePayloads.length, 4)
+  assert.deepEqual(
+    bridgePayloads.map((payload) => ({
+      conversationId: payload.conversationId,
+      executor: payload.executor,
+      mainAgent: payload.mainAgent
+    })),
+    [
+      { conversationId: "conversation-a", executor: "openclaw.gengar", mainAgent: "gengar" },
+      { conversationId: "conversation-a", executor: "openclaw.gengar", mainAgent: "gengar" },
+      { conversationId: "conversation-a", executor: "openclaw.rowlet", mainAgent: "rowlet" },
+      { conversationId: "conversation-b", executor: "openclaw.gengar", mainAgent: "gengar" }
+    ]
+  )
+
+  const sessionHelper = await loadOpenClawSessionHelper()
+  const sessionKeys = bridgePayloads.map((payload) => sessionHelper.deriveOpenClawSessionKey({
+    mainAgent: payload.mainAgent,
+    conversationId: payload.conversationId
+  }))
+  assert.equal(sessionKeys[0], sessionKeys[1])
+  assert.notEqual(sessionKeys[0], sessionKeys[2])
+  assert.notEqual(sessionKeys[0], sessionKeys[3])
 })
