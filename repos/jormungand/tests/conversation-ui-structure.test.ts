@@ -34,6 +34,19 @@ test("conversation submission stays gated until the server identity hydrates", (
   assert.match(taskConversation, /if \(requireConversationId && !data\.conversationId\) \{[\s\S]*throw new Error\(/)
 })
 
+test("new conversation invalidates stale poll responses before they can write state", () => {
+  assert.match(taskConversation, /const requestGeneration = useRef\(0\)/)
+  assert.match(taskConversation, /const generation = requestGeneration\.current/)
+  assert.ok((taskConversation.match(/generation !== requestGeneration\.current/g) ?? []).length >= 2)
+  assert.match(taskConversation, /function invalidateConversationRequests\(\) \{[\s\S]*requestGeneration\.current \+= 1[\s\S]*pollingInFlight\.current = undefined/)
+
+  const startNewConversationIndex = taskConversation.indexOf("async function startNewConversation")
+  assert.notEqual(startNewConversationIndex, -1)
+  const startNewConversationBody = taskConversation.slice(startNewConversationIndex, taskConversation.indexOf("\n  const isTurnRunning", startNewConversationIndex))
+  assert.match(startNewConversationBody, /invalidateConversationRequests\(\)/)
+  assert.match(taskConversation, /useEffect\(\(\) => \(\) => \{[\s\S]*invalidateConversationRequests\(\)[\s\S]*\}, \[\]\)/)
+})
+
 test("dashboard resets bound workspace selection when a new conversation starts", () => {
   assert.match(dashboard, /const \[conversationVersion, setConversationVersion\] = useState\(0\)/)
   assert.match(dashboard, /function handleNewConversation\(\)/)

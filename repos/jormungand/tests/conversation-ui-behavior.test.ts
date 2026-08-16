@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { lstat, mkdir, symlink } from "node:fs/promises"
+import { lstat, mkdir, realpath, rm, symlink } from "node:fs/promises"
 import { join } from "node:path"
 import { createElement } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
@@ -11,11 +11,23 @@ async function ensureCompiledAlias() {
   const tmpRoot = join(process.cwd(), ".tmp-tests")
   const scopedRoot = join(tmpRoot, "node_modules", "@")
   const libLink = join(scopedRoot, "lib")
+  const expectedTarget = join(tmpRoot, "lib")
 
   await mkdir(scopedRoot, { recursive: true })
-  if (!(await lstat(libLink).catch(() => undefined))) {
-    await symlink(join(tmpRoot, "lib"), libLink, "junction")
+  const existingLink = await lstat(libLink).catch(() => undefined)
+  const existingTarget = existingLink?.isSymbolicLink()
+    ? await realpath(libLink).catch(() => undefined)
+    : undefined
+  const expectedRealTarget = await realpath(expectedTarget).catch(() => undefined)
+  if (existingTarget && expectedRealTarget && existingTarget === expectedRealTarget) {
+    return
   }
+  if (existingLink) {
+    await rm(libLink, { recursive: true, force: true })
+  }
+  await symlink(expectedTarget, libLink, "junction").catch(async (error) => {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error
+  })
 }
 
 async function loadTaskConversation() {

@@ -35,17 +35,29 @@ export function TaskConversation(props: {
   const [isControlling, setIsControlling] = useState(false)
   const [isLoadingConversation, setIsLoadingConversation] = useState(true)
   const [isStartingConversation, setIsStartingConversation] = useState(false)
-  const pollingInFlight = useRef<ReturnType<typeof loadConversation> | undefined>(undefined)
+  const requestGeneration = useRef(0)
+  const pollingInFlight = useRef<{
+    generation: number
+    promise: ReturnType<typeof loadConversation>
+  } | undefined>(undefined)
   const pending = useMemo(() => entries.some((entry) => entry.status === "queued" || entry.status === "running"), [entries])
   const activeConversationId = isUnbound ? conversationId : runId
+
+  function invalidateConversationRequests() {
+    requestGeneration.current += 1
+    pollingInFlight.current = undefined
+  }
 
   function loadConversationWithGuard(path: string, requireConversationId: boolean) {
     const inFlight = pollingInFlight.current
     if (inFlight) return inFlight
 
-    const request = loadConversation(path, requireConversationId)
+    const request = {
+      generation: requestGeneration.current,
+      promise: loadConversation(path, requireConversationId)
+    }
     pollingInFlight.current = request
-    request.then(
+    request.promise.then(
       () => {
         if (pollingInFlight.current === request) pollingInFlight.current = undefined
       },
@@ -58,8 +70,10 @@ export function TaskConversation(props: {
 
   useEffect(() => {
     let active = true
-    void loadConversationWithGuard(conversationPath, isUnbound).then((data) => {
-      if (!active) return
+    const request = loadConversationWithGuard(conversationPath, isUnbound)
+    const { generation } = request
+    void request.promise.then((data) => {
+      if (!active || generation !== requestGeneration.current) return
       setConversationId(data.conversationId ?? runId)
       setEntries(data.entries)
       setAllowedAgents(data.allowedAgents)
@@ -67,32 +81,53 @@ export function TaskConversation(props: {
       setSession(data.session)
       setEvents(data.events ?? [])
       onEntriesChanged(data.entries)
-    }).catch((loadError) => active && setError(formatError(loadError))).finally(() => {
-      if (!active) return
+    }).catch((loadError) => {
+      if (!active || generation !== requestGeneration.current) return
+      setError(formatError(loadError))
+    }).finally(() => {
+      if (!active || generation !== requestGeneration.current) return
       setIsLoadingConversation(false)
     })
-    return () => { active = false }
+    return () => {
+      active = false
+      invalidateConversationRequests()
+    }
   }, [conversationPath, isUnbound, onEntriesChanged, runId])
 
   useEffect(() => {
     if (!pending) return
+    let active = true
     const timer = window.setInterval(() => {
       if (pollingInFlight.current) return
-      void loadConversationWithGuard(conversationPath, isUnbound).then((data) => {
+      const request = loadConversationWithGuard(conversationPath, isUnbound)
+      const { generation } = request
+      void request.promise.then((data) => {
+        if (!active || generation !== requestGeneration.current) return
         setConversationId(data.conversationId ?? runId)
         setEntries(data.entries)
         setSession(data.session)
         setEvents(data.events ?? [])
         onEntriesChanged(data.entries)
-      }).catch((loadError) => setError(formatError(loadError)))
+      }).catch((loadError) => {
+        if (!active || generation !== requestGeneration.current) return
+        setError(formatError(loadError))
+      })
     }, isUnbound ? 1_200 : 3_000)
-    return () => window.clearInterval(timer)
+    return () => {
+      active = false
+      window.clearInterval(timer)
+    }
   }, [conversationPath, isUnbound, onEntriesChanged, pending, runId])
+
+  useEffect(() => () => {
+    invalidateConversationRequests()
+  }, [])
 
   async function submit(event?: FormEvent) {
     event?.preventDefault()
     const message = content.trim()
     if (!message || allowedAgents.length === 0 || !activeConversationId || isLoadingConversation || isStartingConversation) return
+    const generation = requestGeneration.current
     let idempotencyKey: string
     try {
       idempotencyKey = crypto.randomUUID()
@@ -132,12 +167,14 @@ export function TaskConversation(props: {
         events?: CodexConversationEvent[]
       }
       if (!response.ok || !result.userEntry) throw new Error(result.error ?? "Message dispatch failed")
+      if (generation !== requestGeneration.current) return
       setConversationId(result.conversationId ?? activeConversationId)
       setEntries((current) => result.entries ?? mergeResult(current, optimistic.id, result.userEntry!, result.responseEntry))
       setSession(result.session)
       setEvents(result.events ?? [])
       if (result.binding) props.onBound?.(result.binding)
     } catch (submitError) {
+      if (generation !== requestGeneration.current) return
       setEntries((current) => current.map((entry) => entry.id === optimistic.id ? { ...entry, status: "failed" } : entry))
       setError(formatError(submitError))
     }
@@ -145,6 +182,7 @@ export function TaskConversation(props: {
 
   async function control(action: "interrupt" | "resume" | "stop") {
     if (!activeConversationId || isLoadingConversation || isStartingConversation) return
+    const generation = requestGeneration.current
     setIsControlling(true)
     setError(undefined)
     try {
@@ -155,12 +193,14 @@ export function TaskConversation(props: {
       })
       const result = await response.json() as CodexConversationState & { error?: string }
       if (!response.ok) throw new Error(result.error ?? "Codex control request failed")
+      if (generation !== requestGeneration.current) return
       setConversationId(result.conversationId ?? activeConversationId)
       setEntries(result.entries)
       setSession(result.session)
       setEvents(result.events ?? [])
       onEntriesChanged(result.entries)
     } catch (controlError) {
+      if (generation !== requestGeneration.current) return
       setError(formatError(controlError))
     } finally {
       setIsControlling(false)
@@ -170,6 +210,7 @@ export function TaskConversation(props: {
   async function startNewConversation() {
     if (isStartingConversation) return
 
+    invalidateConversationRequests()
     setIsStartingConversation(true)
     setError(undefined)
     try {
