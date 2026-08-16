@@ -101,8 +101,8 @@ Manual HTTP probes against local app:
 
 ```powershell
 curl.exe -i http://127.0.0.1:3000/api/conversation
-curl.exe -i -X POST http://127.0.0.1:3000/api/conversation/control -H "Content-Type: application/json" --data "{\"action\":\"resume\"}"
-curl.exe -i -X POST http://127.0.0.1:3000/api/conversation -H "Content-Type: application/json" --data "{\"conversationId\":\"conv-1\",\"content\":\"hello\",\"idempotencyKey\":\"msg-1\",\"targetAgent\":\"codex\"}"
+curl.exe -i -X POST http://127.0.0.1:3000/api/conversation/control -H "Content-Type: application/json" --data '{"action":"resume"}'
+curl.exe -i -X POST http://127.0.0.1:3000/api/conversation -H "Content-Type: application/json" --data '{"conversationId":"conv-1","content":"hello","idempotencyKey":"msg-1","targetAgent":"codex"}'
 ```
 
 Expected after implementation:
@@ -277,15 +277,19 @@ Deployment readiness:
 Basic Auth:
 
 ```powershell
-curl.exe -i https://<deployment-host>/
-curl.exe -i -u "<user>:<pass>" https://<deployment-host>/
-curl.exe -i https://<deployment-host>/health
+$pair = '{0}:{1}' -f $env:JORMUNGAND_BASIC_AUTH_USER, $env:JORMUNGAND_BASIC_AUTH_PASS
+$bytes = [System.Text.Encoding]::UTF8.GetBytes($pair)
+$basicAuth = 'Basic {0}' -f [Convert]::ToBase64String($bytes)
+curl.exe -i https://<deployment-host>/ -H "Authorization: $basicAuth"
+curl.exe -i https://<deployment-host>/health -H "Authorization: $basicAuth"
 ```
+
+Do not put real credentials directly on the command line. Use environment variables, a secret-backed header, or `Get-Credential`, and avoid writing secrets into shell history, CI logs, or screenshots.
 
 Expected:
 
 - `/` without credentials => HTTP `401` or the configured auth challenge
-- `/` with valid credentials => HTTP `200`
+- `/` with valid credentials supplied through a header or secret-backed mechanism => HTTP `200`
 - `/health` status matches the existing site-auth policy; if public, it remains public and returns JSON
 
 ## Browser Cases

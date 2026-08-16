@@ -20,6 +20,7 @@ import type { WorkflowRun } from "../lib/types"
 import { createWorkflowRun } from "../lib/workflow"
 
 const openClawBridgeSource = readFileSync("scripts/openclaw-bridge.mjs", "utf8")
+let routeTestEnvPromise: Promise<{ dataDir: string }> | undefined
 
 function createRun(projectType: WorkflowRun["projectType"] = "hive_mission") {
   return createWorkflowRun({
@@ -92,7 +93,47 @@ async function ensureCompiledAlias() {
   await symlink(join(tmpRoot, "lib"), libLink, "junction")
 }
 
-test("conversation GET returns a conversation id for durable client continuity", async () => {
+async function ensureIsolatedRouteEnv(t: test.TestContext) {
+  if (routeTestEnvPromise) {
+    return routeTestEnvPromise
+  }
+
+  routeTestEnvPromise = (async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "jormungand-route-env-"))
+    const previousDataDir = process.env.JORMUNGAND_DATA_DIR
+    process.env.JORMUNGAND_DATA_DIR = dataDir
+    await ensureCompiledAlias()
+    t.after(async () => {
+      if (previousDataDir === undefined) {
+        delete process.env.JORMUNGAND_DATA_DIR
+      } else {
+        process.env.JORMUNGAND_DATA_DIR = previousDataDir
+      }
+      await rm(dataDir, { recursive: true, force: true })
+      routeTestEnvPromise = undefined
+    })
+    return { dataDir }
+  })()
+
+  return routeTestEnvPromise
+}
+
+function restoreEnv(
+  t: test.TestContext,
+  key: "CODEX_BRIDGE_URL" | "CODEX_BRIDGE_TOKEN"
+) {
+  const previousValue = process.env[key]
+  t.after(() => {
+    if (previousValue === undefined) {
+      delete process.env[key]
+    } else {
+      process.env[key] = previousValue
+    }
+  })
+}
+
+test("conversation GET returns a conversation id for durable client continuity", async (t) => {
+  await ensureIsolatedRouteEnv(t)
   await ensureCompiledAlias()
   const { GET: getConversationRoute } = await import("../app/api/conversation/route")
   const response = await getConversationRoute()
@@ -103,21 +144,43 @@ test("conversation GET returns a conversation id for durable client continuity",
 })
 
 test("conversation service exposes an explicit new-conversation command", async (t) => {
-  const { service } = await conversationFixture(t)
+  const { repository, service } = await conversationFixture(t)
+  await repository.insertConversation({
+    workflowRunId: unboundConversationId,
+    role: "user",
+    agentId: "codex",
+    content: "Keep this transcript",
+    importance: "normal",
+    status: "completed",
+    artifactIds: [],
+    memoryIds: [],
+    idempotencyKey: "existing-transcript"
+  })
+  const existingEntries = repository.listConversation(unboundConversationId)
+  const startNewConversation = (service as unknown as {
+    startNewConversation?: () => unknown
+  }).startNewConversation
 
-  assert.equal(
-    typeof (service as unknown as { startNewConversation?: unknown }).startNewConversation,
-    "function"
-  )
+  if (typeof startNewConversation !== "function") {
+    assert.fail("ConversationService must expose startNewConversation() for the new conversation flow.")
+  }
+
+  const result = startNewConversation()
+  const newConversationId = typeof result === "string"
+    ? result
+    : (result as { conversationId?: string } | undefined)?.conversationId
+
+  assert.equal(typeof newConversationId, "string")
+  assert.notEqual(newConversationId, unboundConversationId)
+  assert.deepEqual(repository.listConversation(unboundConversationId), existingEntries)
+  assert.deepEqual(repository.listConversation(String(newConversationId)), [])
 })
 
 test("posting a Codex message stores entries under the requested conversation id", async (t) => {
   const { repository } = await repositoryFixture(t)
+  restoreEnv(t, "CODEX_BRIDGE_URL")
+  restoreEnv(t, "CODEX_BRIDGE_TOKEN")
   process.env.CODEX_BRIDGE_URL = "http://codex.test"
-  t.after(() => {
-    delete process.env.CODEX_BRIDGE_URL
-    delete process.env.CODEX_BRIDGE_TOKEN
-  })
   installFetchMock(t, async (input) => {
     const url = String(input)
     if (url === "http://codex.test/sessions") {
@@ -193,11 +256,9 @@ test("reading Codex conversation state uses the requested conversation id sessio
     cursor: 7
   })
 
+  restoreEnv(t, "CODEX_BRIDGE_URL")
+  restoreEnv(t, "CODEX_BRIDGE_TOKEN")
   process.env.CODEX_BRIDGE_URL = "http://codex.test"
-  t.after(() => {
-    delete process.env.CODEX_BRIDGE_URL
-    delete process.env.CODEX_BRIDGE_TOKEN
-  })
   installFetchMock(t, async (input) => {
     const url = String(input)
     if (url === "http://codex.test/sessions/bridge-session-b/events?after=7") {
@@ -229,7 +290,8 @@ test("reading Codex conversation state uses the requested conversation id sessio
   assert.equal(state.session?.id, "bridge-session-b")
 })
 
-test("conversation control route requires a conversation id for Codex session controls", async () => {
+test("conversation control route requires a conversation id for Codex session controls", async (t) => {
+  await ensureIsolatedRouteEnv(t)
   await ensureCompiledAlias()
   const { POST: postConversationControlRoute } = await import("../app/api/conversation/control/route")
   const response = await postConversationControlRoute(
