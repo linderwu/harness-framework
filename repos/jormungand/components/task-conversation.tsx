@@ -17,40 +17,51 @@ export function TaskConversation(props: {
   allowedAgents: AgentKind[]
   onEntriesChanged: (entries: ConversationEntry[]) => void
   onBound?: (binding: ConversationBinding) => void
+  onNewConversation?: () => void
 }) {
   const runId = props.run?.id
   const isUnbound = !runId
+  const defaultConversationId = runId ?? "global:unbound-conversation"
   const conversationPath = runId ? `/api/workflow-runs/${runId}/conversation` : "/api/conversation"
   const onEntriesChanged = props.onEntriesChanged
   const [entries, setEntries] = useState(props.initialEntries)
   const initialAllowedAgents = props.allowedAgents
   const [allowedAgents, setAllowedAgents] = useState(initialAllowedAgents)
   const [targetAgent, setTargetAgent] = useState<AgentKind>(initialAllowedAgents[0] ?? "codex")
+  const [conversationId, setConversationId] = useState(defaultConversationId)
   const [content, setContent] = useState("")
   const [error, setError] = useState<string>()
   const [session, setSession] = useState<CodexConversationState["session"]>()
   const [events, setEvents] = useState<CodexConversationEvent[]>([])
   const [isControlling, setIsControlling] = useState(false)
+  const [isLoadingConversation, setIsLoadingConversation] = useState(true)
+  const [isStartingConversation, setIsStartingConversation] = useState(false)
   const pending = useMemo(() => entries.some((entry) => entry.status === "queued" || entry.status === "running"), [entries])
+  const activeConversationId = conversationId || defaultConversationId
 
   useEffect(() => {
     let active = true
     void loadConversation(conversationPath).then((data) => {
       if (!active) return
+      setConversationId(data.conversationId ?? defaultConversationId)
       setEntries(data.entries)
       setAllowedAgents(data.allowedAgents)
       setTargetAgent((current) => data.allowedAgents.includes(current) ? current : data.allowedAgents[0] ?? "codex")
       setSession(data.session)
       setEvents(data.events ?? [])
       onEntriesChanged(data.entries)
-    }).catch((loadError) => active && setError(formatError(loadError)))
+    }).catch((loadError) => active && setError(formatError(loadError))).finally(() => {
+      if (!active) return
+      setIsLoadingConversation(false)
+    })
     return () => { active = false }
-  }, [conversationPath, onEntriesChanged])
+  }, [conversationPath, defaultConversationId, onEntriesChanged])
 
   useEffect(() => {
     if (!pending) return
     const timer = window.setInterval(() => {
       void loadConversation(conversationPath).then((data) => {
+        setConversationId(data.conversationId ?? defaultConversationId)
         setEntries(data.entries)
         setSession(data.session)
         setEvents(data.events ?? [])
@@ -58,7 +69,7 @@ export function TaskConversation(props: {
       }).catch((loadError) => setError(formatError(loadError)))
     }, isUnbound ? 1_200 : 3_000)
     return () => window.clearInterval(timer)
-  }, [conversationPath, isUnbound, onEntriesChanged, pending])
+  }, [conversationPath, defaultConversationId, isUnbound, onEntriesChanged, pending])
 
   async function submit(event?: FormEvent) {
     event?.preventDefault()
@@ -72,7 +83,7 @@ export function TaskConversation(props: {
     }
     const optimistic: ConversationEntry = {
       id: `optimistic:${idempotencyKey}`,
-      workflowRunId: runId ?? "global:unbound-conversation",
+      workflowRunId: activeConversationId,
       role: "user",
       agentId: targetAgent,
       content: message,
@@ -90,9 +101,10 @@ export function TaskConversation(props: {
       const response = await fetch(conversationPath, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ targetAgent, content: message, idempotencyKey })
+        body: JSON.stringify({ conversationId: activeConversationId, targetAgent, content: message, idempotencyKey })
       })
       const result = await response.json() as {
+        conversationId?: string
         error?: string
         userEntry?: ConversationEntry
         responseEntry?: ConversationEntry
@@ -102,6 +114,7 @@ export function TaskConversation(props: {
         events?: CodexConversationEvent[]
       }
       if (!response.ok || !result.userEntry) throw new Error(result.error ?? "Message dispatch failed")
+      setConversationId(result.conversationId ?? activeConversationId)
       setEntries((current) => result.entries ?? mergeResult(current, optimistic.id, result.userEntry!, result.responseEntry))
       setSession(result.session)
       setEvents(result.events ?? [])
@@ -119,10 +132,11 @@ export function TaskConversation(props: {
       const response = await fetch("/api/conversation/control", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action })
+        body: JSON.stringify({ action, conversationId: activeConversationId })
       })
       const result = await response.json() as CodexConversationState & { error?: string }
       if (!response.ok) throw new Error(result.error ?? "Codex control request failed")
+      setConversationId(result.conversationId ?? activeConversationId)
       setEntries(result.entries)
       setSession(result.session)
       setEvents(result.events ?? [])
@@ -134,12 +148,43 @@ export function TaskConversation(props: {
     }
   }
 
+  async function startNewConversation() {
+    if (isStartingConversation) return
+
+    setIsStartingConversation(true)
+    setError(undefined)
+    try {
+      const response = await fetch("/api/conversation/new", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" }
+      })
+      const result = await response.json() as { conversationId?: string; error?: string }
+      if (!response.ok || !result.conversationId) {
+        throw new Error(result.error ?? "New conversation could not be started")
+      }
+      setConversationId(result.conversationId)
+      setEntries([])
+      setAllowedAgents(initialAllowedAgents)
+      setTargetAgent((current) => initialAllowedAgents.includes(current) ? current : initialAllowedAgents[0] ?? "codex")
+      setContent("")
+      setSession(undefined)
+      setEvents([])
+      onEntriesChanged([])
+      props.onNewConversation?.()
+    } catch (startError) {
+      setError(formatError(startError))
+    } finally {
+      setIsStartingConversation(false)
+    }
+  }
+
   const isTurnRunning = isUnbound && session?.turnStatus === "inProgress"
   const isPaused = isUnbound && session?.status === "paused"
   const visibleActivityEvents = events
     .filter((event) => event.type !== "assistant_delta")
     .slice(-18)
   const liveAssistantText = session?.liveText?.trim()
+  const isConversationActionPending = isLoadingConversation || isStartingConversation
 
   function handleComposerKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
     if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing || event.keyCode === 229) {
@@ -154,7 +199,12 @@ export function TaskConversation(props: {
     <section className="panel taskConversation" aria-label="Conversation">
       <header className="taskConversationHeader">
         <div><p className="eyebrow">Conversation</p><h2>{props.run?.projectName ?? "Unbound conversation"}</h2></div>
-        {props.run ? <span className={`status ${props.run.status}`}>{props.run.status.replaceAll("_", " ")}</span> : <span className="conversationBindingStatus">No project or task · Codex {formatSessionStatus(session)}</span>}
+        <div className="taskConversationHeaderActions">
+          {props.run ? <span className={`status ${props.run.status}`}>{props.run.status.replaceAll("_", " ")}</span> : <span className="conversationBindingStatus">No project or task · Codex {formatSessionStatus(session)}</span>}
+          <button className="compactPanelButton" disabled={isConversationActionPending} onClick={() => void startNewConversation()} type="button">
+            {isLoadingConversation ? "Loading..." : isStartingConversation ? "Starting..." : "New conversation"}
+          </button>
+        </div>
       </header>
       {isUnbound && session ? (
         <section className="codexActivity" aria-label="Codex activity">
@@ -206,7 +256,11 @@ export function TaskConversation(props: {
 
 async function loadConversation(path: string) {
   const response = await fetch(path, { cache: "no-store" })
-  const data = await response.json() as CodexConversationState & { error?: string }
+  const data = await response.json() as Partial<CodexConversationState> & {
+    entries: ConversationEntry[]
+    allowedAgents: AgentKind[]
+    error?: string
+  }
   if (!response.ok) throw new Error(data.error ?? "Conversation could not be loaded")
   return data
 }

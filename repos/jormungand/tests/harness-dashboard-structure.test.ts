@@ -260,7 +260,8 @@ test("conversation composer sends on Enter but preserves Shift+Enter and IME com
 })
 
 test("conversation remains available without a selected project and can adopt manager binding", () => {
-  assert.match(dashboard, /key=\{selectedRun\?\.id \?\? "unbound"\}/)
+  assert.match(dashboard, /const \[conversationVersion, setConversationVersion\] = useState\(0\)/)
+  assert.match(dashboard, /key=\{`\$\{selectedRun\?\.id \?\? "unbound"\}:\$\{conversationVersion\}`\}/)
   assert.match(dashboard, /onBound=\{\(binding\)/)
   assert.match(dashboard, /setSelectedProjectId\(binding\.projectId\)/)
   assert.match(dashboard, /setSelectedRunId\(binding\.workflowRunId\)/)

@@ -163,6 +163,7 @@ export function HarnessDashboard({
   const [mobilePanel, setMobilePanel] = useState<MobilePanel>()
   const [mutationError, setMutationError] = useState<string | undefined>()
   const [conversationEntries, setConversationEntries] = useState<ConversationEntry[]>([])
+  const [conversationVersion, setConversationVersion] = useState(0)
   const [openComposeSection, setOpenComposeSection] = useState<
     "requirement" | "automation" | undefined
   >()
@@ -553,6 +554,13 @@ export function HarnessDashboard({
     }
 
     throw new Error(("error" in data && data.error) || "Project mutation failed")
+  }
+
+  function handleNewConversation() {
+    setConversationEntries([])
+    setSelectedProjectId(undefined)
+    setSelectedRunId(undefined)
+    setConversationVersion((current) => current + 1)
   }
 
   useEffect(() => {
@@ -1112,7 +1120,7 @@ export function HarnessDashboard({
             <button aria-expanded={mobilePanel === "monitoring"} onClick={() => { setIsMonitoringExpanded(true); setMobilePanel("monitoring") }} type="button"><CircleDot size={18} /><span>Status</span></button>
           </nav>
           <TaskConversation
-            key={selectedRun?.id ?? "unbound"}
+            key={`${selectedRun?.id ?? "unbound"}:${conversationVersion}`}
             run={selectedRun}
             initialEntries={[]}
             allowedAgents={selectedRun ? agentProfiles.map((profile) => profile.id) : agentProfiles.map((profile) => profile.id)}
@@ -1121,6 +1129,7 @@ export function HarnessDashboard({
               setSelectedProjectId(binding.projectId)
               setSelectedRunId(binding.workflowRunId)
             }}
+            onNewConversation={handleNewConversation}
           />
           {selectedProject && selectedOverview ? (
             <details className="projectDetailsDisclosure">
