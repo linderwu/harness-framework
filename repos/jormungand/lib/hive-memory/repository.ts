@@ -602,6 +602,7 @@ export class HiveMemoryRepository {
 
   async updateConversation(input: {
     id: string
+    content?: string
     status?: ConversationEntry["status"]
     artifactIds?: string[]
     memoryIds?: string[]
@@ -609,11 +610,13 @@ export class HiveMemoryRepository {
     await this.database.write((connection) => {
       connection.prepare(`
         UPDATE conversation_entries SET
+          content = COALESCE(?, content),
           status = COALESCE(?, status),
           artifact_ids_json = COALESCE(?, artifact_ids_json),
           memory_ids_json = COALESCE(?, memory_ids_json)
         WHERE id = ?
       `).run(
+        input.content ?? null,
         input.status ?? null,
         input.artifactIds ? JSON.stringify(input.artifactIds) : null,
         input.memoryIds ? JSON.stringify(input.memoryIds) : null,
@@ -621,6 +624,104 @@ export class HiveMemoryRepository {
       )
     })
     return this.getConversationEntry(input.id)
+  }
+
+  getCodexSession(conversationId: string) {
+    return this.database.read((connection) => {
+      const row = connection.prepare(`
+        SELECT * FROM codex_sessions WHERE conversation_id = ?
+      `).get(conversationId) as {
+        conversation_id: string
+        bridge_session_id: string
+        codex_thread_id: string
+        status: string
+        turn_status: string
+        current_turn_id: string | null
+        cursor: number
+        created_at: string
+        updated_at: string
+      } | undefined
+
+      if (!row) return undefined
+      return {
+        conversationId: row.conversation_id,
+        bridgeSessionId: row.bridge_session_id,
+        codexThreadId: row.codex_thread_id,
+        status: row.status,
+        turnStatus: row.turn_status,
+        currentTurnId: row.current_turn_id ?? undefined,
+        cursor: row.cursor,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at
+      }
+    })
+  }
+
+  async upsertCodexSession(input: {
+    conversationId: string
+    bridgeSessionId: string
+    codexThreadId: string
+    status: string
+    turnStatus: string
+    currentTurnId?: string
+    cursor?: number
+  }) {
+    const now = new Date().toISOString()
+    await this.database.write((connection) => {
+      connection.prepare(`
+        INSERT INTO codex_sessions(
+          conversation_id, bridge_session_id, codex_thread_id, status,
+          turn_status, current_turn_id, cursor, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(conversation_id) DO UPDATE SET
+          bridge_session_id = excluded.bridge_session_id,
+          codex_thread_id = excluded.codex_thread_id,
+          status = excluded.status,
+          turn_status = excluded.turn_status,
+          current_turn_id = excluded.current_turn_id,
+          cursor = excluded.cursor,
+          updated_at = excluded.updated_at
+      `).run(
+        input.conversationId,
+        input.bridgeSessionId,
+        input.codexThreadId,
+        input.status,
+        input.turnStatus,
+        input.currentTurnId ?? null,
+        input.cursor ?? 0,
+        now,
+        now
+      )
+    })
+    return this.getCodexSession(input.conversationId)
+  }
+
+  async updateCodexSession(input: {
+    conversationId: string
+    status?: string
+    turnStatus?: string
+    currentTurnId?: string
+    cursor?: number
+  }) {
+    await this.database.write((connection) => {
+      connection.prepare(`
+        UPDATE codex_sessions SET
+          status = COALESCE(?, status),
+          turn_status = COALESCE(?, turn_status),
+          current_turn_id = COALESCE(?, current_turn_id),
+          cursor = COALESCE(?, cursor),
+          updated_at = ?
+        WHERE conversation_id = ?
+      `).run(
+        input.status ?? null,
+        input.turnStatus ?? null,
+        input.currentTurnId ?? null,
+        input.cursor ?? null,
+        new Date().toISOString(),
+        input.conversationId
+      )
+    })
+    return this.getCodexSession(input.conversationId)
   }
 
   async createManagerTask(input: {

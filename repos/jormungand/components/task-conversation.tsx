@@ -2,6 +2,10 @@
 
 import { FormEvent, KeyboardEvent, useEffect, useMemo, useState } from "react"
 import { Send } from "lucide-react"
+import type {
+  CodexConversationEvent,
+  CodexConversationState
+} from "@/lib/codex-conversation"
 import { getAgentLabel } from "@/lib/agents"
 import type { ConversationBinding } from "@/lib/conversation"
 import type { ConversationEntry } from "@/lib/hive-memory/types"
@@ -15,13 +19,18 @@ export function TaskConversation(props: {
   onBound?: (binding: ConversationBinding) => void
 }) {
   const runId = props.run?.id
+  const isUnbound = !runId
   const conversationPath = runId ? `/api/workflow-runs/${runId}/conversation` : "/api/conversation"
   const onEntriesChanged = props.onEntriesChanged
   const [entries, setEntries] = useState(props.initialEntries)
-  const [allowedAgents, setAllowedAgents] = useState(props.allowedAgents)
-  const [targetAgent, setTargetAgent] = useState<AgentKind>(props.allowedAgents[0] ?? "codex")
+  const initialAllowedAgents = isUnbound ? ["codex" as AgentKind] : props.allowedAgents
+  const [allowedAgents, setAllowedAgents] = useState(initialAllowedAgents)
+  const [targetAgent, setTargetAgent] = useState<AgentKind>(initialAllowedAgents[0] ?? "codex")
   const [content, setContent] = useState("")
   const [error, setError] = useState<string>()
+  const [session, setSession] = useState<CodexConversationState["session"]>()
+  const [events, setEvents] = useState<CodexConversationEvent[]>([])
+  const [isControlling, setIsControlling] = useState(false)
   const pending = useMemo(() => entries.some((entry) => entry.status === "queued" || entry.status === "running"), [entries])
 
   useEffect(() => {
@@ -31,6 +40,8 @@ export function TaskConversation(props: {
       setEntries(data.entries)
       setAllowedAgents(data.allowedAgents)
       setTargetAgent((current) => data.allowedAgents.includes(current) ? current : data.allowedAgents[0] ?? "codex")
+      setSession(data.session)
+      setEvents(data.events ?? [])
       onEntriesChanged(data.entries)
     }).catch((loadError) => active && setError(formatError(loadError)))
     return () => { active = false }
@@ -41,17 +52,24 @@ export function TaskConversation(props: {
     const timer = window.setInterval(() => {
       void loadConversation(conversationPath).then((data) => {
         setEntries(data.entries)
+        setSession(data.session)
+        setEvents(data.events ?? [])
         onEntriesChanged(data.entries)
       }).catch((loadError) => setError(formatError(loadError)))
-    }, 3_000)
+    }, isUnbound ? 1_200 : 3_000)
     return () => window.clearInterval(timer)
-  }, [conversationPath, onEntriesChanged, pending])
+  }, [conversationPath, isUnbound, onEntriesChanged, pending])
 
   async function submit(event?: FormEvent) {
     event?.preventDefault()
     const message = content.trim()
     if (!message || allowedAgents.length === 0) return
-    const idempotencyKey = crypto.randomUUID()
+    let idempotencyKey: string
+    try {
+      idempotencyKey = crypto.randomUUID()
+    } catch {
+      idempotencyKey = `conversation-${Date.now()}-${Math.random().toString(36).slice(2)}`
+    }
     const optimistic: ConversationEntry = {
       id: `optimistic:${idempotencyKey}`,
       workflowRunId: runId ?? "global:unbound-conversation",
@@ -79,15 +97,49 @@ export function TaskConversation(props: {
         userEntry?: ConversationEntry
         responseEntry?: ConversationEntry
         binding?: ConversationBinding
+        entries?: ConversationEntry[]
+        session?: CodexConversationState["session"]
+        events?: CodexConversationEvent[]
       }
       if (!response.ok || !result.userEntry) throw new Error(result.error ?? "Message dispatch failed")
-      setEntries((current) => mergeResult(current, optimistic.id, result.userEntry!, result.responseEntry))
+      setEntries((current) => result.entries ?? mergeResult(current, optimistic.id, result.userEntry!, result.responseEntry))
+      setSession(result.session)
+      setEvents(result.events ?? [])
       if (result.binding) props.onBound?.(result.binding)
     } catch (submitError) {
       setEntries((current) => current.map((entry) => entry.id === optimistic.id ? { ...entry, status: "failed" } : entry))
       setError(formatError(submitError))
     }
   }
+
+  async function control(action: "interrupt" | "resume" | "stop") {
+    setIsControlling(true)
+    setError(undefined)
+    try {
+      const response = await fetch("/api/conversation/control", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action })
+      })
+      const result = await response.json() as CodexConversationState & { error?: string }
+      if (!response.ok) throw new Error(result.error ?? "Codex control request failed")
+      setEntries(result.entries)
+      setSession(result.session)
+      setEvents(result.events ?? [])
+      onEntriesChanged(result.entries)
+    } catch (controlError) {
+      setError(formatError(controlError))
+    } finally {
+      setIsControlling(false)
+    }
+  }
+
+  const isTurnRunning = isUnbound && session?.turnStatus === "inProgress"
+  const isPaused = isUnbound && session?.status === "paused"
+  const visibleActivityEvents = events
+    .filter((event) => event.type !== "assistant_delta")
+    .slice(-18)
+  const liveAssistantText = session?.liveText?.trim()
 
   function handleComposerKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
     if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing || event.keyCode === 229) {
@@ -102,8 +154,29 @@ export function TaskConversation(props: {
     <section className="panel taskConversation" aria-label="Conversation">
       <header className="taskConversationHeader">
         <div><p className="eyebrow">Conversation</p><h2>{props.run?.projectName ?? "Unbound conversation"}</h2></div>
-        {props.run ? <span className={`status ${props.run.status}`}>{props.run.status.replaceAll("_", " ")}</span> : <span className="conversationBindingStatus">No project or task</span>}
+        {props.run ? <span className={`status ${props.run.status}`}>{props.run.status.replaceAll("_", " ")}</span> : <span className="conversationBindingStatus">No project or task · Codex {formatSessionStatus(session)}</span>}
       </header>
+      {isUnbound && session ? (
+        <section className="codexActivity" aria-label="Codex activity">
+          <div className="codexActivityHeader">
+            <div>
+              <p className="eyebrow">Live Codex session</p>
+              <strong>{formatSessionStatus(session)}</strong>
+            </div>
+            <div className="codexActivityActions">
+              {isTurnRunning ? <button className="compactPanelButton" disabled={isControlling} onClick={() => void control("interrupt")} type="button">Pause</button> : null}
+              {isPaused ? <button className="compactPanelButton" disabled={isControlling} onClick={() => void control("resume")} type="button">Continue</button> : null}
+              {session.status !== "stopped" && session.status !== "failed" && (isTurnRunning || isPaused) ? <button className="compactPanelButton danger" disabled={isControlling} onClick={() => void control("stop")} type="button">Stop</button> : null}
+            </div>
+          </div>
+          {visibleActivityEvents.length ? (
+            <ol className="codexActivityEvents" aria-live="polite">
+              {visibleActivityEvents.map((event) => <li key={event.id}><span>{formatActivityType(event.type)}</span><p>{event.message ?? event.text ?? "Codex activity"}</p></li>)}
+            </ol>
+          ) : null}
+          {liveAssistantText ? <pre className="codexLiveResponse" aria-live="polite">{liveAssistantText}</pre> : null}
+        </section>
+      ) : null}
       <ol className="conversationEntries">
         {entries.length ? entries.map((entry) => (
           <li className={`conversationEntry ${entry.role} ${entry.importance}`} key={entry.id}>
@@ -123,8 +196,8 @@ export function TaskConversation(props: {
       </ol>
       <form className="conversationComposer" onSubmit={submit}>
         <label><span>Agent</span><select value={targetAgent} disabled={props.run?.projectType === "arceus_maintenance" || allowedAgents.length <= 1} onChange={(event) => setTargetAgent(event.target.value as AgentKind)}>{allowedAgents.map((agent) => <option value={agent} key={agent}>{getAgentLabel(agent)}</option>)}</select></label>
-        <label className="conversationInput"><span>Message</span><textarea onKeyDown={handleComposerKeyDown} value={content} onChange={(event) => setContent(event.target.value)} placeholder={props.run ? "Ask for progress, evidence, or a scoped action" : targetAgent === "codex" ? "Ask Codex to inspect or use the harness; it will bind a clear project automatically" : "Limited mode: ask guidance or questions only; no project/workflow actions."} /></label>
-        <button className="primaryButton" disabled={!content.trim() || !allowedAgents.length}><Send size={16} />Send</button>
+        <label className="conversationInput"><span>Message</span><textarea disabled={isTurnRunning} onKeyDown={handleComposerKeyDown} value={content} onChange={(event) => setContent(event.target.value)} placeholder={isTurnRunning ? "Codex is working. Pause or wait for the turn to finish." : props.run ? "Ask for progress, evidence, or a scoped action" : targetAgent === "codex" ? "Ask Codex to inspect or use the harness" : "Limited mode: ask guidance or questions only; no project/workflow actions."} /></label>
+        <button className="primaryButton" disabled={!content.trim() || !allowedAgents.length || isTurnRunning}><Send size={16} />Send</button>
       </form>
       {error ? <p className="formError" role="alert">{error}</p> : null}
     </section>
@@ -133,9 +206,23 @@ export function TaskConversation(props: {
 
 async function loadConversation(path: string) {
   const response = await fetch(path, { cache: "no-store" })
-  const data = await response.json() as { error?: string; entries: ConversationEntry[]; allowedAgents: AgentKind[] }
+  const data = await response.json() as CodexConversationState & { error?: string }
   if (!response.ok) throw new Error(data.error ?? "Conversation could not be loaded")
   return data
+}
+
+function formatSessionStatus(session: CodexConversationState["session"]) {
+  if (!session) return "not started"
+  if (session.status === "paused") return "paused"
+  if (session.status === "stopped") return "stopped"
+  if (session.status === "failed") return "failed"
+  if (session.turnStatus === "completed") return "ready"
+  if (session.turnStatus === "inProgress") return "working"
+  return session.status
+}
+
+function formatActivityType(type: string) {
+  return type.replaceAll("_", " ")
 }
 
 function mergeResult(current: ConversationEntry[], optimisticId: string, userEntry: ConversationEntry, responseEntry?: ConversationEntry) {

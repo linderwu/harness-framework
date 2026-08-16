@@ -1,11 +1,17 @@
 import { NextResponse } from "next/server"
 import { ConversationError } from "@/lib/conversation"
+import {
+  CodexConversationError,
+  getCodexConversationState,
+  postCodexConversationMessage
+} from "@/lib/codex-conversation"
 import { getDefaultHiveServices } from "@/lib/hive-services"
 import { agentProfiles } from "@/lib/agents"
 import type { AgentKind } from "@/lib/types"
 
 export async function GET() {
-  return NextResponse.json(await getDefaultHiveServices().conversation.getUnboundConversation())
+  const services = getDefaultHiveServices()
+  return NextResponse.json(await getCodexConversationState(services.repository))
 }
 
 export async function POST(request: Request) {
@@ -21,13 +27,26 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "targetAgent is invalid" }, { status: 403 })
   }
   try {
-    const result = await getDefaultHiveServices().conversation.postUnboundMessage({
+    const services = getDefaultHiveServices()
+    if ((body.targetAgent ?? "codex") === "codex") {
+      const result = await postCodexConversationMessage({
+        repository: services.repository,
+        content: body.content,
+        idempotencyKey: body.idempotencyKey
+      })
+      return NextResponse.json(result, { status: result.duplicate ? 200 : 202 })
+    }
+
+    const result = await services.conversation.postUnboundMessage({
       content: body.content,
       targetAgent: body.targetAgent as AgentKind | undefined,
       idempotencyKey: body.idempotencyKey
     })
     return NextResponse.json(result, { status: result.duplicate ? 200 : 202 })
   } catch (error) {
+    if (error instanceof CodexConversationError) {
+      return NextResponse.json({ error: error.message }, { status: error.status })
+    }
     if (error instanceof ConversationError) {
       return NextResponse.json({ error: error.message }, { status: error.status })
     }

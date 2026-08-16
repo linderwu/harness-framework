@@ -28,6 +28,7 @@ const activeWorkflowRuns = new Map()
 const activeIdempotencyKeys = new Map()
 const completedAgentRuns = new Map()
 const completedIdempotencyKeys = new Map()
+const codexSessions = new Map()
 const completedAgentRunTtlMs = Number(
   process.env.CODEX_BRIDGE_COMPLETED_RUN_TTL_MS ?? 3600000
 )
@@ -84,6 +85,72 @@ const server = http.createServer(async (request, response) => {
         [action === "cancel" ? "cancelled" : "stopped"]:
           stopWorkflowRun(workflowRunId)
       })
+      return
+    }
+
+    const codexSessionMatch = requestUrl.pathname.match(
+      /^\/sessions\/([^/]+)(?:\/(events|turns|interrupt|resume|stop))?$/
+    )
+
+    if (request.method === "POST" && requestUrl.pathname === "/sessions") {
+      const payload = await readJson(request)
+      const workspace = await resolveWorkspace(payload.repository)
+
+      if (workspace.error) {
+        sendJson(response, 422, { error: workspace.error })
+        return
+      }
+
+      const session = await createCodexSession(workspace.path)
+      sendJson(response, 201, codexSessionSnapshot(session))
+      return
+    }
+
+    if (codexSessionMatch) {
+      const session = codexSessions.get(decodeURIComponent(codexSessionMatch[1]))
+
+      if (!session) {
+        sendJson(response, 404, { error: "Codex session not found" })
+        return
+      }
+
+      const action = codexSessionMatch[2]
+
+      if (request.method === "GET" && action === "events") {
+        const after = Number(requestUrl.searchParams.get("after") ?? 0)
+        sendJson(response, 200, codexSessionEvents(session, Number.isFinite(after) ? after : 0))
+        return
+      }
+
+      if (request.method === "POST" && action === "turns") {
+        const payload = await readJson(request)
+        const turn = await startCodexTurn(session, String(payload.content ?? ""))
+        sendJson(response, 202, { ...codexSessionSnapshot(session), turn })
+        return
+      }
+
+      if (request.method === "POST" && action === "interrupt") {
+        const interrupted = await interruptCodexTurn(session)
+        sendJson(response, 200, { ...codexSessionSnapshot(session), interrupted })
+        return
+      }
+
+      if (request.method === "POST" && action === "resume") {
+        const turn = await startCodexTurn(
+          session,
+          "Continue from where you paused. Preserve the current user intent and continue the work."
+        )
+        sendJson(response, 202, { ...codexSessionSnapshot(session), turn })
+        return
+      }
+
+      if (request.method === "POST" && action === "stop") {
+        stopCodexSession(session)
+        sendJson(response, 200, codexSessionSnapshot(session))
+        return
+      }
+
+      sendJson(response, 404, { error: "Codex session action not found" })
       return
     }
 
@@ -901,8 +968,378 @@ function bridgeCapabilities() {
   }
 
   capabilities.push("codex-oauth-secondary-rate-limit")
+  capabilities.push(
+    "codex-sessions",
+    "codex-session-events",
+    "codex-session-interrupt",
+    "codex-session-resume"
+  )
 
   return capabilities
+}
+
+async function createCodexSession(workspacePath) {
+  const id = randomUUID()
+  const command = process.env.CODEX_BRIDGE_COMMAND ?? "codex"
+  const session = {
+    id,
+    child: spawn(command, ["app-server", "--stdio"], {
+      cwd: workspacePath,
+      shell: process.platform === "win32",
+      stdio: ["pipe", "pipe", "pipe"]
+    }),
+    workspacePath,
+    threadId: undefined,
+    currentTurnId: undefined,
+    status: "starting",
+    turnStatus: "idle",
+    finalText: "",
+    assistantText: "",
+    sequence: 0,
+    events: [],
+    nextRequestId: 1,
+    pendingRequests: new Map(),
+    buffer: ""
+  }
+
+  codexSessions.set(id, session)
+  session.child.stdout.on("data", (chunk) => {
+    session.buffer += chunk.toString()
+    const lines = session.buffer.split(/\r?\n/)
+    session.buffer = lines.pop() ?? ""
+
+    for (const line of lines) {
+      if (!line.trim()) continue
+      try {
+        handleCodexSessionMessage(session, JSON.parse(line))
+      } catch (error) {
+        addCodexSessionEvent(session, {
+          type: "bridge_error",
+          message: formatError(error)
+        })
+      }
+    }
+  })
+  session.child.stderr.on("data", (chunk) => {
+    const text = chunk.toString()
+    addCodexSessionEvent(session, {
+      type: "codex_log",
+      message: tail(text, 2000).trim()
+    })
+  })
+  session.child.on("error", (error) => {
+    session.status = "failed"
+    session.turnStatus = "failed"
+    rejectPendingCodexRequests(session, error)
+    addCodexSessionEvent(session, {
+      type: "session_failed",
+      message: formatError(error)
+    })
+  })
+  session.child.on("close", (code) => {
+    if (session.status !== "stopped" && session.status !== "completed") {
+      session.status = code === 0 ? "idle" : "failed"
+      if (code !== 0) session.turnStatus = "failed"
+      addCodexSessionEvent(session, {
+        type: "session_closed",
+        message: `Codex app-server exited with status ${code ?? 0}.`
+      })
+    }
+    rejectPendingCodexRequests(
+      session,
+      new Error(`Codex app-server exited with status ${code ?? 0}.`)
+    )
+  })
+
+  await codexSessionRequest(session, "initialize", {
+    clientInfo: {
+      name: "jormungand",
+      title: "Jormungand",
+      version: "0.1.0"
+    },
+    capabilities: { experimentalApi: true }
+  })
+  writeCodexSessionMessage(session, {
+    jsonrpc: "2.0",
+    method: "initialized",
+    params: {}
+  })
+  const startResult = await codexSessionRequest(session, "thread/start", {
+    cwd: workspacePath,
+    sandbox: "workspace-write",
+    approvalPolicy: "never",
+    threadSource: "jormungand"
+  })
+
+  session.threadId = startResult?.thread?.id
+  if (!session.threadId) throw new Error("Codex did not return a thread id.")
+  session.status = "idle"
+  addCodexSessionEvent(session, {
+    type: "session_ready",
+    message: "Codex session is ready."
+  })
+  return session
+}
+
+async function startCodexTurn(session, content) {
+  const prompt = content.trim()
+  if (!prompt) throw new Error("Codex turn content is required.")
+  if (session.status === "stopped" || session.status === "failed") {
+    throw new Error(`Codex session is ${session.status}.`)
+  }
+  if (session.turnStatus === "inProgress") {
+    throw new Error("Codex session already has an active turn.")
+  }
+
+  session.assistantText = ""
+  session.finalText = ""
+  session.status = "running"
+  session.turnStatus = "inProgress"
+  addCodexSessionEvent(session, { type: "turn_requested", message: prompt })
+
+  const result = await codexSessionRequest(session, "turn/start", {
+    threadId: session.threadId,
+    input: [{ type: "text", text: prompt, text_elements: [] }],
+    approvalPolicy: "never",
+    sandboxPolicy: {
+      type: "workspaceWrite",
+      writableRoots: [session.workspacePath],
+      networkAccess: false
+    },
+    cwd: session.workspacePath
+  })
+  const turnId = result?.turn?.id
+  if (!turnId) throw new Error("Codex did not return a turn id.")
+  session.currentTurnId = turnId
+  addCodexSessionEvent(session, { type: "turn_started", turnId, message: "Codex is working." })
+  return { id: turnId, status: "inProgress" }
+}
+
+async function interruptCodexTurn(session) {
+  if (!session.currentTurnId || session.turnStatus !== "inProgress") return false
+  await codexSessionRequest(session, "turn/interrupt", {
+    threadId: session.threadId,
+    turnId: session.currentTurnId
+  })
+  addCodexSessionEvent(session, {
+    type: "turn_interrupt_requested",
+    turnId: session.currentTurnId,
+    message: "Pause requested."
+  })
+  return true
+}
+
+function stopCodexSession(session) {
+  if (session.status === "stopped") return
+  session.status = "stopped"
+  session.turnStatus = "interrupted"
+  addCodexSessionEvent(session, { type: "session_stopped", message: "Codex session stopped." })
+  session.child.kill("SIGTERM")
+}
+
+function codexSessionRequest(session, method, params) {
+  const id = session.nextRequestId++
+  writeCodexSessionMessage(session, { jsonrpc: "2.0", id, method, params })
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      session.pendingRequests.delete(id)
+      reject(new Error(`${method} timed out.`))
+    }, Number(process.env.CODEX_BRIDGE_SESSION_REQUEST_TIMEOUT_MS ?? 120000))
+    session.pendingRequests.set(id, {
+      resolve: (value) => {
+        clearTimeout(timer)
+        resolve(value)
+      },
+      reject: (error) => {
+        clearTimeout(timer)
+        reject(error)
+      }
+    })
+  })
+}
+
+function writeCodexSessionMessage(session, message) {
+  session.child.stdin.write(`${JSON.stringify(message)}\n`)
+}
+
+function handleCodexSessionMessage(session, message) {
+  if (message.id !== undefined && session.pendingRequests.has(message.id)) {
+    const pending = session.pendingRequests.get(message.id)
+    session.pendingRequests.delete(message.id)
+    if (message.error) pending.reject(new Error(message.error.message ?? "Codex request failed."))
+    else pending.resolve(message.result)
+    return
+  }
+
+  if (message.id !== undefined && message.method) {
+    addCodexSessionEvent(session, {
+      type: "server_request",
+      message: `Codex requested ${message.method}.`
+    })
+    if (message.method.includes("requestApproval")) {
+      writeCodexSessionMessage(session, {
+        jsonrpc: "2.0",
+        id: message.id,
+        result: { decision: "decline" }
+      })
+    } else {
+      writeCodexSessionMessage(session, {
+        jsonrpc: "2.0",
+        id: message.id,
+        error: { code: -32601, message: `Unsupported Codex server request: ${message.method}` }
+      })
+    }
+    return
+  }
+
+  const method = message.method
+  const params = message.params ?? {}
+
+  if (method === "thread/status/changed") {
+    if (params.status?.type === "idle" && session.turnStatus !== "inProgress") {
+      session.status = session.status === "stopped" ? "stopped" : "idle"
+    }
+    addCodexSessionEvent(session, {
+      type: "thread_status",
+      message: `Codex thread status: ${params.status?.type ?? "unknown"}.`
+    })
+    return
+  }
+
+  if (method === "turn/started") {
+    session.currentTurnId = params.turn?.id ?? session.currentTurnId
+    session.status = "running"
+    session.turnStatus = "inProgress"
+    addCodexSessionEvent(session, { type: "turn_started", turnId: session.currentTurnId, message: "Codex started a turn." })
+    return
+  }
+
+  if (method === "item/agentMessage/delta") {
+    session.assistantText += params.delta ?? ""
+    addCodexSessionEvent(session, {
+      type: "assistant_delta",
+      turnId: params.turnId,
+      itemId: params.itemId,
+      text: params.delta ?? "",
+      message: params.delta ?? ""
+    })
+    return
+  }
+
+  if (method === "item/commandExecution/outputDelta") {
+    addCodexSessionEvent(session, {
+      type: "command_output",
+      turnId: params.turnId,
+      itemId: params.itemId,
+      text: params.delta ?? "",
+      message: params.delta ?? ""
+    })
+    return
+  }
+
+  if (method === "item/plan/delta") {
+    addCodexSessionEvent(session, {
+      type: "plan_delta",
+      turnId: params.turnId,
+      text: params.delta ?? "",
+      message: params.delta ?? ""
+    })
+    return
+  }
+
+  if (method === "turn/diff/updated") {
+    addCodexSessionEvent(session, {
+      type: "diff_updated",
+      turnId: params.turnId,
+      text: tail(params.diff ?? "", 4000),
+      message: "Working diff updated."
+    })
+    return
+  }
+
+  if (method === "item/started" || method === "item/completed") {
+    const item = params.item ?? {}
+    const prefix = method === "item/started" ? "Started" : "Completed"
+    const itemMessage = describeCodexItem(item)
+    if (item.type === "agentMessage" && item.text) session.assistantText = item.text
+    addCodexSessionEvent(session, {
+      type: method === "item/started" ? "item_started" : "item_completed",
+      turnId: params.turnId,
+      itemId: item.id,
+      message: `${prefix}: ${itemMessage}`,
+      text: item.type === "agentMessage" ? item.text : undefined
+    })
+    return
+  }
+
+  if (method === "turn/completed") {
+    const turn = params.turn ?? {}
+    session.turnStatus = turn.status ?? "failed"
+    session.status = turn.status === "interrupted" ? "paused" : turn.status === "completed" ? "idle" : "failed"
+    session.finalText = session.assistantText.trim()
+    addCodexSessionEvent(session, {
+      type: turn.status === "completed" ? "turn_completed" : turn.status === "interrupted" ? "turn_paused" : "turn_failed",
+      turnId: turn.id ?? session.currentTurnId,
+      message: turn.status === "completed" ? "Codex completed the turn." : turn.status === "interrupted" ? "Codex turn paused." : turn.error?.message ?? "Codex turn failed.",
+      text: session.finalText
+    })
+    return
+  }
+
+  if (method === "error") {
+    session.status = "failed"
+    session.turnStatus = "failed"
+    addCodexSessionEvent(session, {
+      type: "turn_failed",
+      message: params.message ?? "Codex reported an error."
+    })
+  }
+}
+
+function describeCodexItem(item) {
+  if (item.type === "commandExecution") return `command ${item.command ?? ""}`.trim()
+  if (item.type === "fileChange") return "file changes"
+  if (item.type === "mcpToolCall") return `MCP tool ${item.server ?? ""}/${item.tool ?? ""}`
+  if (item.type === "agentMessage") return item.phase === "final_answer" ? "final response" : "assistant message"
+  if (item.type) return item.type
+  return "Codex activity"
+}
+
+function addCodexSessionEvent(session, event) {
+  session.sequence += 1
+  session.events.push({
+    sequence: session.sequence,
+    id: `${session.id}:${session.sequence}`,
+    createdAt: new Date().toISOString(),
+    ...event
+  })
+  if (session.events.length > 2000) session.events.shift()
+}
+
+function codexSessionSnapshot(session) {
+  return {
+    id: session.id,
+    threadId: session.threadId,
+    status: session.status,
+    turnStatus: session.turnStatus,
+    currentTurnId: session.currentTurnId,
+    finalText: session.finalText,
+    liveText: session.assistantText,
+    cursor: session.sequence
+  }
+}
+
+function codexSessionEvents(session, after) {
+  return {
+    ...codexSessionSnapshot(session),
+    events: session.events.filter((event) => event.sequence > after),
+    nextCursor: session.sequence
+  }
+}
+
+function rejectPendingCodexRequests(session, error) {
+  for (const pending of session.pendingRequests.values()) pending.reject(error)
+  session.pendingRequests.clear()
 }
 
 async function readCodexQuota() {

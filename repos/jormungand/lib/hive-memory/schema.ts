@@ -1,6 +1,6 @@
 import type Database from "better-sqlite3"
 
-export const hiveSchemaVersion = 1
+export const hiveSchemaVersion = 2
 
 const migrationV1 = `
 CREATE TABLE schema_migrations (
@@ -164,6 +164,20 @@ CREATE INDEX manager_wakes_run_status_idx ON manager_wakes(workflow_run_id, stat
 CREATE INDEX conversation_run_created_idx ON conversation_entries(workflow_run_id, created_at, id);
 `
 
+const migrationV2 = `
+CREATE TABLE codex_sessions (
+  conversation_id TEXT PRIMARY KEY,
+  bridge_session_id TEXT NOT NULL UNIQUE,
+  codex_thread_id TEXT NOT NULL,
+  status TEXT NOT NULL,
+  turn_status TEXT NOT NULL,
+  current_turn_id TEXT,
+  cursor INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+`
+
 export function migrateHiveSchema(database: Database.Database) {
   const hasMigrationTable = database
     .prepare("SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'")
@@ -181,6 +195,14 @@ export function migrateHiveSchema(database: Database.Database) {
       database.exec(migrationV1)
       database.prepare("INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)")
         .run(1, new Date().toISOString())
+    })()
+  }
+
+  if (currentVersion < 2) {
+    database.transaction(() => {
+      database.exec(migrationV2)
+      database.prepare("INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)")
+        .run(2, new Date().toISOString())
     })()
   }
 }

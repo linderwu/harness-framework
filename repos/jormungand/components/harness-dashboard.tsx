@@ -115,7 +115,6 @@ const maxContextTotalBytes = 5 * 1024 * 1024
 const bridgeHealthPollIntervalMs = 10_000
 const bridgeHealthStaleAfterMs = 30_000
 const bridgeOfflineFailureThreshold = 2
-const agentQuotaPollIntervalMs = 5 * 60 * 1000
 type ApprovalDecision = "approved" | "rejected" | "changes_requested"
 type BridgeHealthStatus = "online" | "offline"
 type BridgePanelStatus = BridgeHealthStatus | "checking" | "stale"
@@ -1930,6 +1929,7 @@ function BridgeStatusPanel({
   run?: WorkflowRun
   showHeading?: boolean
 }) {
+  const agentQuotaPollIntervalMs = 5 * 60 * 1000
   const [health, setHealth] = useState<Partial<Record<BridgeId, BridgeHealth>>>(
     {}
   )
@@ -1998,7 +1998,7 @@ function BridgeStatusPanel({
       window.clearInterval(quotaIntervalId)
       window.clearInterval(clockId)
     }
-  }, [])
+  }, [agentQuotaPollIntervalMs])
 
   const isStale =
     lastSuccessAt &&
