@@ -119,8 +119,16 @@ test("unbound conversation is persisted and moved intact after manager binding",
 
   assert.equal(result.binding?.workflowRunId, run.id)
   assert.equal(repository.listConversation(unboundConversationId).length, 0)
-  assert.deepEqual(repository.listConversation(run.id).map((entry) => entry.role), ["user", "manager"])
-  assert.equal(repository.listConversation(run.id).every((entry) => entry.workflowRunId === run.id), true)
+  const movedEntries = repository.listConversation(run.id)
+  assert.equal(movedEntries.filter((entry) => entry.role === "user").length, 1)
+  assert.equal(movedEntries.filter((entry) => entry.role === "manager").length, 1)
+  const movedUser = movedEntries.find((entry) => entry.role === "user")
+  const movedManager = movedEntries.find((entry) => entry.role === "manager")
+  assert.ok(movedUser)
+  assert.ok(movedManager)
+  assert.equal(movedUser.workflowRunId, run.id)
+  assert.equal(movedManager.workflowRunId, run.id)
+  assert.equal(movedManager.replyToId, movedUser.id)
 })
 
 test("unbound conversation exposes the OpenClaw roster and preserves its target", async (t) => {

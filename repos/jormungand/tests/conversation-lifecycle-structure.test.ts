@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs"
 import { mkdtemp, mkdir, rm, symlink } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import test from "node:test"
+import test, { describe } from "node:test"
 import {
   createConversationService,
   type ConversationBinding,
@@ -20,7 +20,6 @@ import type { WorkflowRun } from "../lib/types"
 import { createWorkflowRun } from "../lib/workflow"
 
 const openClawBridgeSource = readFileSync("scripts/openclaw-bridge.mjs", "utf8")
-let routeTestEnvPromise: Promise<{ dataDir: string }> | undefined
 
 function createRun(projectType: WorkflowRun["projectType"] = "hive_mission") {
   return createWorkflowRun({
@@ -93,29 +92,37 @@ async function ensureCompiledAlias() {
   await symlink(join(tmpRoot, "lib"), libLink, "junction")
 }
 
-async function ensureIsolatedRouteEnv(t: test.TestContext) {
-  if (routeTestEnvPromise) {
-    return routeTestEnvPromise
-  }
+function clearRouteModuleCache(routeModulePath: string) {
+  delete require.cache[require.resolve(routeModulePath)]
+  delete require.cache[require.resolve("../lib/hive-services")]
+}
 
-  routeTestEnvPromise = (async () => {
-    const dataDir = await mkdtemp(join(tmpdir(), "jormungand-route-env-"))
-    const previousDataDir = process.env.JORMUNGAND_DATA_DIR
-    process.env.JORMUNGAND_DATA_DIR = dataDir
-    await ensureCompiledAlias()
-    t.after(async () => {
-      if (previousDataDir === undefined) {
-        delete process.env.JORMUNGAND_DATA_DIR
-      } else {
-        process.env.JORMUNGAND_DATA_DIR = previousDataDir
-      }
-      await rm(dataDir, { recursive: true, force: true })
-      routeTestEnvPromise = undefined
-    })
-    return { dataDir }
-  })()
+function closeRouteDatabase() {
+  const servicesModule = require.cache[require.resolve("../lib/hive-services")]
+  const getDefaultHiveServices = servicesModule?.exports?.getDefaultHiveServices as (() => {
+    database: { close: () => void }
+  }) | undefined
+  getDefaultHiveServices?.().database.close()
+}
 
-  return routeTestEnvPromise
+async function importRouteWithIsolatedDataDir<T>(t: test.TestContext, routeModulePath: string) {
+  const dataDir = await mkdtemp(join(tmpdir(), "jormungand-route-env-"))
+  const previousDataDir = process.env.JORMUNGAND_DATA_DIR
+  process.env.JORMUNGAND_DATA_DIR = dataDir
+  t.after(async () => {
+    closeRouteDatabase()
+    clearRouteModuleCache(routeModulePath)
+    if (previousDataDir === undefined) {
+      delete process.env.JORMUNGAND_DATA_DIR
+    } else {
+      process.env.JORMUNGAND_DATA_DIR = previousDataDir
+    }
+    await rm(dataDir, { recursive: true, force: true })
+  })
+
+  await ensureCompiledAlias()
+  clearRouteModuleCache(routeModulePath)
+  return await import(routeModulePath) as T
 }
 
 function restoreEnv(
@@ -132,15 +139,34 @@ function restoreEnv(
   })
 }
 
-test("conversation GET returns a conversation id for durable client continuity", async (t) => {
-  await ensureIsolatedRouteEnv(t)
-  await ensureCompiledAlias()
-  const { GET: getConversationRoute } = await import("../app/api/conversation/route")
-  const response = await getConversationRoute()
-  const body = await response.json() as { conversationId?: string }
+describe("conversation route contracts", { concurrency: false }, () => {
+  test("conversation GET returns a conversation id for durable client continuity", async (t) => {
+    const { GET: getConversationRoute } = await importRouteWithIsolatedDataDir<{
+      GET: () => Promise<Response>
+    }>(t, "../app/api/conversation/route")
+    const response = await getConversationRoute()
+    const body = await response.json() as { conversationId?: string }
 
-  assert.equal(response.status, 200)
-  assert.equal(body.conversationId, unboundConversationId)
+    assert.equal(response.status, 200)
+    assert.equal(body.conversationId, unboundConversationId)
+  })
+
+  test("conversation control route requires a conversation id for Codex session controls", async (t) => {
+    const { POST: postConversationControlRoute } = await importRouteWithIsolatedDataDir<{
+      POST: (request: Request) => Promise<Response>
+    }>(t, "../app/api/conversation/control/route")
+    const response = await postConversationControlRoute(
+      new Request("http://localhost/api/conversation/control", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "resume" })
+      })
+    )
+    const body = await response.json() as { error?: string }
+
+    assert.equal(response.status, 400)
+    assert.match(body.error ?? "", /conversationId/i)
+  })
 })
 
 test("conversation service exposes an explicit new-conversation command", async (t) => {
@@ -288,23 +314,6 @@ test("reading Codex conversation state uses the requested conversation id sessio
 
   assert.equal(state.entries[0]?.workflowRunId, "conversation-b")
   assert.equal(state.session?.id, "bridge-session-b")
-})
-
-test("conversation control route requires a conversation id for Codex session controls", async (t) => {
-  await ensureIsolatedRouteEnv(t)
-  await ensureCompiledAlias()
-  const { POST: postConversationControlRoute } = await import("../app/api/conversation/control/route")
-  const response = await postConversationControlRoute(
-    new Request("http://localhost/api/conversation/control", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "resume" })
-    })
-  )
-  const body = await response.json() as { error?: string }
-
-  assert.equal(response.status, 400)
-  assert.match(body.error ?? "", /conversationId/i)
 })
 
 test("OpenClaw bridge session identity is derived from stable conversation input instead of only workflow ids", () => {
