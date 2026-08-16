@@ -709,7 +709,7 @@ export class HiveMemoryRepository {
           status = COALESCE(?, status),
           turn_status = COALESCE(?, turn_status),
           current_turn_id = COALESCE(?, current_turn_id),
-          cursor = COALESCE(?, cursor),
+          cursor = MAX(cursor, COALESCE(?, cursor)),
           updated_at = ?
         WHERE conversation_id = ?
       `).run(

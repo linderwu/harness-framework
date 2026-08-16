@@ -1,6 +1,6 @@
 "use client"
 
-import { FormEvent, KeyboardEvent, useEffect, useMemo, useState } from "react"
+import { FormEvent, KeyboardEvent, useEffect, useMemo, useRef, useState } from "react"
 import { Send } from "lucide-react"
 import type {
   CodexConversationEvent,
@@ -35,12 +35,30 @@ export function TaskConversation(props: {
   const [isControlling, setIsControlling] = useState(false)
   const [isLoadingConversation, setIsLoadingConversation] = useState(true)
   const [isStartingConversation, setIsStartingConversation] = useState(false)
+  const pollingInFlight = useRef<ReturnType<typeof loadConversation> | undefined>(undefined)
   const pending = useMemo(() => entries.some((entry) => entry.status === "queued" || entry.status === "running"), [entries])
   const activeConversationId = isUnbound ? conversationId : runId
 
+  function loadConversationWithGuard(path: string, requireConversationId: boolean) {
+    const inFlight = pollingInFlight.current
+    if (inFlight) return inFlight
+
+    const request = loadConversation(path, requireConversationId)
+    pollingInFlight.current = request
+    request.then(
+      () => {
+        if (pollingInFlight.current === request) pollingInFlight.current = undefined
+      },
+      () => {
+        if (pollingInFlight.current === request) pollingInFlight.current = undefined
+      }
+    )
+    return request
+  }
+
   useEffect(() => {
     let active = true
-    void loadConversation(conversationPath, isUnbound).then((data) => {
+    void loadConversationWithGuard(conversationPath, isUnbound).then((data) => {
       if (!active) return
       setConversationId(data.conversationId ?? runId)
       setEntries(data.entries)
@@ -59,7 +77,8 @@ export function TaskConversation(props: {
   useEffect(() => {
     if (!pending) return
     const timer = window.setInterval(() => {
-      void loadConversation(conversationPath, isUnbound).then((data) => {
+      if (pollingInFlight.current) return
+      void loadConversationWithGuard(conversationPath, isUnbound).then((data) => {
         setConversationId(data.conversationId ?? runId)
         setEntries(data.entries)
         setSession(data.session)

@@ -82,6 +82,11 @@ export async function getCodexConversationState(
 
   await syncConversation(repository, conversationId, bridgeState)
   const refreshedSession = repository.getCodexSession(conversationId) ?? session
+  const effectiveCursor = Math.max(
+    refreshedSession.cursor,
+    bridgeState.cursor,
+    bridgeState.nextCursor
+  )
 
   return {
     conversationId,
@@ -93,12 +98,12 @@ export async function getCodexConversationState(
         status: bridgeState.status,
         turnStatus: bridgeState.turnStatus,
         currentTurnId: bridgeState.currentTurnId,
-        cursor: bridgeState.nextCursor
+        cursor: effectiveCursor
       },
-      bridgeState
+      { ...bridgeState, cursor: effectiveCursor }
     ),
     events: bridgeState.events,
-    nextCursor: bridgeState.nextCursor
+    nextCursor: effectiveCursor
   }
 }
 

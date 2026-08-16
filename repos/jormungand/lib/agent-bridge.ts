@@ -7,6 +7,8 @@ import type {
   WorkflowRun,
   WorkflowStage
 } from "@/lib/types"
+import { resolve } from "node:path"
+import { pathToFileURL } from "node:url"
 import {
   createOpenClawA2AEnvelope,
   extractA2AResponseText,
@@ -359,24 +361,24 @@ async function invokeOpenClawA2A(
   idempotencyKey: string
 ): Promise<AgentArtifactResult> {
   const profile = getAgentProfile(input.executor)
-  const sessionKey = getOpenClawSessionKey({
-    agent: input.executor,
-    conversationId: input.conversationId,
-    workflowRunId: input.run.id
-  })
   const model = process.env.OPENCLAW_A2A_MODEL ?? "minimax/MiniMax-M2.7"
   const protocol = resolveOpenClawA2AProtocol()
-  const envelope = createOpenClawA2AEnvelope(
-    {
-      ...input,
-      idempotencyKey,
-      sessionKey,
-      mainAgent: profile.mainAgent
-    },
-    protocol
-  )
 
   try {
+    const sessionKey = await getOpenClawSessionKey({
+      agent: input.executor,
+      conversationId: input.conversationId,
+      workflowRunId: input.run.id
+    })
+    const envelope = createOpenClawA2AEnvelope(
+      {
+        ...input,
+        idempotencyKey,
+        sessionKey,
+        mainAgent: profile.mainAgent
+      },
+      protocol
+    )
     const result = await runCommandWithStdin(command, JSON.stringify(envelope), {
       OPENCLAW_A2A_AGENT: profile.mainAgent ?? "rowlet",
       OPENCLAW_A2A_MODEL: model,
@@ -416,7 +418,7 @@ async function sendOpenClawA2AControl(run: WorkflowRun) {
   }
 
   const profile = getAgentProfile(run.selectedAgent)
-  const sessionKey = getOpenClawSessionKey({
+  const sessionKey = await getOpenClawSessionKey({
     agent: run.selectedAgent,
     workflowRunId: run.id
   })
@@ -553,7 +555,18 @@ function getOpenClawA2ACommand(agent: AgentKind) {
   return process.env.OPENCLAW_A2A_COMMAND
 }
 
-function getOpenClawSessionKey(input: {
+type OpenClawSessionHelper = {
+  deriveOpenClawSessionKey(input: {
+    mainAgent?: string
+    conversationId?: unknown
+    workflowRunId?: unknown
+    fallbackId?: unknown
+  }): string
+}
+
+let openClawSessionHelperPromise: Promise<OpenClawSessionHelper> | undefined
+
+async function getOpenClawSessionKey(input: {
   agent: AgentKind
   conversationId?: string
   workflowRunId?: string
@@ -561,15 +574,29 @@ function getOpenClawSessionKey(input: {
   const profile = getAgentProfile(input.agent)
   const mainAgent = profile.mainAgent ?? "rowlet"
 
-  if (input.conversationId) {
-    return `agent:${mainAgent}:harness-conversation-${sanitizeSessionSegment(input.conversationId)}`
+  const sessionHelper = await loadOpenClawSessionHelper()
+  return sessionHelper.deriveOpenClawSessionKey({
+    mainAgent,
+    conversationId: input.conversationId,
+    workflowRunId: input.workflowRunId,
+    fallbackId: process.env.OPENCLAW_A2A_SESSION_KEY ?? "a2a-codex"
+  })
+}
+
+async function loadOpenClawSessionHelper() {
+  if (!openClawSessionHelperPromise) {
+    // Native import keeps the CommonJS test build able to execute the ESM helper.
+    const loadModule = new Function(
+      "modulePath",
+      "return import(modulePath)"
+    ) as (modulePath: string) => Promise<OpenClawSessionHelper>
+    const helperPath = pathToFileURL(
+      resolve(process.cwd(), "scripts/openclaw-session.mjs")
+    ).href
+    openClawSessionHelperPromise = loadModule(helperPath)
   }
 
-  if (input.workflowRunId) {
-    return `agent:${mainAgent}:harness-${sanitizeSessionSegment(input.workflowRunId)}`
-  }
-
-  return process.env.OPENCLAW_A2A_SESSION_KEY ?? `agent:${mainAgent}:a2a-codex`
+  return openClawSessionHelperPromise
 }
 
 function getBridgeSource(agent: AgentKind): AgentArtifactResult["source"] {
@@ -584,8 +611,4 @@ function getIntakeSource(agent: AgentKind): AgentArtifactResult["source"] {
 
 function formatError(error: unknown) {
   return error instanceof Error ? error.message : String(error)
-}
-
-function sanitizeSessionSegment(value: string) {
-  return value.replaceAll(/[^A-Za-z0-9._-]/g, "-")
 }

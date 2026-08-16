@@ -108,6 +108,49 @@ test("legacy conversation id remains valid for migration compatibility", () => {
   assert.equal(identity.shouldSetCookie, true)
 })
 
+test("active identity mode rotates both legacy cookie names without sharing the legacy id", () => {
+  const resolveActiveIdentity = resolveConversationId as unknown as (input: {
+    request: Request
+    fallbackToNew: boolean
+    legacyMode: "allow" | "rotate" | "reject"
+  }) => { conversationId: string; shouldSetCookie: boolean }
+
+  for (const cookieName of ["jormungand-conversation-id", "jormungand_conversation_id"]) {
+    const identity = resolveActiveIdentity({
+      request: new Request("http://localhost/api/conversation", {
+        headers: { Cookie: `${cookieName}=${legacyConversationId}` }
+      }),
+      fallbackToNew: true,
+      legacyMode: "rotate"
+    })
+
+    assert.match(identity.conversationId, /^conversation:[0-9a-f-]{36}$/i)
+    assert.notEqual(identity.conversationId, legacyConversationId)
+    assert.equal(identity.shouldSetCookie, true)
+  }
+})
+
+test("active identity mode rejects an explicit legacy body while allowing migration mode", () => {
+  const resolveActiveIdentity = resolveConversationId as unknown as (input: {
+    bodyConversationId: unknown
+    legacyMode?: "allow" | "rotate" | "reject"
+    legacyBodyMode?: "allow" | "rotate" | "reject"
+  }) => { conversationId: string }
+
+  assert.throws(
+    () => resolveActiveIdentity({
+      bodyConversationId: legacyConversationId,
+      legacyMode: "rotate",
+      legacyBodyMode: "reject"
+    }),
+    /legacy conversationId is not allowed/i
+  )
+  assert.equal(
+    resolveActiveIdentity({ bodyConversationId: legacyConversationId }).conversationId,
+    legacyConversationId
+  )
+})
+
 test("conversation GET generates a new active id without a cookie and sets a durable cookie", async (t) => {
   const { GET } = await importRouteWithIsolatedDataDir<{
     GET: (request: Request) => Promise<Response>
@@ -153,7 +196,7 @@ test("conversation GET ignores malformed cookie encoding and generates a new act
   assert.match(response.headers.get("set-cookie") ?? "", /jormungand-conversation-id=/i)
 })
 
-test("conversation GET still honors the legacy cookie for migration", async (t) => {
+test("conversation GET rotates the current legacy cookie instead of sharing it", async (t) => {
   const { GET } = await importRouteWithIsolatedDataDir<{
     GET: (request: Request) => Promise<Response>
   }>(t, "../app/api/conversation/route")
@@ -163,7 +206,24 @@ test("conversation GET still honors the legacy cookie for migration", async (t) 
   const body = await response.json() as { conversationId?: string }
 
   assert.equal(response.status, 200)
-  assert.equal(body.conversationId, legacyConversationId)
+  assert.match(body.conversationId ?? "", /^conversation:[0-9a-f-]{36}$/i)
+  assert.notEqual(body.conversationId, legacyConversationId)
+  assert.match(response.headers.get("set-cookie") ?? "", /jormungand-conversation-id=/i)
+})
+
+test("conversation GET rotates the underscore legacy cookie instead of sharing it", async (t) => {
+  const { GET } = await importRouteWithIsolatedDataDir<{
+    GET: (request: Request) => Promise<Response>
+  }>(t, "../app/api/conversation/route")
+  const response = await GET(new Request("http://localhost/api/conversation", {
+    headers: { Cookie: `jormungand_conversation_id=${legacyConversationId}` }
+  }))
+  const body = await response.json() as { conversationId?: string }
+
+  assert.equal(response.status, 200)
+  assert.match(body.conversationId ?? "", /^conversation:[0-9a-f-]{36}$/i)
+  assert.notEqual(body.conversationId, legacyConversationId)
+  assert.match(response.headers.get("set-cookie") ?? "", /jormungand-conversation-id=/i)
 })
 
 test("new conversation route returns a server-generated id and durable cookie", async (t) => {
@@ -269,4 +329,86 @@ test("conversation POST generates an active id without body or cookie", async (t
   assert.notEqual(body.conversationId, unboundConversationId)
   assert.equal(body.userEntry?.workflowRunId, body.conversationId)
   assert.match(response.headers.get("set-cookie") ?? "", /jormungand-conversation-id=/i)
+})
+
+test("conversation POST rejects an explicit legacy body id", async (t) => {
+  const { POST } = await importRouteWithIsolatedDataDir<{
+    POST: (request: Request) => Promise<Response>
+  }>(t, "../app/api/conversation/route")
+  const response = await POST(new Request("http://localhost/api/conversation", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      conversationId: legacyConversationId,
+      content: "Do not attach this to the shared legacy session.",
+      idempotencyKey: "conversation-post-rejects-legacy"
+    })
+  }))
+  const body = await response.json() as { error?: string }
+
+  assert.equal(response.status, 400)
+  assert.match(body.error ?? "", /legacy conversationId is not allowed/i)
+})
+
+test("conversation POST rotates either legacy cookie to a fresh active id", async (t) => {
+  restoreEnv(t, "HARNESS_ALLOW_SIMULATED_AGENTS")
+  process.env.HARNESS_ALLOW_SIMULATED_AGENTS = "1"
+
+  const { POST } = await importRouteWithIsolatedDataDir<{
+    POST: (request: Request) => Promise<Response>
+  }>(t, "../app/api/conversation/route")
+  for (const [index, cookieName] of [
+    "jormungand-conversation-id",
+    "jormungand_conversation_id"
+  ].entries()) {
+    const response = await POST(new Request("http://localhost/api/conversation", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Cookie: `${cookieName}=${legacyConversationId}`
+      },
+      body: JSON.stringify({
+        content: "Start outside the shared legacy session.",
+        idempotencyKey: `conversation-post-rotates-legacy-${index}`,
+        targetAgent: "openclaw.gengar"
+      })
+    }))
+    const body = await response.json() as {
+      conversationId?: string
+      userEntry?: { workflowRunId?: string }
+    }
+
+    assert.equal(response.status, 202)
+    assert.match(body.conversationId ?? "", /^conversation:[0-9a-f-]{36}$/i)
+    assert.notEqual(body.conversationId, legacyConversationId)
+    assert.equal(body.userEntry?.workflowRunId, body.conversationId)
+    assert.match(response.headers.get("set-cookie") ?? "", /jormungand-conversation-id=/i)
+  }
+})
+
+test("conversation control rejects legacy body and cookie identities", async (t) => {
+  const { POST } = await importRouteWithIsolatedDataDir<{
+    POST: (request: Request) => Promise<Response>
+  }>(t, "../app/api/conversation/control/route")
+
+  const bodyResponse = await POST(new Request("http://localhost/api/conversation/control", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action: "resume", conversationId: legacyConversationId })
+  }))
+  assert.equal(bodyResponse.status, 400)
+  assert.match((await bodyResponse.json() as { error?: string }).error ?? "", /legacy conversationId is not allowed/i)
+
+  for (const cookieName of ["jormungand-conversation-id", "jormungand_conversation_id"]) {
+    const cookieResponse = await POST(new Request("http://localhost/api/conversation/control", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Cookie: `${cookieName}=${legacyConversationId}`
+      },
+      body: JSON.stringify({ action: "resume" })
+    }))
+    assert.equal(cookieResponse.status, 400)
+    assert.match((await cookieResponse.json() as { error?: string }).error ?? "", /legacy conversationId is not allowed/i)
+  }
 })

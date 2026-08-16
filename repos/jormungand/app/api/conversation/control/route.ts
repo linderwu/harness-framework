@@ -27,6 +27,7 @@ export async function POST(request: Request) {
     const identity = resolveConversationId({
       request,
       bodyConversationId: body.conversationId,
+      legacyMode: "reject",
       requireExplicit: true
     })
     const services = getDefaultHiveServices()

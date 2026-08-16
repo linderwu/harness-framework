@@ -14,6 +14,8 @@ export class ConversationIdentityError extends Error {
   }
 }
 
+export type LegacyConversationMode = "allow" | "rotate" | "reject"
+
 export function createConversationId() {
   return `conversation:${crypto.randomUUID()}`
 }
@@ -32,6 +34,10 @@ export function resolveConversationId(input: {
   fallbackToNew?: boolean
   /** Migration-only fallback for callers that must read legacy unbound data. */
   fallbackToLegacy?: boolean
+  /** Policy for legacy cookie values; active routes must not use the shared id. */
+  legacyMode?: LegacyConversationMode
+  /** Optional policy override for an explicit legacy body value. */
+  legacyBodyMode?: LegacyConversationMode
   requireExplicit?: boolean
 }) {
   const cookieConversationId = readConversationIdCookie(input.request)
@@ -40,6 +46,13 @@ export function resolveConversationId(input: {
     if (!isValidConversationId(input.bodyConversationId)) {
       throw new ConversationIdentityError("conversationId is invalid")
     }
+    if (input.bodyConversationId === legacyConversationId) {
+      return resolveLegacyConversationId(
+        input.legacyBodyMode ?? input.legacyMode ?? "allow",
+        "body",
+        cookieConversationId
+      )
+    }
     return {
       conversationId: input.bodyConversationId,
       shouldSetCookie: cookieConversationId !== input.bodyConversationId
@@ -47,6 +60,13 @@ export function resolveConversationId(input: {
   }
 
   if (cookieConversationId) {
+    if (cookieConversationId === legacyConversationId) {
+      return resolveLegacyConversationId(
+        input.legacyMode ?? "allow",
+        "cookie",
+        cookieConversationId
+      )
+    }
     return { conversationId: cookieConversationId, shouldSetCookie: false }
   }
 
@@ -69,6 +89,28 @@ export function resolveConversationId(input: {
   }
 
   throw new ConversationIdentityError("conversationId is required")
+}
+
+function resolveLegacyConversationId(
+  mode: LegacyConversationMode,
+  source: "body" | "cookie",
+  cookieConversationId?: string
+) {
+  if (mode === "reject") {
+    throw new ConversationIdentityError("legacy conversationId is not allowed")
+  }
+
+  if (mode === "rotate") {
+    return {
+      conversationId: createConversationId(),
+      shouldSetCookie: true
+    }
+  }
+
+  return {
+    conversationId: legacyConversationId,
+    shouldSetCookie: source === "body" && cookieConversationId !== legacyConversationId
+  }
 }
 
 export function setConversationCookie(

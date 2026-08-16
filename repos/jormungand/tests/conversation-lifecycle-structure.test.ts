@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { readFileSync } from "node:fs"
-import { lstat, mkdir, mkdtemp, realpath, rm, symlink } from "node:fs/promises"
+import { lstat, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { pathToFileURL } from "node:url"
@@ -342,6 +342,43 @@ test("reading Codex conversation state uses the requested conversation id sessio
   assert.equal(state.session?.id, "bridge-session-b")
 })
 
+test("Codex cursor updates stay monotonic and state exposes the persisted effective cursor", async (t) => {
+  const { repository } = await repositoryFixture(t)
+  await repository.upsertCodexSession({
+    conversationId: "conversation-cursor",
+    bridgeSessionId: "bridge-session-cursor",
+    codexThreadId: "thread-cursor",
+    status: "idle",
+    turnStatus: "completed",
+    cursor: 7
+  })
+
+  const regressed = await repository.updateCodexSession({
+    conversationId: "conversation-cursor",
+    cursor: 3
+  })
+  assert.equal(regressed?.cursor, 7)
+
+  restoreEnv(t, "CODEX_BRIDGE_URL")
+  process.env.CODEX_BRIDGE_URL = "http://codex.test"
+  installFetchMock(t, async (input) => {
+    assert.equal(String(input), "http://codex.test/sessions/bridge-session-cursor/events?after=7")
+    return jsonResponse({
+      id: "bridge-session-cursor",
+      threadId: "thread-cursor",
+      status: "idle",
+      turnStatus: "completed",
+      cursor: 3,
+      events: [],
+      nextCursor: 3
+    })
+  })
+
+  const state = await getCodexConversationState(repository, "conversation-cursor")
+  assert.equal(state.session?.cursor, 7)
+  assert.equal(state.nextCursor, 7)
+})
+
 test("OpenClaw bridge session identity is derived from stable conversation input instead of only workflow ids", () => {
   assert.match(openClawBridgeSource, /sessionKey/)
   assert.match(openClawBridgeSource, /payload\.conversationId|payload\.sessionKey/)
@@ -463,3 +500,78 @@ test("unbound OpenClaw routing preserves conversation and agent identity at the 
   assert.notEqual(sessionKeys[0], sessionKeys[2])
   assert.notEqual(sessionKeys[0], sessionKeys[3])
 })
+
+test("OpenClaw A2A uses the bounded shared session identity for long conversations", { concurrency: false }, async (t) => {
+  await ensureCompiledAlias()
+  const { invokeConfiguredAgent } = await import("../lib/agent-bridge") as typeof import("../lib/agent-bridge")
+  const commandDir = await mkdtemp(join(tmpdir(), "jormungand-openclaw-a2a-"))
+  const commandPath = join(commandDir, "a2a-fixture.mjs")
+  await writeFile(commandPath, [
+    'import { readFileSync } from "node:fs"',
+    'JSON.parse(readFileSync(0, "utf8"))',
+    'process.stdout.write(JSON.stringify({ output: JSON.stringify({ sessionKey: process.env.OPENCLAW_A2A_SESSION_KEY, agent: process.env.OPENCLAW_A2A_AGENT }) }))'
+  ].join("\n"))
+  t.after(async () => rm(commandDir, { recursive: true, force: true }))
+
+  for (const key of [
+    "OPENCLAW_BRIDGE_URL",
+    "OPENCLAW_A2A_COMMAND",
+    "OPENCLAW_A2A_PROTOCOL"
+  ]) {
+    restoreEnv(t, key)
+  }
+  process.env.OPENCLAW_A2A_COMMAND = `${quoteCommandArg(process.execPath)} ${quoteCommandArg(commandPath)}`
+  delete process.env.OPENCLAW_BRIDGE_URL
+
+  const run = createRun()
+  const skill = {
+    id: "conversation.unbound_limited",
+    eventType: "requirement_intake",
+    stage: "intake",
+    name: "Unbound limited conversation",
+    purpose: "Reply safely without binding a workflow run.",
+    trigger: "An operator posted to an unbound conversation.",
+    allowedActors: ["openclaw.gengar"],
+    inputs: ["conversation text"],
+    outputs: ["one response"],
+    constraints: ["Do not mutate workflow state."],
+    gates: ["Jormungand retains workflow authority."],
+    knowledgeSources: ["persisted conversation"],
+    verificationRules: ["Return one concise response."]
+  } satisfies WorkflowEventSkill
+  const invoke = (conversationId: string, executor: AgentKind) => invokeConfiguredAgent({
+    run: { ...run, selectedAgent: executor },
+    executor,
+    stage: "intake",
+    artifactType: "log",
+    title: "Unbound limited conversation",
+    fallbackBody: "Fallback response",
+    conversationId,
+    skill: { ...skill, allowedActors: [executor] }
+  })
+
+  const longConversationA = `conversation:${"a".repeat(2400)}`
+  const longConversationB = `conversation:${"b".repeat(2400)}`
+  const results = [
+    await invoke(longConversationA, "openclaw.gengar"),
+    await invoke(longConversationA, "openclaw.gengar"),
+    await invoke(longConversationA, "openclaw.rowlet"),
+    await invoke(longConversationB, "openclaw.gengar")
+  ]
+  const sessionKeys = results.map((result) => {
+    assert.equal(result.status, "completed")
+    assert.match(result.statusMessage ?? "", /session /)
+    const body = JSON.parse(result.body) as { sessionKey?: string; agent?: string }
+    assert.equal(body.sessionKey, result.statusMessage?.match(/session (.+) replied\.$/)?.[1])
+    assert.ok((body.sessionKey ?? "").length <= 160)
+    return body.sessionKey
+  })
+
+  assert.equal(sessionKeys[0], sessionKeys[1])
+  assert.notEqual(sessionKeys[0], sessionKeys[2])
+  assert.notEqual(sessionKeys[0], sessionKeys[3])
+})
+
+function quoteCommandArg(value: string) {
+  return `"${value.replaceAll('"', '\\"')}"`
+}

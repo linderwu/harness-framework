@@ -14,6 +14,11 @@ test("OpenClaw A2A control sends a standalone slash stop message", () => {
   assert.match(bridge, /OPENCLAW_A2A_AGENT/)
 })
 
+test("OpenClaw A2A session keys use the shared bounded session helper", () => {
+  assert.match(bridge, /openclaw-session\.mjs/)
+  assert.doesNotMatch(bridge, /function sanitizeSessionSegment/)
+})
+
 test("OpenClaw HTTP bridge supports idempotency recovery polling", () => {
   assert.match(openClawBridge, /by-idempotency/)
   assert.match(openClawBridge, /completedIdempotencyRuns/)

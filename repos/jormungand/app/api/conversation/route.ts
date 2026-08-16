@@ -17,7 +17,8 @@ import type { AgentKind } from "@/lib/types"
 export async function GET(request?: Request) {
   const identity = resolveConversationId({
     request,
-    fallbackToNew: true
+    fallbackToNew: true,
+    legacyMode: "rotate"
   })
   const services = getDefaultHiveServices()
   const codexState = await getCodexConversationState(
@@ -55,7 +56,9 @@ export async function POST(request: Request) {
     const identity = resolveConversationId({
       request,
       bodyConversationId: body.conversationId,
-      fallbackToNew: true
+      fallbackToNew: true,
+      legacyMode: "rotate",
+      legacyBodyMode: "reject"
     })
     const services = getDefaultHiveServices()
     if ((body.targetAgent ?? "codex") === "codex") {

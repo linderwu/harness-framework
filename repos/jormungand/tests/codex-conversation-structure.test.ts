@@ -33,6 +33,13 @@ test("browser conversation renders Codex activity and polls while pending", () =
   assert.match(component, /Codex is working/)
 })
 
+test("browser conversation polling does not overlap requests", () => {
+  assert.match(component, /const pollingInFlight = useRef/)
+  assert.match(component, /if \(pollingInFlight\.current\) return/)
+  assert.match(component, /pollingInFlight\.current = request/)
+  assert.match(component, /pollingInFlight\.current === request\).*pollingInFlight\.current = undefined/)
+})
+
 test("unbound conversation exposes the registered OpenClaw agents", () => {
   assert.match(route, /getUnboundConversation\(/)
   assert.match(route, /allowedAgents: unboundConversation\.allowedAgents/)
