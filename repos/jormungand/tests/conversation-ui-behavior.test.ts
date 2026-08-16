@@ -61,7 +61,7 @@ function assertInitialHydrationGate(markup: string, label: string) {
   assert.match(sendButton, /disabled=""/)
 }
 
-test("actual TaskConversation render keeps Send disabled during initial hydration on unbound remount", async () => {
+test("actual TaskConversation render keeps Send disabled before an unbound conversation id hydrates", async () => {
   const TaskConversation = await loadTaskConversation()
 
   // SSR intentionally does not run GET effects or click handlers; this test observes the actual pre-hydration markup.

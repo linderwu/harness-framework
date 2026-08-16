@@ -256,7 +256,7 @@ test("conversation composer sends on Enter but preserves Shift+Enter and IME com
   assert.match(conversationSource, /event\.shiftKey \|\| event\.nativeEvent\.isComposing \|\| event\.keyCode === 229/)
   assert.match(conversationSource, /event\.preventDefault\(\)/)
   assert.match(conversationSource, /onKeyDown=\{handleComposerKeyDown\}/)
-  assert.match(conversationSource, /if \(!message \|\| allowedAgents\.length === 0 \|\| isLoadingConversation \|\| isStartingConversation\) return/)
+  assert.match(conversationSource, /if \(!message \|\| allowedAgents\.length === 0 \|\| !activeConversationId \|\| isLoadingConversation \|\| isStartingConversation\) return/)
 })
 
 test("conversation remains available without a selected project and can adopt manager binding", () => {

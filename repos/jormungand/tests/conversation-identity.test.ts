@@ -8,6 +8,11 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
 import { unboundConversationId } from "../lib/conversation"
+import {
+  isValidConversationId,
+  legacyConversationId,
+  resolveConversationId
+} from "../lib/conversation-identity"
 
 async function ensureCompiledAlias() {
   const { lstat, mkdir, realpath, rm, symlink } = await import("node:fs/promises")
@@ -84,7 +89,26 @@ function setEnv(key: string, value: string) {
   ;(process.env as Record<string, string | undefined>)[key] = value
 }
 
-test("conversation GET falls back to the legacy id and sets a durable cookie", async (t) => {
+test("conversation identity generates a new active id without cookie or body", () => {
+  const resolveActiveConversationId = resolveConversationId as unknown as (input: {
+    fallbackToNew: boolean
+  }) => { conversationId: string; shouldSetCookie: boolean }
+  const identity = resolveActiveConversationId({ fallbackToNew: true })
+
+  assert.match(identity.conversationId, /^conversation:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i)
+  assert.notEqual(identity.conversationId, legacyConversationId)
+  assert.equal(identity.shouldSetCookie, true)
+})
+
+test("legacy conversation id remains valid for migration compatibility", () => {
+  assert.equal(isValidConversationId(legacyConversationId), true)
+  const identity = resolveConversationId({ bodyConversationId: legacyConversationId })
+
+  assert.equal(identity.conversationId, legacyConversationId)
+  assert.equal(identity.shouldSetCookie, true)
+})
+
+test("conversation GET generates a new active id without a cookie and sets a durable cookie", async (t) => {
   const { GET } = await importRouteWithIsolatedDataDir<{
     GET: (request: Request) => Promise<Response>
   }>(t, "../app/api/conversation/route")
@@ -93,7 +117,8 @@ test("conversation GET falls back to the legacy id and sets a durable cookie", a
   const setCookie = response.headers.get("set-cookie") ?? ""
 
   assert.equal(response.status, 200)
-  assert.equal(body.conversationId, unboundConversationId)
+  assert.match(body.conversationId ?? "", /^conversation:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i)
+  assert.notEqual(body.conversationId, unboundConversationId)
   assert.match(setCookie, /jormungand-conversation-id=/i)
   assert.match(setCookie, /httponly/i)
   assert.match(setCookie, /samesite=lax/i)
@@ -113,7 +138,7 @@ test("conversation GET honors a validated conversation cookie", async (t) => {
   assert.equal(body.conversationId, conversationId)
 })
 
-test("conversation GET ignores malformed cookie encoding and falls back to the legacy id", async (t) => {
+test("conversation GET ignores malformed cookie encoding and generates a new active id", async (t) => {
   const { GET } = await importRouteWithIsolatedDataDir<{
     GET: (request: Request) => Promise<Response>
   }>(t, "../app/api/conversation/route")
@@ -123,7 +148,22 @@ test("conversation GET ignores malformed cookie encoding and falls back to the l
   const body = await response.json() as { conversationId?: string }
 
   assert.equal(response.status, 200)
-  assert.equal(body.conversationId, unboundConversationId)
+  assert.match(body.conversationId ?? "", /^conversation:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i)
+  assert.notEqual(body.conversationId, unboundConversationId)
+  assert.match(response.headers.get("set-cookie") ?? "", /jormungand-conversation-id=/i)
+})
+
+test("conversation GET still honors the legacy cookie for migration", async (t) => {
+  const { GET } = await importRouteWithIsolatedDataDir<{
+    GET: (request: Request) => Promise<Response>
+  }>(t, "../app/api/conversation/route")
+  const response = await GET(new Request("http://localhost/api/conversation", {
+    headers: { Cookie: `jormungand-conversation-id=${legacyConversationId}` }
+  }))
+  const body = await response.json() as { conversationId?: string }
+
+  assert.equal(response.status, 200)
+  assert.equal(body.conversationId, legacyConversationId)
 })
 
 test("new conversation route returns a server-generated id and durable cookie", async (t) => {
@@ -201,4 +241,32 @@ test("conversation POST accepts a validated body conversation id and echoes it b
   assert.equal(response.status, 202)
   assert.equal(body.conversationId, conversationId)
   assert.equal(body.userEntry?.workflowRunId, conversationId)
+})
+
+test("conversation POST generates an active id without body or cookie", async (t) => {
+  restoreEnv(t, "HARNESS_ALLOW_SIMULATED_AGENTS")
+  process.env.HARNESS_ALLOW_SIMULATED_AGENTS = "1"
+
+  const { POST } = await importRouteWithIsolatedDataDir<{
+    POST: (request: Request) => Promise<Response>
+  }>(t, "../app/api/conversation/route")
+  const response = await POST(new Request("http://localhost/api/conversation", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      content: "Start a fresh active conversation.",
+      idempotencyKey: "conversation-post-without-id",
+      targetAgent: "openclaw.gengar"
+    })
+  }))
+  const body = await response.json() as {
+    conversationId?: string
+    userEntry?: { workflowRunId?: string }
+  }
+
+  assert.equal(response.status, 202)
+  assert.match(body.conversationId ?? "", /^conversation:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i)
+  assert.notEqual(body.conversationId, unboundConversationId)
+  assert.equal(body.userEntry?.workflowRunId, body.conversationId)
+  assert.match(response.headers.get("set-cookie") ?? "", /jormungand-conversation-id=/i)
 })

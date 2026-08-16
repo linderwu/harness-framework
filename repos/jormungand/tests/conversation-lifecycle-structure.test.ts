@@ -173,7 +173,8 @@ describe("conversation route contracts", { concurrency: false }, () => {
     const body = await response.json() as { conversationId?: string }
 
     assert.equal(response.status, 200)
-    assert.equal(body.conversationId, unboundConversationId)
+    assert.match(body.conversationId ?? "", /^conversation:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i)
+    assert.notEqual(body.conversationId, unboundConversationId)
   })
 
   test("conversation control route requires a conversation id for Codex session controls", async (t) => {

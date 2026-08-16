@@ -28,6 +28,9 @@ export function isValidConversationId(value: unknown): value is string {
 export function resolveConversationId(input: {
   request?: Request
   bodyConversationId?: unknown
+  /** Active route fallback: issue a fresh server-owned conversation id. */
+  fallbackToNew?: boolean
+  /** Migration-only fallback for callers that must read legacy unbound data. */
   fallbackToLegacy?: boolean
   requireExplicit?: boolean
 }) {
@@ -49,6 +52,13 @@ export function resolveConversationId(input: {
 
   if (input.requireExplicit) {
     throw new ConversationIdentityError("conversationId is required")
+  }
+
+  if (input.fallbackToNew) {
+    return {
+      conversationId: createConversationId(),
+      shouldSetCookie: true
+    }
   }
 
   if (input.fallbackToLegacy) {

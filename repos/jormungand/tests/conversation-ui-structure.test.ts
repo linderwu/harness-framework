@@ -7,8 +7,10 @@ const dashboard = readFileSync("components/harness-dashboard.tsx", "utf8")
 const globalsCss = readFileSync("app/globals.css", "utf8")
 
 test("task conversation keeps an active conversation id and sends it with unbound requests", () => {
-  assert.match(taskConversation, /const \[conversationId, setConversationId\] = useState\(/)
+  assert.match(taskConversation, /const \[conversationId, setConversationId\] = useState<string \| undefined>\(runId\)/)
+  assert.doesNotMatch(taskConversation, /const defaultConversationId = runId \?\? "global:unbound-conversation"/)
   assert.match(taskConversation, /setConversationId\(data\.conversationId/)
+  assert.match(taskConversation, /const activeConversationId = isUnbound \? conversationId : runId/)
   assert.match(taskConversation, /workflowRunId: activeConversationId/)
   assert.match(taskConversation, /body: JSON\.stringify\(\{ conversationId: activeConversationId, targetAgent, content: message, idempotencyKey \}\)/)
   assert.match(taskConversation, /body: JSON\.stringify\(\{ action, conversationId: activeConversationId \}\)/)
@@ -27,8 +29,9 @@ test("task conversation exposes a new conversation action with pending reset beh
 test("conversation submission stays gated until the server identity hydrates", () => {
   // Source-contract coverage protects the reload/remount race when GET has not issued the active ID yet.
   assert.match(taskConversation, /const \[isLoadingConversation, setIsLoadingConversation\] = useState\(true\)/)
-  assert.match(taskConversation, /if \(!message \|\| allowedAgents\.length === 0 \|\| isLoadingConversation \|\| isStartingConversation\) return/)
-  assert.match(taskConversation, /disabled=\{!content\.trim\(\) \|\| !allowedAgents\.length \|\| isTurnRunning \|\| isLoadingConversation \|\| isStartingConversation\}/)
+  assert.match(taskConversation, /if \(!message \|\| allowedAgents\.length === 0 \|\| !activeConversationId \|\| isLoadingConversation \|\| isStartingConversation\) return/)
+  assert.match(taskConversation, /disabled=\{!content\.trim\(\) \|\| !allowedAgents\.length \|\| !activeConversationId \|\| isTurnRunning \|\| isLoadingConversation \|\| isStartingConversation\}/)
+  assert.match(taskConversation, /if \(requireConversationId && !data\.conversationId\) \{[\s\S]*throw new Error\(/)
 })
 
 test("dashboard resets bound workspace selection when a new conversation starts", () => {

@@ -21,14 +21,13 @@ export function TaskConversation(props: {
 }) {
   const runId = props.run?.id
   const isUnbound = !runId
-  const defaultConversationId = runId ?? "global:unbound-conversation"
   const conversationPath = runId ? `/api/workflow-runs/${runId}/conversation` : "/api/conversation"
   const onEntriesChanged = props.onEntriesChanged
   const [entries, setEntries] = useState(props.initialEntries)
   const initialAllowedAgents = props.allowedAgents
   const [allowedAgents, setAllowedAgents] = useState(initialAllowedAgents)
   const [targetAgent, setTargetAgent] = useState<AgentKind>(initialAllowedAgents[0] ?? "codex")
-  const [conversationId, setConversationId] = useState(defaultConversationId)
+  const [conversationId, setConversationId] = useState<string | undefined>(runId)
   const [content, setContent] = useState("")
   const [error, setError] = useState<string>()
   const [session, setSession] = useState<CodexConversationState["session"]>()
@@ -37,13 +36,13 @@ export function TaskConversation(props: {
   const [isLoadingConversation, setIsLoadingConversation] = useState(true)
   const [isStartingConversation, setIsStartingConversation] = useState(false)
   const pending = useMemo(() => entries.some((entry) => entry.status === "queued" || entry.status === "running"), [entries])
-  const activeConversationId = conversationId || defaultConversationId
+  const activeConversationId = isUnbound ? conversationId : runId
 
   useEffect(() => {
     let active = true
-    void loadConversation(conversationPath).then((data) => {
+    void loadConversation(conversationPath, isUnbound).then((data) => {
       if (!active) return
-      setConversationId(data.conversationId ?? defaultConversationId)
+      setConversationId(data.conversationId ?? runId)
       setEntries(data.entries)
       setAllowedAgents(data.allowedAgents)
       setTargetAgent((current) => data.allowedAgents.includes(current) ? current : data.allowedAgents[0] ?? "codex")
@@ -55,13 +54,13 @@ export function TaskConversation(props: {
       setIsLoadingConversation(false)
     })
     return () => { active = false }
-  }, [conversationPath, defaultConversationId, onEntriesChanged])
+  }, [conversationPath, isUnbound, onEntriesChanged, runId])
 
   useEffect(() => {
     if (!pending) return
     const timer = window.setInterval(() => {
-      void loadConversation(conversationPath).then((data) => {
-        setConversationId(data.conversationId ?? defaultConversationId)
+      void loadConversation(conversationPath, isUnbound).then((data) => {
+        setConversationId(data.conversationId ?? runId)
         setEntries(data.entries)
         setSession(data.session)
         setEvents(data.events ?? [])
@@ -69,12 +68,12 @@ export function TaskConversation(props: {
       }).catch((loadError) => setError(formatError(loadError)))
     }, isUnbound ? 1_200 : 3_000)
     return () => window.clearInterval(timer)
-  }, [conversationPath, defaultConversationId, isUnbound, onEntriesChanged, pending])
+  }, [conversationPath, isUnbound, onEntriesChanged, pending, runId])
 
   async function submit(event?: FormEvent) {
     event?.preventDefault()
     const message = content.trim()
-    if (!message || allowedAgents.length === 0 || isLoadingConversation || isStartingConversation) return
+    if (!message || allowedAgents.length === 0 || !activeConversationId || isLoadingConversation || isStartingConversation) return
     let idempotencyKey: string
     try {
       idempotencyKey = crypto.randomUUID()
@@ -126,6 +125,7 @@ export function TaskConversation(props: {
   }
 
   async function control(action: "interrupt" | "resume" | "stop") {
+    if (!activeConversationId || isLoadingConversation || isStartingConversation) return
     setIsControlling(true)
     setError(undefined)
     try {
@@ -247,14 +247,14 @@ export function TaskConversation(props: {
       <form className="conversationComposer" onSubmit={submit}>
         <label><span>Agent</span><select value={targetAgent} disabled={props.run?.projectType === "arceus_maintenance" || allowedAgents.length <= 1} onChange={(event) => setTargetAgent(event.target.value as AgentKind)}>{allowedAgents.map((agent) => <option value={agent} key={agent}>{getAgentLabel(agent)}</option>)}</select></label>
         <label className="conversationInput"><span>Message</span><textarea disabled={isTurnRunning} onKeyDown={handleComposerKeyDown} value={content} onChange={(event) => setContent(event.target.value)} placeholder={isTurnRunning ? "Codex is working. Pause or wait for the turn to finish." : props.run ? "Ask for progress, evidence, or a scoped action" : targetAgent === "codex" ? "Ask Codex to inspect or use the harness" : `Ask ${getAgentLabel(targetAgent)} for a response`} /></label>
-        <button className="primaryButton" disabled={!content.trim() || !allowedAgents.length || isTurnRunning || isLoadingConversation || isStartingConversation}><Send size={16} />Send</button>
+        <button className="primaryButton" disabled={!content.trim() || !allowedAgents.length || !activeConversationId || isTurnRunning || isLoadingConversation || isStartingConversation}><Send size={16} />Send</button>
       </form>
       {error ? <p className="formError" role="alert">{error}</p> : null}
     </section>
   )
 }
 
-async function loadConversation(path: string) {
+async function loadConversation(path: string, requireConversationId = false) {
   const response = await fetch(path, { cache: "no-store" })
   const data = await response.json() as Partial<CodexConversationState> & {
     entries: ConversationEntry[]
@@ -262,6 +262,9 @@ async function loadConversation(path: string) {
     error?: string
   }
   if (!response.ok) throw new Error(data.error ?? "Conversation could not be loaded")
+  if (requireConversationId && !data.conversationId) {
+    throw new Error("Conversation response did not include a conversationId")
+  }
   return data
 }
 
