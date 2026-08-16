@@ -24,6 +24,13 @@ test("task conversation exposes a new conversation action with pending reset beh
   assert.match(taskConversation, /props\.onNewConversation\?\.\(/)
 })
 
+test("conversation submission stays gated until the server identity hydrates", () => {
+  // Source-contract coverage protects the reload/remount race when GET has not issued the active ID yet.
+  assert.match(taskConversation, /const \[isLoadingConversation, setIsLoadingConversation\] = useState\(true\)/)
+  assert.match(taskConversation, /if \(!message \|\| allowedAgents\.length === 0 \|\| isLoadingConversation \|\| isStartingConversation\) return/)
+  assert.match(taskConversation, /disabled=\{!content\.trim\(\) \|\| !allowedAgents\.length \|\| isTurnRunning \|\| isLoadingConversation \|\| isStartingConversation\}/)
+})
+
 test("dashboard resets bound workspace selection when a new conversation starts", () => {
   assert.match(dashboard, /const \[conversationVersion, setConversationVersion\] = useState\(0\)/)
   assert.match(dashboard, /function handleNewConversation\(\)/)

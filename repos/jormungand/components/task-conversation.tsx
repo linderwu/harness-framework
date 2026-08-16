@@ -74,7 +74,7 @@ export function TaskConversation(props: {
   async function submit(event?: FormEvent) {
     event?.preventDefault()
     const message = content.trim()
-    if (!message || allowedAgents.length === 0) return
+    if (!message || allowedAgents.length === 0 || isLoadingConversation || isStartingConversation) return
     let idempotencyKey: string
     try {
       idempotencyKey = crypto.randomUUID()
@@ -247,7 +247,7 @@ export function TaskConversation(props: {
       <form className="conversationComposer" onSubmit={submit}>
         <label><span>Agent</span><select value={targetAgent} disabled={props.run?.projectType === "arceus_maintenance" || allowedAgents.length <= 1} onChange={(event) => setTargetAgent(event.target.value as AgentKind)}>{allowedAgents.map((agent) => <option value={agent} key={agent}>{getAgentLabel(agent)}</option>)}</select></label>
         <label className="conversationInput"><span>Message</span><textarea disabled={isTurnRunning} onKeyDown={handleComposerKeyDown} value={content} onChange={(event) => setContent(event.target.value)} placeholder={isTurnRunning ? "Codex is working. Pause or wait for the turn to finish." : props.run ? "Ask for progress, evidence, or a scoped action" : targetAgent === "codex" ? "Ask Codex to inspect or use the harness" : `Ask ${getAgentLabel(targetAgent)} for a response`} /></label>
-        <button className="primaryButton" disabled={!content.trim() || !allowedAgents.length || isTurnRunning}><Send size={16} />Send</button>
+        <button className="primaryButton" disabled={!content.trim() || !allowedAgents.length || isTurnRunning || isLoadingConversation || isStartingConversation}><Send size={16} />Send</button>
       </form>
       {error ? <p className="formError" role="alert">{error}</p> : null}
     </section>
