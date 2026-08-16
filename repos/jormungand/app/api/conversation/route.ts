@@ -34,7 +34,7 @@ export async function GET(request?: Request) {
     binding: unboundConversation.binding
   })
   return identity.shouldSetCookie
-    ? setConversationCookie(response, identity.conversationId)
+    ? setConversationCookie(response, identity.conversationId, request)
     : response
 }
 
@@ -69,7 +69,7 @@ export async function POST(request: Request) {
         status: result.duplicate ? 200 : 202
       })
       return identity.shouldSetCookie
-        ? setConversationCookie(response, identity.conversationId)
+        ? setConversationCookie(response, identity.conversationId, request)
         : response
     }
 
@@ -83,7 +83,7 @@ export async function POST(request: Request) {
       status: result.duplicate ? 200 : 202
     })
     return identity.shouldSetCookie
-      ? setConversationCookie(response, identity.conversationId)
+      ? setConversationCookie(response, identity.conversationId, request)
       : response
   } catch (error) {
     if (error instanceof ConversationIdentityError) {

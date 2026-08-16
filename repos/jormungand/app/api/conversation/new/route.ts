@@ -8,6 +8,7 @@ export async function POST(_request?: Request) {
   const conversationId = createConversationId()
   return setConversationCookie(
     NextResponse.json({ conversationId }),
-    conversationId
+    conversationId,
+    _request
   )
 }

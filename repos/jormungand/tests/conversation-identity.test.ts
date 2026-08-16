@@ -10,14 +10,17 @@ import test from "node:test"
 import { unboundConversationId } from "../lib/conversation"
 
 async function ensureCompiledAlias() {
-  const { mkdir, symlink } = await import("node:fs/promises")
+  const { lstat, mkdir, symlink } = await import("node:fs/promises")
   const tmpRoot = join(process.cwd(), ".tmp-tests")
   const scopedRoot = join(tmpRoot, "node_modules", "@")
   const libLink = join(scopedRoot, "lib")
 
   await mkdir(scopedRoot, { recursive: true })
-  await rm(libLink, { recursive: true, force: true }).catch(() => undefined)
-  await symlink(join(tmpRoot, "lib"), libLink, "junction")
+  const existingLink = await lstat(libLink).catch(() => undefined)
+  if (existingLink) return
+  await symlink(join(tmpRoot, "lib"), libLink, "junction").catch(async (error) => {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error
+  })
 }
 
 function clearRouteModuleCache(routeModulePath: string) {
@@ -67,6 +70,10 @@ function restoreEnv(t: test.TestContext, key: string) {
   })
 }
 
+function setEnv(key: string, value: string) {
+  ;(process.env as Record<string, string | undefined>)[key] = value
+}
+
 test("conversation GET falls back to the legacy id and sets a durable cookie", async (t) => {
   const { GET } = await importRouteWithIsolatedDataDir<{
     GET: (request: Request) => Promise<Response>
@@ -96,6 +103,19 @@ test("conversation GET honors a validated conversation cookie", async (t) => {
   assert.equal(body.conversationId, conversationId)
 })
 
+test("conversation GET ignores malformed cookie encoding and falls back to the legacy id", async (t) => {
+  const { GET } = await importRouteWithIsolatedDataDir<{
+    GET: (request: Request) => Promise<Response>
+  }>(t, "../app/api/conversation/route")
+  const response = await GET(new Request("http://localhost/api/conversation", {
+    headers: { Cookie: "jormungand-conversation-id=%" }
+  }))
+  const body = await response.json() as { conversationId?: string }
+
+  assert.equal(response.status, 200)
+  assert.equal(body.conversationId, unboundConversationId)
+})
+
 test("new conversation route returns a server-generated id and durable cookie", async (t) => {
   const { POST } = await importRouteWithIsolatedDataDir<{
     POST: (request: Request) => Promise<Response>
@@ -111,6 +131,38 @@ test("new conversation route returns a server-generated id and durable cookie", 
   assert.notEqual(body.conversationId, unboundConversationId)
   assert.match(setCookie, /jormungand-conversation-id=/i)
   assert.match(setCookie, /httponly/i)
+})
+
+test("conversation cookies become secure and persistent for production HTTPS", async (t) => {
+  restoreEnv(t, "NODE_ENV")
+  setEnv("NODE_ENV", "production")
+
+  const { GET } = await importRouteWithIsolatedDataDir<{
+    GET: (request: Request) => Promise<Response>
+  }>(t, "../app/api/conversation/route")
+  const response = await GET(new Request("https://example.test/api/conversation"))
+  const setCookie = response.headers.get("set-cookie") ?? ""
+
+  assert.match(setCookie, /httponly/i)
+  assert.match(setCookie, /samesite=lax/i)
+  assert.match(setCookie, /secure/i)
+  assert.match(setCookie, /max-age=/i)
+  assert.match(setCookie, /expires=/i)
+})
+
+test("conversation cookies stay non-secure for local HTTP development", async (t) => {
+  restoreEnv(t, "NODE_ENV")
+  setEnv("NODE_ENV", "development")
+
+  const { GET } = await importRouteWithIsolatedDataDir<{
+    GET: (request: Request) => Promise<Response>
+  }>(t, "../app/api/conversation/route")
+  const response = await GET(new Request("http://localhost/api/conversation"))
+  const setCookie = response.headers.get("set-cookie") ?? ""
+
+  assert.doesNotMatch(setCookie, /secure/i)
+  assert.match(setCookie, /max-age=/i)
+  assert.match(setCookie, /expires=/i)
 })
 
 test("conversation POST accepts a validated body conversation id and echoes it back", async (t) => {

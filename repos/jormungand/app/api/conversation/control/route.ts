@@ -38,7 +38,7 @@ export async function POST(request: Request) {
       )
     )
     return identity.shouldSetCookie
-      ? setConversationCookie(response, identity.conversationId)
+      ? setConversationCookie(response, identity.conversationId, request)
       : response
   } catch (error) {
     if (error instanceof ConversationIdentityError) {
