@@ -1,5 +1,10 @@
 import { NextResponse } from "next/server"
 import {
+  ConversationIdentityError,
+  resolveConversationId,
+  setConversationCookie
+} from "@/lib/conversation-identity"
+import {
   CodexConversationError,
   controlCodexConversation
 } from "@/lib/codex-conversation"
@@ -7,6 +12,7 @@ import { getDefaultHiveServices } from "@/lib/hive-services"
 
 export async function POST(request: Request) {
   const body = (await request.json().catch(() => ({}))) as {
+    conversationId?: unknown
     action?: "interrupt" | "resume" | "stop"
   }
 
@@ -18,11 +24,26 @@ export async function POST(request: Request) {
   }
 
   try {
+    const identity = resolveConversationId({
+      request,
+      bodyConversationId: body.conversationId,
+      requireExplicit: true
+    })
     const services = getDefaultHiveServices()
-    return NextResponse.json(
-      await controlCodexConversation(services.repository, body.action)
+    const response = NextResponse.json(
+      await controlCodexConversation(
+        services.repository,
+        body.action,
+        identity.conversationId
+      )
     )
+    return identity.shouldSetCookie
+      ? setConversationCookie(response, identity.conversationId)
+      : response
   } catch (error) {
+    if (error instanceof ConversationIdentityError) {
+      return NextResponse.json({ error: error.message }, { status: error.status })
+    }
     if (error instanceof CodexConversationError) {
       return NextResponse.json({ error: error.message }, { status: error.status })
     }

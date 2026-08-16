@@ -15,6 +15,7 @@ export interface CodexConversationEvent {
 }
 
 export interface CodexConversationState {
+  conversationId: string
   entries: ConversationEntry[]
   allowedAgents: import("@/lib/types").AgentKind[]
   session?: {
@@ -48,12 +49,14 @@ interface BridgeEventsResponse extends BridgeSessionSnapshot {
 }
 
 export async function getCodexConversationState(
-  repository: HiveMemoryRepository
+  repository: HiveMemoryRepository,
+  conversationId = codexConversationId
 ): Promise<CodexConversationState> {
-  const session = repository.getCodexSession(codexConversationId)
+  const session = repository.getCodexSession(conversationId)
   if (!session) {
     return {
-      entries: repository.listConversation(codexConversationId),
+      conversationId,
+      entries: repository.listConversation(conversationId),
       allowedAgents: ["codex"],
       events: [],
       nextCursor: 0
@@ -64,11 +67,12 @@ export async function getCodexConversationState(
 
   if (!bridgeState) {
     await repository.updateCodexSession({
-      conversationId: codexConversationId,
+      conversationId,
       status: "offline"
     })
     return {
-      entries: repository.listConversation(codexConversationId),
+      conversationId,
+      entries: repository.listConversation(conversationId),
       allowedAgents: ["codex"],
       session: toSessionState(session),
       events: [],
@@ -76,19 +80,23 @@ export async function getCodexConversationState(
     }
   }
 
-  await syncConversation(repository, bridgeState)
-  const refreshedSession = repository.getCodexSession(codexConversationId) ?? session
+  await syncConversation(repository, conversationId, bridgeState)
+  const refreshedSession = repository.getCodexSession(conversationId) ?? session
 
   return {
-    entries: repository.listConversation(codexConversationId),
+    conversationId,
+    entries: repository.listConversation(conversationId),
     allowedAgents: ["codex"],
-    session: toSessionState({
-      ...refreshedSession,
-      status: bridgeState.status,
-      turnStatus: bridgeState.turnStatus,
-      currentTurnId: bridgeState.currentTurnId,
-      cursor: bridgeState.nextCursor
-    }, bridgeState),
+    session: toSessionState(
+      {
+        ...refreshedSession,
+        status: bridgeState.status,
+        turnStatus: bridgeState.turnStatus,
+        currentTurnId: bridgeState.currentTurnId,
+        cursor: bridgeState.nextCursor
+      },
+      bridgeState
+    ),
     events: bridgeState.events,
     nextCursor: bridgeState.nextCursor
   }
@@ -96,28 +104,37 @@ export async function getCodexConversationState(
 
 export async function postCodexConversationMessage(input: {
   repository: HiveMemoryRepository
+  conversationId?: string
   content: string
   idempotencyKey: string
 }) {
+  const conversationId = input.conversationId ?? codexConversationId
   const content = input.content.trim()
+  const storageIdempotencyKey = toConversationScopedIdempotencyKey(
+    conversationId,
+    input.idempotencyKey
+  )
+
   if (!content) throw new CodexConversationError("content is required", 400)
   if (!input.idempotencyKey.trim()) {
     throw new CodexConversationError("idempotencyKey is required", 400)
   }
 
-  const existing = input.repository.getConversationByIdempotencyKey(input.idempotencyKey)
+  const existing = input.repository.getConversationByIdempotencyKey(storageIdempotencyKey)
   if (existing) {
     return {
       userEntry: existing,
-      responseEntry: input.repository.getConversationByIdempotencyKey(`${input.idempotencyKey}:response`),
+      responseEntry: input.repository.getConversationByIdempotencyKey(
+        `${storageIdempotencyKey}:response`
+      ),
       duplicate: true,
-      ...(await getCodexConversationState(input.repository))
+      ...(await getCodexConversationState(input.repository, conversationId))
     }
   }
 
-  const session = await ensureCodexSession(input.repository)
+  const session = await ensureCodexSession(input.repository, conversationId)
   const userInsert = await input.repository.insertConversation({
-    workflowRunId: codexConversationId,
+    workflowRunId: conversationId,
     role: "user",
     agentId: "codex",
     content,
@@ -125,7 +142,7 @@ export async function postCodexConversationMessage(input: {
     status: "running",
     artifactIds: [],
     memoryIds: [],
-    idempotencyKey: input.idempotencyKey
+    idempotencyKey: storageIdempotencyKey
   })
   const userEntry = userInsert.entry
 
@@ -135,7 +152,7 @@ export async function postCodexConversationMessage(input: {
       body: JSON.stringify({ content })
     })
     await input.repository.updateCodexSession({
-      conversationId: codexConversationId,
+      conversationId,
       status: "running",
       turnStatus: "inProgress"
     })
@@ -145,56 +162,64 @@ export async function postCodexConversationMessage(input: {
   }
 
   const responseInsert = await input.repository.insertConversation({
-    workflowRunId: codexConversationId,
+    workflowRunId: conversationId,
     role: "agent",
     agentId: "codex",
-    content: "Codex is working…",
+    content: "Codex is working...",
     importance: "important",
     status: "running",
     replyToId: userEntry.id,
     artifactIds: [],
     memoryIds: [],
-    idempotencyKey: `${input.idempotencyKey}:response`
+    idempotencyKey: `${storageIdempotencyKey}:response`
   })
 
   return {
     userEntry,
     responseEntry: responseInsert.entry,
     duplicate: false,
-    ...(await getCodexConversationState(input.repository))
+    ...(await getCodexConversationState(input.repository, conversationId))
   }
 }
 
 export async function controlCodexConversation(
   repository: HiveMemoryRepository,
-  action: "interrupt" | "resume" | "stop"
+  action: "interrupt" | "resume" | "stop",
+  conversationId = codexConversationId
 ) {
-  const session = repository.getCodexSession(codexConversationId)
+  const session = repository.getCodexSession(conversationId)
   if (!session) throw new CodexConversationError("Codex conversation has not started", 404)
 
   await bridgeRequest(`/sessions/${encodeURIComponent(session.bridgeSessionId)}/${action}`, {
     method: "POST",
     body: JSON.stringify({})
   })
-  return getCodexConversationState(repository)
+  return getCodexConversationState(repository, conversationId)
 }
 
-async function ensureCodexSession(repository: HiveMemoryRepository) {
-  const existing = repository.getCodexSession(codexConversationId)
+async function ensureCodexSession(
+  repository: HiveMemoryRepository,
+  conversationId: string
+) {
+  const existing = repository.getCodexSession(conversationId)
   if (existing) {
     const existingState = await readBridgeEvents(existing.bridgeSessionId, existing.cursor)
-    if (existingState && existingState.status !== "stopped" && existingState.status !== "failed") {
+    if (
+      existingState &&
+      existingState.status !== "stopped" &&
+      existingState.status !== "failed"
+    ) {
       return existing
     }
   }
 
-  const created = await bridgeRequest("/sessions", {
+  const created = (await bridgeRequest("/sessions", {
     method: "POST",
     body: JSON.stringify({})
-  }) as BridgeSessionSnapshot
+  })) as BridgeSessionSnapshot
 
   const session = await repository.upsertCodexSession({
-    conversationId: codexConversationId,
+    conversationId,
     bridgeSessionId: created.id,
     codexThreadId: created.threadId,
     status: created.status,
@@ -208,9 +233,10 @@ async function ensureCodexSession(repository: HiveMemoryRepository) {
 
 async function syncConversation(
   repository: HiveMemoryRepository,
+  conversationId: string,
   bridgeState: BridgeEventsResponse
 ) {
-  const entries = repository.listConversation(codexConversationId)
+  const entries = repository.listConversation(conversationId)
   const responseEntry = [...entries].reverse().find(
     (entry) => entry.role === "agent" && entry.status === "running"
   )
@@ -220,14 +246,20 @@ async function syncConversation(
   const activityText = [...bridgeState.events]
     .reverse()
     .find((event) => event.message?.trim())?.message
-  const isCompleted = bridgeState.status === "idle" && bridgeState.turnStatus === "completed"
-  const isFailed = bridgeState.status === "failed" || bridgeState.turnStatus === "failed"
-  const isPaused = bridgeState.status === "paused" || bridgeState.turnStatus === "interrupted"
-  const responseContent = bridgeState.finalText?.trim() ||
+  const isCompleted =
+    bridgeState.status === "idle" && bridgeState.turnStatus === "completed"
+  const isFailed =
+    bridgeState.status === "failed" || bridgeState.turnStatus === "failed"
+  const isPaused =
+    bridgeState.status === "paused" || bridgeState.turnStatus === "interrupted"
+  const responseContent =
+    bridgeState.finalText?.trim() ||
     bridgeState.liveText?.trim() ||
-    (isPaused ? "Codex paused. Choose Continue to resume this session." :
-      isFailed ? activityText || "Codex failed to complete this turn." :
-        activityText || "Codex is working…")
+    (isPaused
+      ? "Codex paused. Choose Continue to resume this session."
+      : isFailed
+        ? activityText || "Codex failed to complete this turn."
+        : activityText || "Codex is working...")
 
   if (responseEntry) {
     await repository.updateConversation({
@@ -243,7 +275,7 @@ async function syncConversation(
     })
   }
   await repository.updateCodexSession({
-    conversationId: codexConversationId,
+    conversationId,
     status: bridgeState.status,
     turnStatus: bridgeState.turnStatus,
     currentTurnId: bridgeState.currentTurnId,
@@ -253,10 +285,10 @@ async function syncConversation(
 
 async function readBridgeEvents(bridgeSessionId: string, cursor: number) {
   try {
-    return await bridgeRequest(
+    return (await bridgeRequest(
       `/sessions/${encodeURIComponent(bridgeSessionId)}/events?after=${cursor}`,
       { method: "GET" }
-    ) as BridgeEventsResponse
+    )) as BridgeEventsResponse
   } catch {
     return undefined
   }
@@ -316,6 +348,13 @@ function toSessionState(
 
 function normalizeUrl(value: string) {
   return value.endsWith("/") ? value : `${value}/`
+}
+
+function toConversationScopedIdempotencyKey(
+  conversationId: string,
+  idempotencyKey: string
+) {
+  return `${conversationId}:${idempotencyKey.trim()}`
 }
 
 export class CodexConversationError extends Error {

@@ -1,11 +1,15 @@
 import { agentProfiles, normalizeAgentKind } from "./agents"
+import {
+  createConversationId,
+  legacyConversationId
+} from "./conversation-identity"
 import type { ContextPack } from "./context-builder"
 import type { HiveMemoryRepository } from "./hive-memory/repository"
 import type { ConversationEntry } from "./hive-memory/types"
 import type { ManagerWakeReason } from "./manager-scheduler"
 import type { AgentKind, WorkflowRun } from "./types"
 
-export const unboundConversationId = "global:unbound-conversation"
+export const unboundConversationId = legacyConversationId
 
 export interface ConversationBinding {
   projectId: string
@@ -63,6 +67,7 @@ interface ConversationDependencies {
     idempotencyKey: string
   }) => Promise<unknown>
   routeUnbound?: (input: {
+    conversationId: string
     content: string
     entries: ConversationEntry[]
     targetAgent: AgentKind
@@ -85,24 +90,35 @@ export class ConversationService {
     }
   }
 
-  async getUnboundConversation() {
+  async getUnboundConversation(conversationId = unboundConversationId) {
     const health = await this.dependencies.getHealth?.() ?? {}
     return {
-      entries: this.dependencies.repository.listConversation(unboundConversationId),
+      conversationId,
+      entries: this.dependencies.repository.listConversation(conversationId),
       allowedAgents: listAllowedAgents("development", health),
       binding: undefined
     }
   }
 
+  startNewConversation() {
+    return createConversationId()
+  }
+
   async postUnboundMessage(input: {
+    conversationId?: string
     content: string
     targetAgent?: AgentKind
     idempotencyKey: string
   }) {
+    const conversationId = input.conversationId ?? unboundConversationId
     const content = input.content.trim()
     const targetAgent = normalizeAgentKind(input.targetAgent)
     const health = await this.dependencies.getHealth?.() ?? {}
     const allowedAgents = listAllowedAgents("development", health)
+    const storageIdempotencyKey = toConversationScopedIdempotencyKey(
+      conversationId,
+      input.idempotencyKey
+    )
 
     if (!content) throw new ConversationError("content is required", 400)
     if (!input.idempotencyKey.trim()) throw new ConversationError("idempotencyKey is required", 400)
@@ -111,11 +127,11 @@ export class ConversationService {
     }
     if (!this.dependencies.routeUnbound) throw new ConversationError("Conversation manager is unavailable", 503)
 
-    const existing = this.dependencies.repository.getConversationByIdempotencyKey(input.idempotencyKey)
-    if (existing) return this.duplicateUnboundResult(existing)
+    const existing = this.dependencies.repository.getConversationByIdempotencyKey(storageIdempotencyKey)
+    if (existing) return this.duplicateUnboundResult(existing, conversationId)
 
     const userInsert = await this.dependencies.repository.insertConversation({
-      workflowRunId: unboundConversationId,
+      workflowRunId: conversationId,
       role: "user",
       agentId: targetAgent,
       content,
@@ -123,20 +139,21 @@ export class ConversationService {
       status: "queued",
       artifactIds: [],
       memoryIds: [],
-      idempotencyKey: input.idempotencyKey
+      idempotencyKey: storageIdempotencyKey
     })
     const userEntry = userInsert.entry
-    if (!userInsert.inserted) return this.duplicateUnboundResult(userEntry)
+    if (!userInsert.inserted) return this.duplicateUnboundResult(userEntry, conversationId)
 
     try {
       await this.dependencies.repository.updateConversation({ id: userEntry.id, status: "running" })
       const decision = await this.dependencies.routeUnbound({
+        conversationId,
         targetAgent,
         content,
-        entries: this.dependencies.repository.listConversation(unboundConversationId)
+        entries: this.dependencies.repository.listConversation(conversationId)
       })
       const responseInsert = await this.dependencies.repository.insertConversation({
-        workflowRunId: unboundConversationId,
+        workflowRunId: conversationId,
         role: targetAgent === "codex" ? "manager" : "agent",
         agentId: targetAgent,
         content: compactResponse(decision.body),
@@ -145,16 +162,17 @@ export class ConversationService {
         replyToId: userEntry.id,
         artifactIds: [],
         memoryIds: [],
-        idempotencyKey: `${input.idempotencyKey}:response`
+        idempotencyKey: `${storageIdempotencyKey}:response`
       })
       await this.dependencies.repository.updateConversation({
         id: userEntry.id,
         status: decision.status === "completed" ? "completed" : "failed"
       })
       if (targetAgent === "codex" && decision.binding) {
-        await this.dependencies.repository.moveConversation(unboundConversationId, decision.binding.workflowRunId)
+        await this.dependencies.repository.moveConversation(conversationId, decision.binding.workflowRunId)
       }
       return {
+        conversationId,
         userEntry: this.dependencies.repository.getConversationEntry(userEntry.id)!,
         responseEntry: this.dependencies.repository.getConversationEntry(responseInsert.entry.id)!,
         binding: decision.binding,
@@ -283,11 +301,12 @@ export class ConversationService {
     }
   }
 
-  private async duplicateUnboundResult(userEntry: ConversationEntry) {
+  private async duplicateUnboundResult(userEntry: ConversationEntry, conversationId: string) {
     const run = userEntry.workflowRunId === unboundConversationId
       ? undefined
       : await this.dependencies.getRun(userEntry.workflowRunId)
     return {
+      conversationId,
       userEntry,
       responseEntry: this.dependencies.repository.getConversationByIdempotencyKey(`${userEntry.idempotencyKey}:response`),
       binding: run ? { projectId: run.projectId, workflowRunId: run.id, projectName: run.projectName } : undefined,
@@ -331,4 +350,11 @@ export function parseUnboundManagerDecision(raw: string, runs: WorkflowRun[]) {
 function compactResponse(body: string) {
   const normalized = body.trim()
   return normalized.length <= 4_000 ? normalized : normalized.slice(0, 4_000)
+}
+
+function toConversationScopedIdempotencyKey(
+  conversationId: string,
+  idempotencyKey: string
+) {
+  return `${conversationId}:${idempotencyKey.trim()}`
 }

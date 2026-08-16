@@ -106,7 +106,7 @@ function createServices() {
       return artifact.id
     },
     enqueueManagerWake: (input) => scheduler.enqueue(input),
-    routeUnbound: async ({ targetAgent, content, entries }) => {
+    routeUnbound: async ({ conversationId, targetAgent, content, entries }) => {
       const syntheticRun = createWorkflowRun({
         projectId: "",
         projectName: "Unbound conversation",
@@ -174,6 +174,8 @@ function createServices() {
         artifactType: "log",
         title: "Unbound limited conversation",
         fallbackBody: "The requested agent can only reply in unbound conversation mode.",
+        conversationId,
+        conversationHistory: buildUnboundConversationHistory(entries, targetAgent),
         skill: {
           id: "conversation.unbound_limited",
           eventType: "requirement_intake",
@@ -203,4 +205,26 @@ function createServices() {
     }
   })
   return { database, repository, scheduler, conversation }
+}
+
+function buildUnboundConversationHistory(
+  entries: Array<{ role: string; agentId?: string; content: string }>,
+  targetAgent: string
+) {
+  return entries
+    .filter(
+      (entry) =>
+        entry.agentId === targetAgent &&
+        (entry.role === "user" || entry.role === "agent")
+    )
+    .slice(-12)
+    .map((entry) => ({
+      role: entry.role === "user" ? "user" as const : "assistant" as const,
+      content: truncateConversationHistory(entry.content)
+    }))
+}
+
+function truncateConversationHistory(value: string) {
+  const normalized = value.trim().replaceAll(/\s+/g, " ")
+  return normalized.length <= 1_200 ? normalized : normalized.slice(0, 1_200)
 }

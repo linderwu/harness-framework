@@ -34,7 +34,7 @@ test("browser conversation renders Codex activity and polls while pending", () =
 })
 
 test("unbound conversation exposes the registered OpenClaw agents", () => {
-  assert.match(route, /getUnboundConversation\(\)/)
+  assert.match(route, /getUnboundConversation\(/)
   assert.match(route, /allowedAgents: unboundConversation\.allowedAgents/)
   assert.match(component, /const initialAllowedAgents = props\.allowedAgents/)
   assert.match(component, /targetAgent === "codex"/)

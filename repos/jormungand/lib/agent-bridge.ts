@@ -27,6 +27,11 @@ export interface AgentInvocationInput {
   fallbackBody: string
   runtimeSkillBundles?: RuntimeSkillBundleDescriptor[]
   contextPack?: ContextPack
+  conversationId?: string
+  conversationHistory?: Array<{
+    role: "user" | "assistant"
+    content: string
+  }>
 }
 
 interface BridgeResponse {
@@ -111,7 +116,9 @@ export async function invokeConfiguredAgent(
         runtimeSkillBundles: input.runtimeSkillBundles ?? [],
         artifacts: input.run.artifacts,
         fallbackBody: input.fallbackBody,
-        contextPack: input.contextPack
+        contextPack: input.contextPack,
+        conversationId: input.conversationId,
+        conversationHistory: input.conversationHistory
       })
     })
 
@@ -352,7 +359,11 @@ async function invokeOpenClawA2A(
   idempotencyKey: string
 ): Promise<AgentArtifactResult> {
   const profile = getAgentProfile(input.executor)
-  const sessionKey = getOpenClawA2ASessionKey(input.executor)
+  const sessionKey = getOpenClawSessionKey({
+    agent: input.executor,
+    conversationId: input.conversationId,
+    workflowRunId: input.run.id
+  })
   const model = process.env.OPENCLAW_A2A_MODEL ?? "minimax/MiniMax-M2.7"
   const protocol = resolveOpenClawA2AProtocol()
   const envelope = createOpenClawA2AEnvelope(
@@ -405,7 +416,10 @@ async function sendOpenClawA2AControl(run: WorkflowRun) {
   }
 
   const profile = getAgentProfile(run.selectedAgent)
-  const sessionKey = getOpenClawA2ASessionKey(run.selectedAgent)
+  const sessionKey = getOpenClawSessionKey({
+    agent: run.selectedAgent,
+    workflowRunId: run.id
+  })
   const model = process.env.OPENCLAW_A2A_MODEL ?? "minimax/MiniMax-M2.7"
   const protocol = resolveOpenClawA2AProtocol()
 
@@ -539,12 +553,23 @@ function getOpenClawA2ACommand(agent: AgentKind) {
   return process.env.OPENCLAW_A2A_COMMAND
 }
 
-function getOpenClawA2ASessionKey(agent: AgentKind) {
-  const profile = getAgentProfile(agent)
-  return (
-    process.env.OPENCLAW_A2A_SESSION_KEY ??
-    `agent:${profile.mainAgent ?? "rowlet"}:a2a-codex`
-  )
+function getOpenClawSessionKey(input: {
+  agent: AgentKind
+  conversationId?: string
+  workflowRunId?: string
+}) {
+  const profile = getAgentProfile(input.agent)
+  const mainAgent = profile.mainAgent ?? "rowlet"
+
+  if (input.conversationId) {
+    return `agent:${mainAgent}:harness-conversation-${sanitizeSessionSegment(input.conversationId)}`
+  }
+
+  if (input.workflowRunId) {
+    return `agent:${mainAgent}:harness-${sanitizeSessionSegment(input.workflowRunId)}`
+  }
+
+  return process.env.OPENCLAW_A2A_SESSION_KEY ?? `agent:${mainAgent}:a2a-codex`
 }
 
 function getBridgeSource(agent: AgentKind): AgentArtifactResult["source"] {
@@ -559,4 +584,8 @@ function getIntakeSource(agent: AgentKind): AgentArtifactResult["source"] {
 
 function formatError(error: unknown) {
   return error instanceof Error ? error.message : String(error)
+}
+
+function sanitizeSessionSegment(value: string) {
+  return value.replaceAll(/[^A-Za-z0-9._-]/g, "-")
 }
