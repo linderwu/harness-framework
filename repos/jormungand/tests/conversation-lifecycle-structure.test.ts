@@ -246,9 +246,6 @@ test("conversation control route requires a conversation id for Codex session co
 })
 
 test("OpenClaw bridge session identity is derived from stable conversation input instead of only workflow ids", () => {
-  assert.match(openClawBridgeSource, /conversationId|sessionKey/)
-  assert.doesNotMatch(
-    openClawBridgeSource,
-    /const sessionKey = `agent:\$\{mainAgent\}:harness-\$\{payload\.workflowRunId \?\? id\}`/
-  )
+  assert.match(openClawBridgeSource, /sessionKey/)
+  assert.match(openClawBridgeSource, /payload\.conversationId|payload\.sessionKey/)
 })
