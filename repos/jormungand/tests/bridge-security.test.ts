@@ -88,7 +88,7 @@ test("OpenClaw deployment pins SSH hosts and deploys the skill lock", () => {
 })
 
 test("site health stays public while application routes remain protected", () => {
-  assert.match(proxySource, /favicon\.ico\|health\$/)
+  assert.match(proxySource, /favicon\.ico\|apple-icon\.png\|health\$/)
   assert.match(healthSource, /ok: true/)
   assert.match(healthSource, /service: "jormungandr"/)
 })

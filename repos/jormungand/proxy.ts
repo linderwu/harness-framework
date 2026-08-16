@@ -77,5 +77,5 @@ function constantTimeEquals(value: string, expectedValue: string) {
 }
 
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico|health$).*)"]
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|apple-icon.png|health$).*)"]
 }
