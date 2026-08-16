@@ -53,61 +53,155 @@ This plan supplements the existing `REMOTE_CODEX_CONVERSATION_TEST_PLAN.md` and 
 
 ### Unit and Service
 
-- `lib/conversation.ts`
-  - creates a fresh conversation identifier on explicit new-conversation action
-  - keeps existing conversation identifier when posting normal follow-up messages
-  - preserves same conversation across multiple unbound turns before binding
-  - binds or moves conversation only when manager decision explicitly targets a run
-  - rejects invalid or cross-run conversation IDs
-- `lib/codex-conversation.ts`
-  - keys session persistence by `conversationId`
-  - does not read or write only one fixed global conversation ID
-  - pause, resume, and stop operate on the requested conversation session
-- `lib/agent-bridge.ts`
-  - supplies stable conversation identity into OpenClaw HTTP and A2A paths
-  - derives OpenClaw session key from conversation identity plus agent identity
-  - reuses session key for same conversation plus same agent
-  - isolates session key across agents
-- `lib/hive-services.ts`
-  - routes unbound and bound flows without collapsing all traffic into one global conversation
+Compile lifecycle tests:
+
+```powershell
+npm exec -- tsc -p tsconfig.tests.json
+```
+
+Expected:
+
+- exit code `0`
+- `.tmp-tests/tests/*.js` is generated
+
+Run lifecycle red tests only:
+
+```powershell
+node --test .tmp-tests/tests/conversation-lifecycle-structure.test.js
+```
+
+Expected before implementation:
+
+- tests fail because required lifecycle behavior is missing
+- failures mention missing `conversationId`, missing new-conversation command, fixed Codex session scope, or fixed OpenClaw session-key derivation
+- no syntax error, import error, or runtime crash unrelated to the missing feature
+
+Service helper checks to implement and verify:
+
+- `createConversationService(...).getUnboundConversation()` returns `conversationId`
+- explicit new-conversation helper creates a fresh conversation ID and leaves the old transcript untouched
+- `postCodexConversationMessage(...)` persists user and response entries under the caller-supplied `conversationId`
+- `getCodexConversationState(...)` reads the session keyed by the supplied `conversationId`
+- OpenClaw dispatch derives stable session identity from `conversationId + agentId`
 
 ### API and Cookie
 
-- `app/api/conversation/route.ts`
-  - `GET` returns current `conversationId`
-  - `POST` accepts current `conversationId`
-  - `POST` supports explicit new-conversation creation flow
-  - response returns `conversationId`, any updated binding, and visible transcript
-- `app/api/conversation/control/route.ts`
-  - requires or forwards `conversationId` for Codex controls
-  - cannot operate only against a fixed global session
-- Cookie/session persistence
-  - current conversation survives reload
-  - new conversation rotates the persisted conversation identifier
-  - stale or invalid cookie fails closed to a safe fresh conversation
+Handler-level checks:
+
+```powershell
+node --test .tmp-tests/tests/conversation-lifecycle-structure.test.js
+```
+
+Expected after implementation:
+
+- `GET /api/conversation` returns HTTP `200` and JSON with `conversationId`
+- `POST /api/conversation/control` without `conversationId` returns HTTP `400`
+
+Manual HTTP probes against local app:
+
+```powershell
+curl.exe -i http://127.0.0.1:3000/api/conversation
+curl.exe -i -X POST http://127.0.0.1:3000/api/conversation/control -H "Content-Type: application/json" --data "{\"action\":\"resume\"}"
+curl.exe -i -X POST http://127.0.0.1:3000/api/conversation -H "Content-Type: application/json" --data "{\"conversationId\":\"conv-1\",\"content\":\"hello\",\"idempotencyKey\":\"msg-1\",\"targetAgent\":\"codex\"}"
+```
+
+Expected after implementation:
+
+- `GET /api/conversation` => HTTP `200`, JSON contains `conversationId`, `entries`, `allowedAgents`
+- control POST without `conversationId` => HTTP `400`, JSON `error` mentions `conversationId`
+- message POST with valid `conversationId` => HTTP `200` or `202`, JSON echoes `conversationId` and includes `userEntry`
+
+Cookie/header persistence checks:
+
+```powershell
+$session = New-Object Microsoft.PowerShell.Commands.WebRequestSession
+Invoke-WebRequest http://127.0.0.1:3000/api/conversation -WebSession $session | Out-Null
+$session.Cookies.GetCookies("http://127.0.0.1:3000")
+```
+
+Expected after implementation:
+
+- one cookie or equivalent session header stores current conversation identity
+- after `New conversation`, cookie value changes
+- after page reload, the same cookie value yields the same `conversationId`
+
+Explicit cookie-header check:
+
+```powershell
+curl.exe -i http://127.0.0.1:3000/api/conversation -H "Cookie: jormungand_conversation_id=conv-1"
+```
+
+Expected after implementation:
+
+- JSON `conversationId` resolves to `conv-1` or returns a safe replacement if `conv-1` is invalid
+- invalid cookie does not return HTTP `500`
 
 ### Codex Bridge
 
-- Codex bridge session creation is per `conversationId`
+Mock bridge request assertions in node tests:
+
+- `POST /sessions` returns `{ id, threadId, status, turnStatus, cursor }`
+- `POST /sessions/{bridgeSessionId}/turns` receives the current message
+- `GET /sessions/{bridgeSessionId}/events?after={cursor}` returns `{ events, nextCursor }`
+- repository persists the session under the caller-supplied `conversationId`
+
+Bridge smoke checks:
+
+```powershell
+curl.exe -i "$env:CODEX_BRIDGE_URL/health"
+```
+
+Expected:
+
+- HTTP `200`
+- JSON contains `protocolVersion`
+
+Conversation-scoped bridge behavior to verify:
+
+- a new conversation creates a new Codex bridge session
+- a follow-up message in the same conversation reuses the same bridge session
 - event polling reads only the requested conversation session
-- pause, continue, and stop target only that conversation session
-- stopped or failed sessions do not poison new conversation startup
+
+Control-path expectations after implementation:
+
+- `Pause` => active conversation status becomes `paused`; transcript remains visible; no new assistant text is appended while paused
+- `Continue` => same `conversationId` resumes the same bridge session and live events continue
+- `Stop` => active session becomes `stopped` or terminal failure for that `conversationId`; a later fresh conversation must not resume the stopped session
 
 ### OpenClaw HTTP and A2A
 
-- HTTP bridge accepts stable caller-supplied conversation identity or session key input
-- A2A path accepts stable caller-supplied session key input
-- same conversation plus same OpenClaw agent reuses provider session
-- different agent in same conversation gets separate session key
-- different conversation with same agent gets separate session key
-- idempotency recovery still works with stable conversation identity
+Bridge mock assertions to verify during implementation:
+
+- outbound HTTP payload includes `conversationId` or an equivalent stable session field
+- A2A envelope or environment includes a stable session key derived from `conversationId + agentId`
+- same conversation plus same OpenClaw agent repeats the same session key
+- changing either conversation or agent changes the session key
+
+HTTP bridge recovery probe:
+
+```powershell
+curl.exe -i "$env:OPENCLAW_BRIDGE_URL/health"
+curl.exe -i "$env:OPENCLAW_BRIDGE_URL/agent-runs/by-idempotency/test-key"
+```
+
+Expected:
+
+- `/health` => HTTP `200`, JSON includes `capabilities`
+- unknown idempotency key => HTTP `404`
+- known running or completed idempotency key => HTTP `200`
+
+A2A verification during manual runs:
+
+- capture bridge logs and verify the same `sessionKey` is reused when sending two messages in one conversation to the same OpenClaw agent
+- switch to another OpenClaw agent and verify a different `sessionKey`
+- start a fresh conversation with the same OpenClaw agent and verify a different `sessionKey`
 
 ### UI and Component
 
 - `components/task-conversation.tsx`
   - shows a visible `New conversation` action
   - includes `conversationId` in fetches and state updates
-  - keeps current transcript until operator explicitly starts new conversation
+  - keeps current transcript until operator explicitly starts a new conversation
   - preserves current conversation on reload
   - updates visible controls based on the active conversation session
 - `components/harness-dashboard.tsx`
@@ -126,35 +220,80 @@ This plan supplements the existing `REMOTE_CODEX_CONVERSATION_TEST_PLAN.md` and 
 
 ## Pre-Deploy Gates
 
-- Run and record:
-  - `npm test`
-  - `npm run typecheck`
-  - `npm run lint`
-  - `npm run build`
-- Review diff scope and stage only Jormungand lifecycle files.
-- Do not stage unrelated worktree changes.
-- Confirm tracked test artifacts include:
-  - lifecycle test plan
-  - new unit/structural tests
-  - any implementation files added later in the feature branch
+Run and record:
+
+```powershell
+npm test
+npm run typecheck
+npm run lint
+npm run build
+```
+
+Expected after implementation:
+
+- `npm test` => exit code `0`
+- `npm run typecheck` => exit code `0`
+- `npm run lint` => exit code `0`
+- `npm run build` => exit code `0`
+
+Review diff scope and stage only Jormungand lifecycle files:
+
+```powershell
+git status --short
+git diff --name-only --cached
+```
+
+Expected:
+
+- only lifecycle test-plan, lifecycle tests, and intended feature files are staged
+- unrelated worktree files are not staged
+
+Confirm tracked test artifacts include:
+
+- lifecycle test plan
+- new unit or contract tests
+- any implementation files added later in the feature branch
 
 ## Post-Deploy Gates
 
-- Health
-  - `GET /health` returns success
-  - bridge health panel shows expected bridge readiness
-- Deployment readiness
-  - latest Zeabur deployment is complete and serving the expected commit
-  - no boot-time errors in deployment logs
-- Basic Auth
-  - protected application routes require valid Basic Auth
-  - public health route remains reachable only where intended by existing site-auth rules
+Health:
+
+```powershell
+curl.exe -i https://<deployment-host>/health
+curl.exe -i https://<deployment-host>/api/agent-health
+```
+
+Expected:
+
+- `/health` => HTTP `200`, JSON `{ "ok": true, "service": "jormungandr", ... }`
+- `/api/agent-health` => HTTP `200` with bridge entries, or the configured protected status if auth policy requires it
+
+Deployment readiness:
+
+- Zeabur dashboard shows the latest deployment as `Ready` for the feature commit
+- deployment logs show no boot failure, migration failure, or missing env error
+- deployed responses reflect the new commit behavior and not a stale build
+
+Basic Auth:
+
+```powershell
+curl.exe -i https://<deployment-host>/
+curl.exe -i -u "<user>:<pass>" https://<deployment-host>/
+curl.exe -i https://<deployment-host>/health
+```
+
+Expected:
+
+- `/` without credentials => HTTP `401` or the configured auth challenge
+- `/` with valid credentials => HTTP `200`
+- `/health` status matches the existing site-auth policy; if public, it remains public and returns JSON
 
 ## Browser Cases
 
 ### 1. Same Agent, Continuous Messages
 
 Steps:
+
 1. Open the app and authenticate.
 2. Stay in the same conversation.
 3. Send message A to Codex or one OpenClaw agent.
@@ -162,107 +301,121 @@ Steps:
 5. Send message B to the same agent without clicking `New conversation`.
 
 Expected:
-- Both turns appear under the same visible conversation.
-- Returned `conversationId` remains unchanged.
-- Same-agent provider session is reused.
-- No transcript reset occurs.
+
+- both turns appear under the same visible conversation
+- returned `conversationId` remains unchanged
+- same-agent provider session is reused
+- no transcript reset occurs
 
 ### 2. Switch Between Two OpenClaw Agents
 
 Steps:
+
 1. Start one conversation.
 2. Send a message to `openclaw.rowlet`.
 3. Send a follow-up in the same conversation to `openclaw.gengar`.
 4. Send another message back to `openclaw.rowlet`.
 
 Expected:
-- One conversation transcript remains visible.
-- `conversationId` stays the same for all three turns.
-- Rowlet session key is reused for Rowlet turns only.
-- Gengar receives a different isolated session key.
-- Agent-specific continuity does not leak across agents.
+
+- one conversation transcript remains visible
+- `conversationId` stays the same for all three turns
+- Rowlet session key is reused for Rowlet turns only
+- Gengar receives a different isolated session key
+- agent-specific continuity does not leak across agents
 
 ### 3. Reload Preserves Current Conversation
 
 Steps:
+
 1. Create conversation history with at least two turns.
 2. Reload the page.
 
 Expected:
-- Same transcript reloads.
-- Same `conversationId` is restored from server/cookie state.
-- Active session state and allowed agents are consistent with pre-reload state.
+
+- same transcript reloads
+- same `conversationId` is restored from server or cookie state
+- active session state and allowed agents are consistent with the pre-reload state
 
 ### 4. New Conversation Isolates Old Content
 
 Steps:
+
 1. Create a conversation with visible prior turns.
 2. Click `New conversation`.
 3. Send a new message in the fresh conversation.
-4. Navigate back to inspect prior conversation if the UI provides history, or verify via API/devtools response.
+4. Inspect the old conversation through UI history or API response.
 
 Expected:
-- A fresh `conversationId` is created.
-- Old transcript is not mixed into the new conversation.
-- New messages appear only in the new conversation.
-- Old conversation remains intact and recoverable if history access exists.
+
+- a fresh `conversationId` is created
+- old transcript is not mixed into the new conversation
+- new messages appear only in the new conversation
+- old conversation remains intact and recoverable
 
 ### 5. Enter New Task or Bind Existing Conversation
 
 Steps:
-1. Stay in unbound mode and send a message that clearly identifies an existing project/run.
+
+1. Stay in unbound mode and send a message that clearly identifies an existing project or run.
 2. Allow Codex manager routing to bind.
 3. Alternatively start a truly new task from the dashboard flow.
 
 Expected:
-- Binding response identifies the selected project and workflow run.
-- Transcript either moves or links according to the final implementation contract, but does not duplicate inconsistently.
-- Conversation identity after binding is explicit and observable.
-- Starting a truly new task does not silently reuse an unrelated prior conversation.
+
+- binding response identifies the selected project and workflow run
+- transcript either moves or links according to the final implementation contract, without inconsistent duplication
+- conversation identity after binding is explicit and observable
+- starting a truly new task does not silently reuse an unrelated prior conversation
 
 ### 6. Codex Pause, Continue, Stop
 
 Steps:
+
 1. In an active Codex conversation, send a prompt that runs long enough to expose live controls.
 2. Click `Pause`.
 3. Click `Continue`.
 4. Click `Stop`.
 
 Expected:
-- Each control call targets the active conversation’s Codex session.
-- UI status updates reflect paused, resumed, and stopped states.
-- Another conversation, if opened separately, is unaffected.
+
+- `Pause` sends a control request tied to the active `conversationId` and freezes live assistant progress for that conversation only
+- `Continue` resumes the same bridge session for the same `conversationId`; no transcript reset occurs
+- `Stop` terminates the active session for that `conversationId`; the UI reflects a stopped or terminal state and disables the previous live turn
+- another conversation, if opened separately, is unaffected
 
 ### 7. Failure and Safety Paths
 
 Steps:
+
 1. Force or simulate a bridge failure.
 2. Retry in the same conversation.
 3. Test with invalid or stale conversation identity where possible.
 4. Test unauthenticated or invalid Basic Auth access to protected routes.
 
 Expected:
-- Failures surface on the active conversation only.
-- Invalid conversation identity fails closed with clear error handling.
-- Retry does not corrupt prior transcript.
-- Protected routes remain protected.
+
+- failures surface on the active conversation only
+- invalid conversation identity fails closed with clear error handling
+- retry does not corrupt the prior transcript
+- protected routes remain protected
 
 ## Test Evidence
 
-- Command output for unit, typecheck, lint, and build gates
-- Commit SHA for the verified feature branch
-- Browser screenshots or recordings for each browser case
-- Captured API responses showing `conversationId`, binding, and control behavior
-- Bridge logs or structured traces showing:
+- command output for unit, typecheck, lint, and build gates
+- commit SHA for the verified feature branch
+- browser screenshots or recordings for each browser case
+- captured API responses showing `conversationId`, binding, and control behavior
+- bridge logs or structured traces showing:
   - Codex session keyed by `conversationId`
   - OpenClaw session reuse for same conversation plus same agent
   - OpenClaw isolation for different agents or different conversations
-- Zeabur deployment URL, deployment status, and health check evidence
+- Zeabur deployment URL, deployment status, and health-check evidence
 
 ## Completion Criteria
 
-- All lifecycle unit/structural/integration tests pass.
-- `npm test`, `npm run typecheck`, `npm run lint`, and `npm run build` pass on the feature branch.
-- Browser cases 1 through 7 are executed with recorded evidence.
-- Deploy gates and post-deploy gates pass.
-- No fixed global conversation/session identity remains in Codex or OpenClaw lifecycle paths except where intentionally preserved for backward-compatibility and explicitly documented.
+- all lifecycle unit, contract, and integration tests pass
+- `npm test`, `npm run typecheck`, `npm run lint`, and `npm run build` pass on the feature branch
+- browser cases 1 through 7 are executed with recorded evidence
+- deploy gates and post-deploy gates pass
+- no fixed global conversation or session identity remains in Codex or OpenClaw lifecycle paths except where intentionally preserved for backward compatibility and explicitly documented
