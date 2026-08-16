@@ -123,6 +123,31 @@ test("unbound conversation is persisted and moved intact after manager binding",
   assert.equal(repository.listConversation(run.id).every((entry) => entry.workflowRunId === run.id), true)
 })
 
+test("unbound conversation exposes the OpenClaw roster and preserves its target", async (t) => {
+  const { repository, service } = await fixture(t)
+  const initial = await service.getUnboundConversation()
+
+  assert.deepEqual(initial.allowedAgents, [
+    "codex",
+    "openclaw.rowlet",
+    "openclaw.roaringmoon",
+    "openclaw.charizard",
+    "openclaw.mrmime",
+    "openclaw.gengar"
+  ])
+
+  const result = await service.postUnboundMessage({
+    content: "Give me a short research note.",
+    targetAgent: "openclaw.gengar",
+    idempotencyKey: "unbound-openclaw-message"
+  })
+
+  assert.equal(result.binding, undefined)
+  assert.equal(result.responseEntry?.agentId, "openclaw.gengar")
+  assert.equal(result.responseEntry?.role, "agent")
+  assert.equal(repository.listConversation(unboundConversationId).length, 2)
+})
+
 test("manager binding parser keeps ambiguous messages unbound and rejects invented targets", () => {
   const run = createRun()
   assert.deepEqual(

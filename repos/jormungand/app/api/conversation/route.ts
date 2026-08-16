@@ -11,7 +11,14 @@ import type { AgentKind } from "@/lib/types"
 
 export async function GET() {
   const services = getDefaultHiveServices()
-  return NextResponse.json(await getCodexConversationState(services.repository))
+  const codexState = await getCodexConversationState(services.repository)
+  const unboundConversation = await services.conversation.getUnboundConversation()
+  return NextResponse.json({
+    ...codexState,
+    entries: unboundConversation.entries,
+    allowedAgents: unboundConversation.allowedAgents,
+    binding: unboundConversation.binding
+  })
 }
 
 export async function POST(request: Request) {

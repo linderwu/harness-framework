@@ -23,7 +23,7 @@ export function TaskConversation(props: {
   const conversationPath = runId ? `/api/workflow-runs/${runId}/conversation` : "/api/conversation"
   const onEntriesChanged = props.onEntriesChanged
   const [entries, setEntries] = useState(props.initialEntries)
-  const initialAllowedAgents = isUnbound ? ["codex" as AgentKind] : props.allowedAgents
+  const initialAllowedAgents = props.allowedAgents
   const [allowedAgents, setAllowedAgents] = useState(initialAllowedAgents)
   const [targetAgent, setTargetAgent] = useState<AgentKind>(initialAllowedAgents[0] ?? "codex")
   const [content, setContent] = useState("")
@@ -192,11 +192,11 @@ export function TaskConversation(props: {
               </div>
             ) : null}
           </li>
-        )) : <li className="conversationEmpty">Ask Codex to inspect or use the harness. The conversation stays unbound until a project is clear.</li>}
+        )) : <li className="conversationEmpty">Ask an agent to inspect or use the harness. The conversation stays unbound until a project is clear.</li>}
       </ol>
       <form className="conversationComposer" onSubmit={submit}>
         <label><span>Agent</span><select value={targetAgent} disabled={props.run?.projectType === "arceus_maintenance" || allowedAgents.length <= 1} onChange={(event) => setTargetAgent(event.target.value as AgentKind)}>{allowedAgents.map((agent) => <option value={agent} key={agent}>{getAgentLabel(agent)}</option>)}</select></label>
-        <label className="conversationInput"><span>Message</span><textarea disabled={isTurnRunning} onKeyDown={handleComposerKeyDown} value={content} onChange={(event) => setContent(event.target.value)} placeholder={isTurnRunning ? "Codex is working. Pause or wait for the turn to finish." : props.run ? "Ask for progress, evidence, or a scoped action" : targetAgent === "codex" ? "Ask Codex to inspect or use the harness" : "Limited mode: ask guidance or questions only; no project/workflow actions."} /></label>
+        <label className="conversationInput"><span>Message</span><textarea disabled={isTurnRunning} onKeyDown={handleComposerKeyDown} value={content} onChange={(event) => setContent(event.target.value)} placeholder={isTurnRunning ? "Codex is working. Pause or wait for the turn to finish." : props.run ? "Ask for progress, evidence, or a scoped action" : targetAgent === "codex" ? "Ask Codex to inspect or use the harness" : `Ask ${getAgentLabel(targetAgent)} for a response`} /></label>
         <button className="primaryButton" disabled={!content.trim() || !allowedAgents.length || isTurnRunning}><Send size={16} />Send</button>
       </form>
       {error ? <p className="formError" role="alert">{error}</p> : null}
