@@ -104,6 +104,8 @@ $tokenB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($bridgeToke
 if ($Action -eq "sync") {
   $bridgeSource = Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot "openclaw-bridge.mjs")
   $bridgeB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($bridgeSource))
+  $sessionSource = Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot "openclaw-session.mjs")
+  $sessionB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($sessionSource))
   $lockSource = Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot "..\.harness\skill.lock.json")
   $lockB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($lockSource))
   $remoteScript = @'
@@ -115,10 +117,14 @@ mkdir -p "$bridge_dir" "$config_dir" "$drop_in"
 if [ -f "$bridge_dir/openclaw-bridge.mjs" ]; then
   cp "$bridge_dir/openclaw-bridge.mjs" "$bridge_dir/openclaw-bridge.mjs.previous"
 fi
+if [ -f "$bridge_dir/openclaw-session.mjs" ]; then
+  cp "$bridge_dir/openclaw-session.mjs" "$bridge_dir/openclaw-session.mjs.previous"
+fi
 if [ -f "$config_dir/skill.lock.json" ]; then
   cp "$config_dir/skill.lock.json" "$config_dir/skill.lock.json.previous"
 fi
 printf '%s' '__BRIDGE_B64__' | base64 -d > "$bridge_dir/openclaw-bridge.mjs"
+printf '%s' '__SESSION_B64__' | base64 -d > "$bridge_dir/openclaw-session.mjs"
 printf '%s' '__LOCK_B64__' | base64 -d > "$config_dir/skill.lock.json"
 bridge_token=$(printf '%s' '__TOKEN_B64__' | base64 -d)
 {
@@ -136,6 +142,7 @@ curl -fsS -H "Authorization: Bearer $bridge_token" http://127.0.0.1:4188/health
 printf '\n'
 '@
   $remoteScript = $remoteScript.Replace("__BRIDGE_B64__", $bridgeB64)
+  $remoteScript = $remoteScript.Replace("__SESSION_B64__", $sessionB64)
   $remoteScript = $remoteScript.Replace("__LOCK_B64__", $lockB64)
   $remoteScript = $remoteScript.Replace("__TOKEN_B64__", $tokenB64)
   Invoke-Remote $remoteScript
