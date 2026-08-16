@@ -89,6 +89,11 @@ function setEnv(key: string, value: string) {
   ;(process.env as Record<string, string | undefined>)[key] = value
 }
 
+function assertFreshConversationCookie(setCookie: string, conversationId: string) {
+  const encodedValue = setCookie.match(/^[^=]+=([^;]+)/)?.[1]
+  assert.equal(decodeURIComponent(encodedValue ?? ""), conversationId)
+}
+
 test("conversation identity generates a new active id without cookie or body", () => {
   const resolveActiveConversationId = resolveConversationId as unknown as (input: {
     fallbackToNew: boolean
@@ -209,6 +214,7 @@ test("conversation GET rotates the current legacy cookie instead of sharing it",
   assert.match(body.conversationId ?? "", /^conversation:[0-9a-f-]{36}$/i)
   assert.notEqual(body.conversationId, legacyConversationId)
   assert.match(response.headers.get("set-cookie") ?? "", /jormungand-conversation-id=/i)
+  assertFreshConversationCookie(response.headers.get("set-cookie") ?? "", body.conversationId ?? "")
 })
 
 test("conversation GET rotates the underscore legacy cookie instead of sharing it", async (t) => {
@@ -224,6 +230,7 @@ test("conversation GET rotates the underscore legacy cookie instead of sharing i
   assert.match(body.conversationId ?? "", /^conversation:[0-9a-f-]{36}$/i)
   assert.notEqual(body.conversationId, legacyConversationId)
   assert.match(response.headers.get("set-cookie") ?? "", /jormungand-conversation-id=/i)
+  assertFreshConversationCookie(response.headers.get("set-cookie") ?? "", body.conversationId ?? "")
 })
 
 test("new conversation route returns a server-generated id and durable cookie", async (t) => {
@@ -383,6 +390,7 @@ test("conversation POST rotates either legacy cookie to a fresh active id", asyn
     assert.notEqual(body.conversationId, legacyConversationId)
     assert.equal(body.userEntry?.workflowRunId, body.conversationId)
     assert.match(response.headers.get("set-cookie") ?? "", /jormungand-conversation-id=/i)
+    assertFreshConversationCookie(response.headers.get("set-cookie") ?? "", body.conversationId ?? "")
   }
 })
 
