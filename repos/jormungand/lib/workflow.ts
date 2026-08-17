@@ -15,6 +15,7 @@ import type {
   WorkflowEventType,
   WorkflowRun,
   WorkflowStage,
+  CodexReasoningIntensity,
   ProjectType
 } from "./types"
 import { getAgentLabel, normalizeAgentKind, openClawAgentKinds } from "./agents"
@@ -618,6 +619,8 @@ export function createWorkflowRun(input: {
   requirement: string
   contextFiles?: ProjectContextFile[]
   selectedAgent: AgentKind
+  selectedModelId?: string
+  selectedReasoningIntensity?: CodexReasoningIntensity
   skillAssignments?: Record<string, AgentKind>
   designApprovalActor: ApprovalActorType
   verificationApprovalActor: ApprovalActorType
@@ -706,6 +709,8 @@ export function createWorkflowRun(input: {
     managed: input.managedConfig
       ? createManagedRunSummary(input.managedConfig)
       : undefined,
+    selectedModelId: input.selectedModelId,
+    selectedReasoningIntensity: input.selectedReasoningIntensity,
     createdAt: now,
     updatedAt: now
   }

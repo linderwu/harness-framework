@@ -227,6 +227,32 @@ test("createWorkflowRun requires and preserves the selected project id", () => {
   assert.equal(run.requirement, project.goal)
 })
 
+test("createWorkflowRun preserves selected codex model and reasoning intensity", () => {
+  const project = createProject({
+    name: "Codex Profile Slice",
+    type: "development",
+    goal: "Validate codex execution profile persistence.",
+    repository: "owner/codex-profile",
+    source: "dashboard",
+    contextFiles: []
+  })
+  const run = createWorkflowRun({
+    projectId: project.id,
+    projectName: project.name,
+    repository: project.repository,
+    requirement: project.goal,
+    contextFiles: project.contextFiles,
+    selectedAgent: "codex",
+    selectedModelId: "gpt-4.1",
+    selectedReasoningIntensity: "medium",
+    designApprovalActor: "independent_agent",
+    verificationApprovalActor: "verification_subagent"
+  })
+
+  assert.equal(run.selectedModelId, "gpt-4.1")
+  assert.equal(run.selectedReasoningIntensity, "medium")
+})
+
 test("agent task workflow completes in one agent response without a repository", async () => {
   const project = createProject({
     name: "Summarize Notes",

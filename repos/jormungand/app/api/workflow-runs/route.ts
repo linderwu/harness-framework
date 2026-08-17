@@ -8,6 +8,7 @@ import { createProject } from "@/lib/workspace"
 import { listWorkflowRuns, upsertProject, upsertWorkflowRun } from "@/lib/store"
 import type {
   AgentKind,
+  CodexReasoningIntensity,
   ApprovalActorType,
   ProjectContextFile
 } from "@/lib/types"
@@ -20,12 +21,21 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
+  const allowedReasoningIntensities: CodexReasoningIntensity[] = [
+    "auto",
+    "low",
+    "medium",
+    "high"
+  ]
+
   const body = (await request.json()) as {
     projectName?: string
     repository?: string
     requirement?: string
     contextFiles?: ProjectContextFile[]
     selectedAgent?: AgentKind
+    selectedModelId?: string
+    selectedReasoningIntensity?: CodexReasoningIntensity
     skillAssignments?: Record<string, AgentKind>
     designApprovalActor?: ApprovalActorType
     verificationApprovalActor?: ApprovalActorType
@@ -37,6 +47,8 @@ export async function POST(request: Request) {
       { status: 400 }
     )
   }
+
+  const repository = body.repository ?? ""
 
   const contextFiles = Array.isArray(body.contextFiles) ? body.contextFiles : []
   const totalContextBytes = contextFiles.reduce(
@@ -62,7 +74,7 @@ export async function POST(request: Request) {
       name: body.projectName,
       type: "development",
       goal: body.requirement,
-      repository: body.repository ?? "",
+      repository,
       source: "dashboard",
       contextFiles
     })
@@ -71,10 +83,16 @@ export async function POST(request: Request) {
   const run = createWorkflowRun({
     projectId: project.id,
     projectName: body.projectName,
-    repository: body.repository ?? "",
+    repository,
     requirement: body.requirement,
     contextFiles,
     selectedAgent: normalizeAgentKind(body.selectedAgent ?? defaultAgentKind),
+    selectedModelId: body.selectedModelId?.trim() || undefined,
+    selectedReasoningIntensity: allowedReasoningIntensities.includes(
+      body.selectedReasoningIntensity as CodexReasoningIntensity
+    )
+      ? body.selectedReasoningIntensity
+      : undefined,
     skillAssignments: body.skillAssignments,
     designApprovalActor: body.designApprovalActor ?? "independent_agent",
     verificationApprovalActor:

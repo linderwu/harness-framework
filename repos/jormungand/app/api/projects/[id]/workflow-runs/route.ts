@@ -5,15 +5,27 @@ import { defaultAgentKind, normalizeAgentKind } from "@/lib/agents"
 import { createRuntimeSkillResolver } from "@/lib/runtime-skills"
 import { getProject, upsertWorkflowRun } from "@/lib/store"
 import { advanceWorkflow, createWorkflowRun } from "@/lib/workflow"
-import type { AgentKind, ApprovalActorType, WorkflowRun } from "@/lib/types"
+import type {
+  AgentKind,
+  ApprovalActorType,
+  CodexReasoningIntensity,
+  WorkflowRun
+} from "@/lib/types"
 import { getDefaultHiveServices } from "@/lib/hive-services"
 
 export async function POST(
   request: Request,
   context: { params: Promise<{ id: string }> }
 ) {
+  const allowedReasoningIntensities: CodexReasoningIntensity[] = [
+    "auto",
+    "low",
+    "medium",
+    "high"
+  ]
+
   const { id } = await context.params
-  const project = await getProject(id)
+  let project = await getProject(id)
 
   if (!project) {
     return NextResponse.json({ error: "Project not found" }, { status: 404 })
@@ -21,10 +33,13 @@ export async function POST(
 
   const body = (await request.json()) as {
     selectedAgent?: AgentKind
+    selectedModelId?: string
+    selectedReasoningIntensity?: CodexReasoningIntensity
     skillAssignments?: Record<string, AgentKind>
     designApprovalActor?: ApprovalActorType
     verificationApprovalActor?: ApprovalActorType
   }
+
   const run = createWorkflowRun({
     projectId: project.id,
     projectName: project.name,
@@ -33,6 +48,12 @@ export async function POST(
     requirement: project.goal,
     contextFiles: project.contextFiles,
     selectedAgent: normalizeAgentKind(body.selectedAgent ?? defaultAgentKind),
+    selectedModelId: body.selectedModelId?.trim() || undefined,
+    selectedReasoningIntensity: allowedReasoningIntensities.includes(
+      body.selectedReasoningIntensity as CodexReasoningIntensity
+    )
+      ? body.selectedReasoningIntensity
+      : undefined,
     skillAssignments: body.skillAssignments,
     designApprovalActor: body.designApprovalActor ?? "independent_agent",
     verificationApprovalActor: body.verificationApprovalActor ?? "verification_subagent",
@@ -89,7 +110,7 @@ export async function POST(
       updatedAt: new Date().toISOString()
     })
 
-    void advanceAgentTaskRun(runningRun)
+  void advanceAgentTaskRun(runningRun)
 
     return NextResponse.json(runningRun, { status: 201 })
   }
@@ -112,7 +133,7 @@ async function advanceAgentTaskRun(run: WorkflowRun) {
       publishAgentTaskRecord: publishAgentTaskResponseRecord
     })
 
-    await upsertWorkflowRun(advancedRun, { expectedVersion: run.version })
+  await upsertWorkflowRun(advancedRun, { expectedVersion: run.version })
   } catch (error) {
     await upsertWorkflowRun({
       ...run,

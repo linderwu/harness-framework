@@ -117,6 +117,8 @@ export async function invokeConfiguredAgent(
         skill: input.skill,
         runtimeSkillBundles: input.runtimeSkillBundles ?? [],
         artifacts: input.run.artifacts,
+        selectedModelId: input.run.selectedModelId?.trim(),
+        selectedReasoningIntensity: input.run.selectedReasoningIntensity,
         fallbackBody: input.fallbackBody,
         contextPack: input.contextPack,
         conversationId: input.conversationId,

@@ -50,6 +50,7 @@ import type {
   AgentKind,
   ApprovalActorType,
   ApprovalGate,
+  CodexReasoningIntensity,
   HarnessState,
   Project,
   ProjectContextFile,
@@ -84,6 +85,25 @@ const orderedStages: WorkflowStage[] = [
   "implementation",
   "verification",
   "completed"
+]
+const codexModelOptions = [
+  "ChatGPT OAuth",
+  "gpt-5",
+  "gpt-5-mini",
+  "gpt-4.1",
+  "gpt-4o",
+  "gpt-4o-mini",
+  "o3-mini",
+  "o1-mini"
+]
+const codexReasoningIntensityOptions: Array<{
+  value: CodexReasoningIntensity
+  label: string
+}> = [
+  { value: "auto", label: "Auto" },
+  { value: "low", label: "低" },
+  { value: "medium", label: "中" },
+  { value: "high", label: "高" }
 ]
 const agentMenuMaxHeight = 268
 const folderPickerAttributes = {
@@ -227,6 +247,26 @@ export function HarnessDashboard({
     [assignmentSkills]
   )
   const hasApprovalPolicies = form.projectType === "development"
+
+  function getCodexProfileForProject(projectId?: string) {
+    const projectRuns = projectId
+      ? runs
+          .filter((run) => run.projectId === projectId)
+          .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+      : selectedRun?.selectedAgent === "codex"
+        ? [selectedRun]
+        : []
+    const activeRun = projectRuns[0]
+
+    if (!activeRun) {
+      return {}
+    }
+
+    return {
+      selectedModelId: activeRun.selectedModelId?.trim() || undefined,
+      selectedReasoningIntensity: activeRun.selectedReasoningIntensity
+    }
+  }
   const overrideCount = useMemo(
     () =>
       assignmentSkills.filter(
@@ -297,7 +337,7 @@ export function HarnessDashboard({
     try {
       const response = await fetch("/api/projects", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+              headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           name: form.projectName,
           type: form.projectType,
@@ -310,13 +350,15 @@ export function HarnessDashboard({
         })
       })
       const project = await readProjectMutationResponse(response)
+      const codexProfile = getCodexProfileForProject(project.id)
       const run = isAgentTask
         ? await readRunMutationResponse(
             await fetch(`/api/projects/${project.id}/workflow-runs`, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
-                selectedAgent: form.selectedAgent
+                selectedAgent: form.selectedAgent,
+                ...codexProfile
               })
             })
           )
@@ -332,6 +374,24 @@ export function HarnessDashboard({
     }
   }
 
+  function updateCodexProfileForRun(input: {
+    runId: string
+    selectedModelId: string
+    selectedReasoningIntensity: CodexReasoningIntensity
+  }) {
+    setRuns((currentRuns) =>
+      currentRuns.map((run) =>
+        run.id === input.runId
+          ? {
+              ...run,
+              selectedModelId: input.selectedModelId,
+              selectedReasoningIntensity: input.selectedReasoningIntensity
+            }
+          : run
+      )
+    )
+  }
+
   async function startProjectRun(project: Project) {
     setIsMutating(true)
     setMutationError(undefined)
@@ -342,6 +402,7 @@ export function HarnessDashboard({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           selectedAgent: form.selectedAgent,
+          ...getCodexProfileForProject(project.id),
           skillAssignments: form.skillAssignments,
           designApprovalActor: form.designApprovalActor,
           verificationApprovalActor: form.verificationApprovalActor
@@ -1149,7 +1210,11 @@ export function HarnessDashboard({
         </section>
         {selectedRun ? (
           <TaskStatusSidebar
-            bridgeConnections={<BridgeStatusPanel run={selectedRun} showHeading={false} />}
+            bridgeConnections={<BridgeStatusPanel
+              onCodexProfileChange={updateCodexProfileForRun}
+              run={selectedRun}
+              showHeading={false}
+            />}
             entries={conversationEntries.filter((entry) => entry.workflowRunId === selectedRun.id)}
             isExpanded={isMonitoringExpanded}
             isMobileOpen={mobilePanel === "monitoring"}
@@ -1933,10 +1998,16 @@ function formatFileSize(bytes: number) {
 
 function BridgeStatusPanel({
   run,
-  showHeading = true
+  showHeading = true,
+  onCodexProfileChange
 }: {
   run?: WorkflowRun
   showHeading?: boolean
+  onCodexProfileChange?: (input: {
+    runId: string
+    selectedModelId: string
+    selectedReasoningIntensity: CodexReasoningIntensity
+  }) => void
 }) {
   const agentQuotaPollIntervalMs = 5 * 60 * 1000
   const [health, setHealth] = useState<Partial<Record<BridgeId, BridgeHealth>>>(
@@ -2046,6 +2117,7 @@ function BridgeStatusPanel({
         <div className="bridgeStatusCards">
           {visibleBridges.map((bridge) => (
             <BridgeStatusCard
+              onCodexProfileChange={onCodexProfileChange}
               agents={getBridgeAgents(bridge.id)}
               failureCount={failureCount}
               health={bridge}
@@ -2073,7 +2145,8 @@ function BridgeStatusCard({
   isStale,
   lastSuccessAt,
   now,
-  run
+  run,
+  onCodexProfileChange
 }: {
   agents: AgentKind[]
   failureCount: number
@@ -2084,6 +2157,11 @@ function BridgeStatusCard({
   lastSuccessAt?: string
   now: number
   run?: WorkflowRun
+  onCodexProfileChange?: (input: {
+    runId: string
+    selectedModelId: string
+    selectedReasoningIntensity: CodexReasoningIntensity
+  }) => void
 }) {
   const status = getBridgePanelStatus({
     failureCount,
@@ -2115,6 +2193,7 @@ function BridgeStatusCard({
             key={agent}
             quota={agent === "codex" ? quota : undefined}
             run={run}
+            onCodexProfileChange={onCodexProfileChange}
           />
         ))}
       </div>
@@ -2125,11 +2204,17 @@ function BridgeStatusCard({
 function AgentBridgeRow({
   agent,
   quota,
-  run
+  run,
+  onCodexProfileChange
 }: {
   agent: AgentKind
   quota?: AgentQuota
   run?: WorkflowRun
+  onCodexProfileChange?: (input: {
+    runId: string
+    selectedModelId: string
+    selectedReasoningIntensity: CodexReasoningIntensity
+  }) => void
 }) {
   const latestAgentRun = [...(run?.agentRuns ?? [])]
     .reverse()
@@ -2137,9 +2222,36 @@ function AgentBridgeRow({
   const profile = agentProfiles.find((candidate) => candidate.id === agent)
   const status = latestAgentRun?.status ?? "idle"
   const statusLabel = status === "failed" ? "FAIL" : status.toUpperCase()
+  const initialModelId = run?.selectedModelId ?? "ChatGPT OAuth"
+  const initialReasoningIntensity = run?.selectedReasoningIntensity ?? "auto"
+  const [modelId, setModelId] = useState(initialModelId)
+  const [reasoningIntensity, setReasoningIntensity] =
+    useState<CodexReasoningIntensity>(initialReasoningIntensity)
 
   if (!profile) {
     return null
+  }
+
+  useEffect(() => {
+    setModelId(run?.selectedModelId ?? "ChatGPT OAuth")
+    setReasoningIntensity(run?.selectedReasoningIntensity ?? "auto")
+  }, [run?.id, run?.selectedModelId, run?.selectedReasoningIntensity])
+
+  const modelOptions = new Set([
+    ...codexModelOptions,
+    ...(run?.selectedModelId ? [run.selectedModelId] : [])
+  ])
+
+  function applyProfile(nextModelId: string, nextReasoningIntensity: CodexReasoningIntensity) {
+    if (!run?.id || !onCodexProfileChange) {
+      return
+    }
+
+    onCodexProfileChange({
+      runId: run.id,
+      selectedModelId: nextModelId,
+      selectedReasoningIntensity: nextReasoningIntensity
+    })
   }
 
   return (
@@ -2148,6 +2260,49 @@ function AgentBridgeRow({
         <AgentOptionLabel agent={profile} />
         <strong className="bridgeAgentStatus">{statusLabel}</strong>
       </div>
+      {agent === "codex" ? (
+        <div className="bridgeAgentExecutionProfile">
+          <label>
+            <span>模型</span>
+            <select
+              aria-label="Codex model"
+              className="plainSelect bridgeAgentSmallSelect"
+              value={modelId}
+              onChange={(event) => {
+                const nextModelId = event.target.value
+                setModelId(nextModelId)
+                applyProfile(nextModelId, reasoningIntensity)
+              }}
+            >
+              {Array.from(modelOptions).map((optionModelId) => (
+                <option key={optionModelId} value={optionModelId}>
+                  {optionModelId}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            <span>思考強度</span>
+            <select
+              aria-label="Codex reasoning intensity"
+              className="plainSelect bridgeAgentSmallSelect"
+              value={reasoningIntensity}
+              onChange={(event) => {
+                const nextReasoningIntensity =
+                  event.target.value as CodexReasoningIntensity
+                setReasoningIntensity(nextReasoningIntensity)
+                applyProfile(modelId, nextReasoningIntensity)
+              }}
+            >
+              {codexReasoningIntensityOptions.map((option) => (
+                <option value={option.value} key={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+      ) : null}
       {agent === "codex" ? <AgentQuotaBar quota={quota} /> : null}
     </div>
   )

@@ -155,6 +155,13 @@ export type AgentKind =
   | "codex"
   | `openclaw.${OpenClawMainAgent}`
 
+export type CodexReasoningIntensity = "low" | "medium" | "high" | "auto"
+
+export interface CodexExecutionProfile {
+  modelId?: string
+  reasoningIntensity?: CodexReasoningIntensity
+}
+
 export type ApprovalActorType =
   | "human"
   | "verification_subagent"
@@ -458,8 +465,11 @@ export interface WorkflowRun {
   currentStage: WorkflowStage
   status: WorkflowStatus
   selectedAgent: AgentKind
+  selectedModelId?: string
+  selectedReasoningIntensity?: CodexReasoningIntensity
   stageModes: Record<WorkflowStage, ExecutionMode>
   skillAssignments: Record<string, AgentKind>
+  skillExecutionProfiles?: Record<string, CodexExecutionProfile>
   approvalPolicies: ApprovalPolicy[]
   eventSkills: WorkflowEventSkill[]
   events: WorkflowEvent[]

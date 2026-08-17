@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 import { createProject } from "@/lib/workspace"
 import { listProjects, upsertProject } from "@/lib/store"
+import { ensureGitHubRepository } from "@/lib/github-repository"
 import type { ProjectContextFile, ProjectType } from "@/lib/types"
 import {
   createArceusMaintenanceConfig,
@@ -17,6 +18,7 @@ export async function POST(request: Request) {
     type?: ProjectType
     goal?: string
     repository?: string
+    autoCreateRepository?: boolean
     sourceRef?: string
     contextFiles?: ProjectContextFile[]
     successCriteria?: string[]
@@ -58,15 +60,19 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: error instanceof Error ? error.message : String(error) }, { status: 400 })
   }
 
+  const repository = await resolveOrCreateRepository({
+    repository: body.repository ?? "",
+    type: body.type,
+    managedConfigKind: managedConfig?.kind,
+    fallback: body.name,
+    autoCreate: body.autoCreateRepository ?? false
+  })
+
   const project = createProject({
     name: body.name,
     type: body.type,
     goal: body.goal,
-    repository: managedConfig?.kind === "arceus_maintenance"
-      ? managedConfig.repository
-      : managedConfig?.kind === "hive_mission"
-        ? managedConfig.repositoryScope
-        : body.repository ?? "",
+    repository,
     source: "dashboard",
     sourceRef: body.sourceRef,
     contextFiles: Array.isArray(body.contextFiles) ? body.contextFiles : [],
@@ -74,4 +80,46 @@ export async function POST(request: Request) {
   })
 
   return NextResponse.json(await upsertProject(project), { status: 201 })
+}
+
+async function resolveOrCreateRepository(input: {
+  repository: string
+  type: ProjectType
+  managedConfigKind?: "hive_mission" | "arceus_maintenance"
+  fallback: string
+  autoCreate: boolean
+}) {
+  if (
+    input.type === "arceus_maintenance" ||
+    input.managedConfigKind === "arceus_maintenance"
+  ) {
+    return input.repository
+  }
+
+  const explicit = input.repository.trim()
+  if (explicit) {
+    return ensureGitHubRepository(explicit)
+  }
+
+  if (input.type === "hive_mission" || input.managedConfigKind === "hive_mission") {
+    return input.repository
+  }
+
+  if (!input.autoCreate) {
+    return ""
+  }
+
+  return ensureGitHubRepository(normalizeRepositoryName(input.fallback))
+}
+
+function normalizeRepositoryName(input: string) {
+  const normalized = input
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9_.-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^[^a-z0-9]+|[^a-z0-9]+$/g, "")
+    .slice(0, 100)
+
+  return normalized || `harness-${Date.now().toString(36)}`
 }
