@@ -2545,16 +2545,22 @@ function AgentIcon({ agent }: { agent: AgentProfile }) {
 
   if (agent.id === "openclaw.rowlet") {
     return (
-      <span className="agentMark" aria-hidden="true">
-        🦉
+      <span className="agentSpriteMark" aria-hidden="true">
+        <Image alt="" height={24} src="/agents/rowlet.png" unoptimized width={30} />
       </span>
     )
   }
 
   if (agent.id === "openclaw.roaringmoon") {
     return (
-      <span className="agentMark" aria-hidden="true">
-        🌙
+      <span className="agentSpriteMark" aria-hidden="true">
+        <Image
+          alt=""
+          height={24}
+          src="/agents/roaringmoon.png"
+          unoptimized
+          width={30}
+        />
       </span>
     )
   }
@@ -2580,7 +2586,7 @@ function AgentIcon({ agent }: { agent: AgentProfile }) {
         <Image
           alt=""
           height={24}
-          src={`/agents/${sprite}.svg`}
+          src={`/agents/${sprite}.${sprite === "gengar" ? "jpg" : "png"}`}
           unoptimized
           width={30}
         />
