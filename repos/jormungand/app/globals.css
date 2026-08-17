@@ -92,6 +92,7 @@ button {
   display: grid;
   gap: 14px;
   grid-template-rows: auto minmax(0, 1fr);
+  height: 100vh;
   min-height: 100vh;
   min-height: 100dvh;
   overflow: visible;
@@ -1728,6 +1729,7 @@ small,
   display: grid;
   gap: 18px;
   grid-template-columns: minmax(240px, 0.72fr) minmax(520px, 2fr) minmax(260px, 0.8fr);
+  height: 100%;
   margin: 0 auto;
   max-width: 1440px;
   min-height: 0;
