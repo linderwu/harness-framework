@@ -21,5 +21,5 @@ ENV NEXT_TELEMETRY_DISABLED=1
 ENV JORMUNGAND_DATA_DIR=/app/repos/jormungand/data
 COPY --from=builder /app/repos/jormungand ./
 VOLUME ["/app/repos/jormungand/data"]
-EXPOSE 3000
-CMD ["sh", "-c", "npm run start -- --port ${PORT:-3000}"]
+EXPOSE 8080
+CMD ["sh", "-c", "npm run start -- --port ${PORT:-8080}"]
