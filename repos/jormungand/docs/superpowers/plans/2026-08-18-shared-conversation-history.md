@@ -229,9 +229,9 @@ npm run build
 
 Record exact results. If failures are the same pre-existing lint errors in unchanged files, report them; if a failure names a changed file, add a failing regression test before fixing it and rerun the relevant checks.
 
-Verification result: clean worktree `npm test` passed 193/193, `npm run typecheck` passed, scoped ESLint passed for all changed files, and `npm run build` passed with a local dependency install. Full `npm run lint` still reports three pre-existing errors in unchanged files.
+Verification result: clean synchronized worktree `npm test` passed 230/230, `npm run typecheck` passed, `npm run lint` passed with four pre-existing warnings in unchanged files, and `npm run build` passed with a local dependency install.
 
-- [ ] **Step 3: Push and verify main**
+- [x] **Step 3: Push and verify main**
 
 ```powershell
 git push origin main
@@ -240,6 +240,8 @@ git ls-remote origin refs/heads/main
 ```
 
 The remote main SHA must match local HEAD.
+
+Delivery result: pushed `HEAD` to `origin/main`; the verified remote SHA was `758b04d6e803c8a1f5a47df06da0d2a6da4bd28d`.
 
 ## Risks and mitigations
 
