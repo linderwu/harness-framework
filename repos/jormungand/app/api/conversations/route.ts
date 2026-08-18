@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server"
 import {
   ConversationManagementError,
-  createConversationManagementService
+  createConversationManagementService,
+  type ConversationManagementService
 } from "@/lib/conversation-management"
 import {
   stopCodexConversationSession
@@ -26,20 +27,24 @@ export async function GET(request: Request) {
 
 export async function POST(request?: Request) {
   try {
-    const body = await request?.json().catch(() => ({})) as { title?: unknown } | undefined
-    const service = getConversationManagementService()
-    const metadata = await service.createConversation({ title: body?.title })
-    const response = NextResponse.json(
-      {
-        conversationId: metadata.conversationId,
-        metadata
-      },
-      { status: 201 }
-    )
-    return setConversationCookie(response, metadata.conversationId, request)
+    return await createConversationResponse(request)
   } catch (error) {
     return toErrorResponse(error)
   }
+}
+
+export async function createConversationResponse(request?: Request) {
+  const body = await request?.json().catch(() => ({})) as { title?: unknown } | undefined
+  const service = getConversationManagementService()
+  const metadata = await createConversation(service, body)
+  const response = NextResponse.json(
+    {
+      conversationId: metadata.conversationId,
+      metadata
+    },
+    { status: 201 }
+  )
+  return setConversationCookie(response, metadata.conversationId, request)
 }
 
 function getConversationManagementService() {
@@ -49,6 +54,13 @@ function getConversationManagementService() {
     stopSession: (conversationId) =>
       stopCodexConversationSession(services.repository, conversationId)
   })
+}
+
+async function createConversation(
+  service: ConversationManagementService,
+  body?: { title?: unknown }
+) {
+  return await service.createConversation({ title: body?.title })
 }
 
 function toErrorResponse(error: unknown) {

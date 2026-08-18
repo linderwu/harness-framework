@@ -257,13 +257,19 @@ describe("conversation route contracts", { concurrency: false }, () => {
     const response = await POST(new Request("http://localhost/api/conversation/new", {
       method: "POST"
     }))
-    const body = await response.json() as { conversationId?: string }
+    const body = await response.json() as {
+      conversationId?: string
+      metadata?: ConversationMetadata
+    }
     const metadata = body.conversationId
       ? getDefaultHiveServices().repository.getConversationMetadata(body.conversationId)
       : undefined
 
-    assert.equal(response.status, 200)
+    assert.equal(response.status, 201)
     assert.match(body.conversationId ?? "", /^conversation:[0-9a-f-]{36}$/i)
+    assert.equal(body.metadata?.conversationId, body.conversationId)
+    assert.equal(body.metadata?.title, "New conversation")
+    assert.equal(body.metadata?.state, "active")
     assert.ok(metadata)
     assert.equal(metadata?.state, "active")
     assert.equal(metadata?.title, "New conversation")

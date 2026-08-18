@@ -240,12 +240,22 @@ test("new conversation route returns a server-generated id and durable cookie", 
   const response = await POST(new Request("http://localhost/api/conversation/new", {
     method: "POST"
   }))
-  const body = await response.json() as { conversationId?: string }
+  const body = await response.json() as {
+    conversationId?: string
+    metadata?: {
+      conversationId?: string
+      title?: string
+      state?: string
+    }
+  }
   const setCookie = response.headers.get("set-cookie") ?? ""
 
-  assert.equal(response.status, 200)
+  assert.equal(response.status, 201)
   assert.match(body.conversationId ?? "", /^conversation:[0-9a-f-]{36}$/i)
   assert.notEqual(body.conversationId, unboundConversationId)
+  assert.equal(body.metadata?.conversationId, body.conversationId)
+  assert.equal(body.metadata?.title, "New conversation")
+  assert.equal(body.metadata?.state, "active")
   assert.match(setCookie, /jormungand-conversation-id=/i)
   assert.match(setCookie, /httponly/i)
 })

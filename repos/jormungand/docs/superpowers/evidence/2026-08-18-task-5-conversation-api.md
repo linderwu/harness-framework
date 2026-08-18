@@ -7,6 +7,8 @@ Worktree: `C:\Users\linder\.config\superpowers\worktrees\harness-framework\jormu
 
 Task 5: add conversation management service and API routes, preserve existing conversation identity/query-selection changes, and keep `components/task-conversation.tsx` user-owned and unstaged.
 
+Follow-up fix: make `/api/conversation/new` delegate the same create response flow as `POST /api/conversations`, including shared cookie + metadata response semantics.
+
 ## RED
 
 ### Compile for tests
@@ -75,6 +77,12 @@ Result:
 - `20` tests passed
 - `0` failed
 
+Final result after the shared-create-response fix:
+
+- Exit code `0`
+- `20` tests passed
+- `0` failed
+
 Covered Task 5 checks:
 
 - `GET /api/conversation` includes `permissionMode` and current metadata
@@ -105,6 +113,12 @@ Result:
 - `199` passed
 - `0` failed
 
+Final result after the shared-create-response fix:
+
+- Exit code `0`
+- `199` passed
+- `0` failed
+
 ### Typecheck
 
 Command:
@@ -127,6 +141,7 @@ Reviewed files:
 - `app/api/conversation/new/route.ts`
 - `app/api/conversation/route.ts`
 - `lib/codex-conversation.ts`
+- `tests/conversation-identity.test.ts`
 
 Findings:
 
