@@ -1,11 +1,12 @@
 import assert from "node:assert/strict"
-import { readFileSync } from "node:fs"
-import { resolve } from "node:path"
 import test from "node:test"
 
 import { createOpenClawA2AEnvelope } from "../lib/a2a-protocol"
+import { buildSharedConversationHistory } from "../lib/conversation-history"
 import { ConversationHistorySync } from "../lib/conversation-history-sync"
+import { routeOpenClawUnboundConversation } from "../lib/hive-services"
 import type { ConversationEntry } from "../lib/hive-memory/types"
+import type { AgentInvocationInput } from "../lib/agent-bridge"
 import type { Artifact, WorkflowEventSkill, WorkflowRun } from "../lib/types"
 
 const conversationHistory = [
@@ -153,14 +154,134 @@ test("ConversationHistorySync returns only the post-delivery delta for the same 
   assert.equal(result.cursorEntryId, "entry-4")
 })
 
-test("hive-services source wires incremental unbound sync and removes target-only filtering", () => {
-  const source = readFileSync(resolve("lib/hive-services.ts"), "utf8")
+test("unbound OpenClaw routing seeds once, then sends only delta, and failed delivery does not advance cursor", async () => {
+  const sync = new ConversationHistorySync()
+  const capturedInputs: AgentInvocationInput[] = []
+  const statuses: Array<"completed" | "failed"> = [
+    "completed",
+    "completed",
+    "failed",
+    "completed"
+  ]
+  const initialEntries = [
+    makeEntry({ id: "entry-1", role: "user", content: "user 1" }),
+    makeEntry({ id: "entry-2", role: "agent", agentId: "openclaw.rowlet", content: "rowlet 2" })
+  ]
 
-  assert.match(source, /new ConversationHistorySync\(\)/)
-  assert.match(source, /\.getDelta\(/)
-  assert.match(source, /conversationHistory:\s*delta\.history/)
-  assert.match(source, /result\.status !== "failed"/)
-  assert.match(source, /\.markDelivered\(/)
-  assert.doesNotMatch(source, /buildUnboundConversationHistory/)
-  assert.doesNotMatch(source, /entry\.agentId === targetAgent/)
+  const invokeAgent = async (input: AgentInvocationInput) => {
+    capturedInputs.push(input)
+    return {
+      status: statuses.shift() ?? "completed",
+      body: `${input.executor} reply`
+    }
+  }
+
+  await routeOpenClawUnboundConversation({
+    sync,
+    conversationId: "conversation-123",
+    targetAgent: "openclaw.gengar",
+    content: "latest operator message",
+    entries: initialEntries,
+    invokeAgent
+  })
+
+  const secondEntries = [
+    ...initialEntries,
+    makeEntry({ id: "entry-3", role: "user", content: "user 3" }),
+    makeEntry({ id: "entry-4", role: "agent", agentId: "openclaw.gengar", content: "self 4" })
+  ]
+  await routeOpenClawUnboundConversation({
+    sync,
+    conversationId: "conversation-123",
+    targetAgent: "openclaw.gengar",
+    content: "latest operator message",
+    entries: secondEntries,
+    invokeAgent
+  })
+
+  const thirdEntries = [
+    ...secondEntries,
+    makeEntry({ id: "entry-5", role: "user", content: "user 5" })
+  ]
+  await routeOpenClawUnboundConversation({
+    sync,
+    conversationId: "conversation-123",
+    targetAgent: "openclaw.gengar",
+    content: "latest operator message",
+    entries: thirdEntries,
+    invokeAgent
+  })
+  await routeOpenClawUnboundConversation({
+    sync,
+    conversationId: "conversation-123",
+    targetAgent: "openclaw.gengar",
+    content: "latest operator message",
+    entries: thirdEntries,
+    invokeAgent
+  })
+
+  assert.deepEqual(capturedInputs[0]?.conversationHistory, buildSharedConversationHistory(initialEntries))
+  assert.deepEqual(
+    capturedInputs[1]?.conversationHistory,
+    buildSharedConversationHistory([secondEntries[2]!])
+  )
+  assert.deepEqual(
+    capturedInputs[2]?.conversationHistory,
+    buildSharedConversationHistory([thirdEntries[4]!])
+  )
+  assert.deepEqual(
+    capturedInputs[3]?.conversationHistory,
+    buildSharedConversationHistory([thirdEntries[4]!])
+  )
+})
+
+test("unbound OpenClaw routing keeps an independent seed and cursor per agent in the same conversation", async () => {
+  const sync = new ConversationHistorySync()
+  const capturedInputs: AgentInvocationInput[] = []
+  const baseEntries = [
+    makeEntry({ id: "entry-1", role: "user", content: "user 1" }),
+    makeEntry({ id: "entry-2", role: "agent", agentId: "openclaw.gengar", content: "gengar 2" })
+  ]
+  const invokeAgent = async (input: AgentInvocationInput) => {
+    capturedInputs.push(input)
+    return { status: "completed" as const, body: `${input.executor} reply` }
+  }
+
+  await routeOpenClawUnboundConversation({
+    sync,
+    conversationId: "conversation-123",
+    targetAgent: "openclaw.gengar",
+    content: "latest operator message",
+    entries: baseEntries,
+    invokeAgent
+  })
+  await routeOpenClawUnboundConversation({
+    sync,
+    conversationId: "conversation-123",
+    targetAgent: "openclaw.rowlet",
+    content: "latest operator message",
+    entries: baseEntries,
+    invokeAgent
+  })
+
+  const nextEntries = [
+    ...baseEntries,
+    makeEntry({ id: "entry-3", role: "user", content: "user 3" }),
+    makeEntry({ id: "entry-4", role: "agent", agentId: "openclaw.rowlet", content: "rowlet 4" })
+  ]
+  await routeOpenClawUnboundConversation({
+    sync,
+    conversationId: "conversation-123",
+    targetAgent: "openclaw.rowlet",
+    content: "latest operator message",
+    entries: nextEntries,
+    invokeAgent
+  })
+
+  assert.deepEqual(capturedInputs[0]?.conversationHistory, buildSharedConversationHistory(baseEntries))
+  assert.deepEqual(capturedInputs[1]?.conversationHistory, buildSharedConversationHistory(baseEntries))
+  assert.deepEqual(
+    capturedInputs[2]?.conversationHistory,
+    buildSharedConversationHistory([nextEntries[2]!])
+  )
 })

@@ -1,13 +1,16 @@
 import { agentProfiles } from "./agents"
+import type { AgentInvocationInput } from "./agent-bridge"
 import { invokeConfiguredAgent, invokeConfiguredHiveManager } from "./agent-bridge"
 import { createConversationService, parseUnboundManagerDecision } from "./conversation"
 import { buildSharedConversationHistory } from "./conversation-history"
 import { ConversationHistorySync } from "./conversation-history-sync"
 import { createContextBuilder } from "./context-builder"
 import { openHiveDatabase } from "./hive-memory/database"
+import type { ConversationEntry } from "./hive-memory/types"
 import { createHiveMemoryRepository } from "./hive-memory/repository"
 import { createManagerScheduler } from "./manager-scheduler"
 import { getWorkflowRun, listProjects, listWorkflowRuns, upsertWorkflowRun } from "./store"
+import type { AgentKind } from "./types"
 import { createWorkflowRun } from "./workflow"
 
 let services: ReturnType<typeof createServices> | undefined
@@ -177,60 +180,89 @@ function createServices() {
         return { status: "completed" as const, ...parseUnboundManagerDecision(result.body, runs) }
       }
 
-      const syncKey = `unbound:${targetAgent}:${conversationId}`
-      const sessionIdentity = `${targetAgent}:${conversationId}`
-      const delta = openClawUnboundConversationSync.getDelta({
-        key: syncKey,
-        sessionIdentity,
-        targetAgent,
-        entries
-      })
-      const result = await invokeConfiguredAgent({
-        run: syntheticRun,
-        executor: targetAgent,
-        stage: "intake",
-        artifactType: "log",
-        title: "Unbound limited conversation",
-        fallbackBody: "The requested agent can only reply in unbound conversation mode.",
+      return routeOpenClawUnboundConversation({
+        sync: openClawUnboundConversationSync,
         conversationId,
-        conversationHistory: delta.history,
-        skill: {
-          id: "conversation.unbound_limited",
-          eventType: "requirement_intake",
-          stage: "intake",
-          name: "Unbound limited conversation",
-          purpose:
-            "Respond to operator questions in safe, unbound mode without project binding, workflow mutation, or manager action.",
-          trigger: "The operator posted to the persistent unbound conversation.",
-          allowedActors: [targetAgent],
-          inputs: ["recent conversation text", "agent style guidance"],
-          outputs: ["final response without workflow side effects"],
-          constraints: [
-            "Do not perform project binding or manager routing.",
-            "Do not invoke external systems or irreversible actions.",
-            "Keep the answer focused on user support and guidance."
-          ],
-          gates: ["Unbound conversation is read-only and non-mutating."],
-          knowledgeSources: ["persisted unbound conversation"],
-          verificationRules: ["Return one concise text response."]
-        }
+        targetAgent,
+        content,
+        entries,
+        invokeAgent: invokeConfiguredAgent
       })
-
-      if (result.status !== "failed") {
-        openClawUnboundConversationSync.markDelivered({
-          key: syncKey,
-          sessionIdentity,
-          cursorEntryId: delta.cursorEntryId
-        })
-      }
-
-      return {
-        status: result.status === "failed" ? "failed" : "completed",
-        body: result.body
-      }
     }
   })
   return { database, repository, scheduler, conversation }
+}
+
+export async function routeOpenClawUnboundConversation(input: {
+  sync: ConversationHistorySync
+  conversationId: string
+  targetAgent: AgentKind
+  content: string
+  entries: Array<Pick<ConversationEntry, "id" | "role" | "agentId" | "content">>
+  invokeAgent: (
+    input: AgentInvocationInput
+  ) => Promise<{ status: "completed" | "failed"; body: string }>
+}) {
+  const syntheticRun = createWorkflowRun({
+    projectId: "",
+    projectName: "Unbound conversation",
+    repository: "",
+    requirement: input.content,
+    selectedAgent: input.targetAgent,
+    designApprovalActor: "human",
+    verificationApprovalActor: "human"
+  })
+  const syncKey = `unbound:${input.targetAgent}:${input.conversationId}`
+  const sessionIdentity = `${input.targetAgent}:${input.conversationId}`
+  const delta = input.sync.getDelta({
+    key: syncKey,
+    sessionIdentity,
+    targetAgent: input.targetAgent,
+    entries: input.entries
+  })
+  const result = await input.invokeAgent({
+    run: syntheticRun,
+    executor: input.targetAgent,
+    stage: "intake",
+    artifactType: "log",
+    title: "Unbound limited conversation",
+    fallbackBody: "The requested agent can only reply in unbound conversation mode.",
+    conversationId: input.conversationId,
+    conversationHistory: delta.history,
+    skill: {
+      id: "conversation.unbound_limited",
+      eventType: "requirement_intake",
+      stage: "intake",
+      name: "Unbound limited conversation",
+      purpose:
+        "Respond to operator questions in safe, unbound mode without project binding, workflow mutation, or manager action.",
+      trigger: "The operator posted to the persistent unbound conversation.",
+      allowedActors: [input.targetAgent],
+      inputs: ["recent conversation text", "agent style guidance"],
+      outputs: ["final response without workflow side effects"],
+      constraints: [
+        "Do not perform project binding or manager routing.",
+        "Do not invoke external systems or irreversible actions.",
+        "Keep the answer focused on user support and guidance."
+      ],
+      gates: ["Unbound conversation is read-only and non-mutating."],
+      knowledgeSources: ["persisted unbound conversation"],
+      verificationRules: ["Return one concise text response."]
+    }
+  })
+
+  if (result.status !== "failed") {
+    input.sync.markDelivered({
+      key: syncKey,
+      sessionIdentity,
+      cursorEntryId: delta.cursorEntryId
+    })
+  }
+
+  return {
+    status: result.status === "failed" ? "failed" as const : "completed" as const,
+    body: result.body
+  }
 }
 
 function isShareableConversationEntry(entry: { role: string }) {
