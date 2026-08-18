@@ -14,6 +14,17 @@ function ruleBody(selectorPattern: RegExp, description: string) {
   return match[1]
 }
 
+function mediaBlock(queryPattern: RegExp, description: string) {
+  const match = css.match(new RegExp(`@media\\s*${queryPattern.source}\\s*\\{`))
+
+  assert.ok(match?.index !== undefined, `Expected ${description} media block to exist`)
+
+  const start = match.index
+  const nextMedia = css.indexOf("\n@media ", start + 1)
+
+  return css.slice(start, nextMedia === -1 ? undefined : nextMedia)
+}
+
 test("desktop layout allows the page to scroll instead of clipping content", () => {
   const rootRule = css.match(/html,\s*\nbody\s*\{([\s\S]*?)\n\}/)
 
@@ -125,4 +136,75 @@ test("task workspace makes conversation the largest responsive column", () => {
   assert.match(tablet, /\.conversationWorkspace\s*\{[\s\S]*?order:\s*-1/)
   assert.match(tablet, /\.taskWorkspaceGrid\[data-left-collapsed="true"\]/)
   assert.match(tablet, /grid-template-columns:\s*1fr/)
+})
+
+test("conversation buttons use short layered press depth with focus, disabled, and motion-safe states", () => {
+  const rootRule = ruleBody(/:root/, ":root")
+  const sharedButtonRule = ruleBody(
+    /\.primaryButton,\s*\n\.stopButton,\s*\n\.dangerButton,\s*\n\.iconTextButton,\s*\n\.iconButton,\s*\n\.compactPanelButton/,
+    "shared button depth rule"
+  )
+  const primaryRule = ruleBody(/\.primaryButton/, ".primaryButton")
+  const compactRule = ruleBody(/\.compactPanelButton/, ".compactPanelButton")
+  const dangerRule = ruleBody(/\.dangerButton/, ".dangerButton")
+  const compactDangerRule = ruleBody(/\.compactPanelButton\.danger/, ".compactPanelButton.danger")
+  const activeRule = ruleBody(
+    /\.primaryButton:active,\s*\n\.stopButton:active,\s*\n\.dangerButton:active,\s*\n\.iconTextButton:active,\s*\n\.iconButton:active,\s*\n\.compactPanelButton:active/,
+    "active layered press rule"
+  )
+  const focusRule = ruleBody(
+    /\.primaryButton:focus-visible,\s*\n\.stopButton:focus-visible,\s*\n\.dangerButton:focus-visible,\s*\n\.iconTextButton:focus-visible,\s*\n\.iconButton:focus-visible,\s*\n\.compactPanelButton:focus-visible/,
+    "focus-visible button rule"
+  )
+  const disabledRule = ruleBody(
+    /\.primaryButton:disabled,\s*\n\.stopButton:disabled,\s*\n\.dangerButton:disabled,\s*\n\.compactPanelButton:disabled/,
+    "disabled button rule"
+  )
+  const reducedMotion = mediaBlock(/\(prefers-reduced-motion: reduce\)/, "reduced motion")
+
+  assert.match(rootRule, /--button-depth:/)
+  assert.match(rootRule, /--button-depth-danger:/)
+  assert.match(rootRule, /--button-press-offset:/)
+  assert.match(sharedButtonRule, /transform:\s*translateY\(0\);/)
+  assert.match(sharedButtonRule, /transition:/)
+  assert.doesNotMatch(sharedButtonRule, /border-left:/)
+  assert.doesNotMatch(sharedButtonRule, /0 14px 34px/)
+  assert.match(primaryRule, /box-shadow:\s*0 4px 0 var\(--button-depth\)/)
+  assert.match(compactRule, /box-shadow:\s*0 4px 0 var\(--button-depth\)/)
+  assert.match(dangerRule, /box-shadow:\s*0 4px 0 var\(--button-depth-danger\)/)
+  assert.match(compactDangerRule, /box-shadow:\s*0 4px 0 var\(--button-depth-danger\)/)
+  assert.match(activeRule, /box-shadow:\s*0 1px 0/)
+  assert.match(activeRule, /transform:\s*translateY\(3px\);/)
+  assert.match(focusRule, /outline:\s*2px solid/)
+  assert.match(focusRule, /outline-offset:\s*2px;/)
+  assert.match(disabledRule, /cursor:\s*not-allowed;/)
+  assert.match(disabledRule, /opacity:\s*0\.[0-9]+;/)
+  assert.match(disabledRule, /box-shadow:\s*0 1px 0/)
+  assert.match(reducedMotion, /\.primaryButton[\s\S]*?transition:\s*none;/)
+})
+
+test("conversation manager layout wraps without fixed widths and preserves narrow-screen overflow safety", () => {
+  const headerRule = ruleBody(/\.taskConversationHeader/, ".taskConversationHeader")
+  const actionsRule = ruleBody(/\.taskConversationHeaderActions/, ".taskConversationHeaderActions")
+  const composerRule = ruleBody(/\.conversationComposer/, ".conversationComposer")
+  const mobileBlock = mediaBlock(/\(max-width: 640px\)/, "mobile conversation layout")
+
+  assert.match(headerRule, /flex-wrap:\s*wrap;/)
+  assert.match(headerRule, /gap:\s*12px;/)
+  assert.match(actionsRule, /min-width:\s*0;/)
+  assert.match(actionsRule, /width:\s*100%;/)
+  assert.match(actionsRule, /justify-content:\s*flex-end;/)
+  assert.doesNotMatch(actionsRule, /width:\s*(?:9[0-9]|[1-9]\d{2,})px;/)
+  assert.match(composerRule, /grid-template-columns:\s*minmax\(120px, 0\.32fr\) minmax\(0, 1fr\) auto;/)
+  assert.match(
+    mobileBlock,
+    /\.taskConversationHeader\s*\{[\s\S]*?align-items:\s*stretch;[\s\S]*?flex-direction:\s*column;/
+  )
+  assert.match(
+    mobileBlock,
+    /\.taskConversationHeaderActions\s*\{[\s\S]*?justify-content:\s*flex-start;[\s\S]*?width:\s*100%;/
+  )
+  assert.match(mobileBlock, /\.conversationComposer\s*\{[\s\S]*?grid-template-columns:\s*1fr;/)
+  assert.match(mobileBlock, /overscroll-behavior-x:\s*none;/)
+  assert.match(mobileBlock, /\.conversationEntry\s*\{[\s\S]*?max-width:\s*96%;/)
 })

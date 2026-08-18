@@ -30,6 +30,10 @@
   --verify-soft: #dcfce7;
   --stage-complete: #0f766e;
   --shadow: 0 18px 44px rgba(15, 23, 42, 0.16);
+  --button-depth: #64748b;
+  --button-depth-danger: #b91c1c;
+  --button-press-offset: 3px;
+  --button-focus-ring: rgba(37, 99, 235, 0.28);
 }
 
 * {
@@ -1078,18 +1082,30 @@ textarea:focus {
 .stopButton,
 .dangerButton,
 .iconTextButton,
-.iconButton {
+.iconButton,
+.compactPanelButton {
   align-items: center;
-  border: 0;
+  border: 1px solid transparent;
+  box-shadow: 0 4px 0 var(--button-depth);
   display: inline-flex;
   font-weight: 800;
   gap: 8px;
   justify-content: center;
+  transform: translateY(0);
+  transition:
+    background 160ms ease,
+    border-color 160ms ease,
+    box-shadow 160ms ease,
+    color 160ms ease,
+    opacity 160ms ease,
+    transform 160ms ease;
 }
 
 .primaryButton {
   background: var(--green);
+  border-color: #0f766e;
   border-radius: 7px;
+  box-shadow: 0 4px 0 var(--button-depth);
   color: white;
   min-height: 44px;
   padding: 0 15px;
@@ -1123,6 +1139,7 @@ textarea:focus {
 
 .stopButton {
   background: var(--amber);
+  border-color: #a16207;
   border-radius: 7px;
   color: white;
   min-height: 44px;
@@ -1135,7 +1152,9 @@ textarea:focus {
 
 .dangerButton {
   background: var(--red);
+  border-color: #b91c1c;
   border-radius: 7px;
+  box-shadow: 0 4px 0 var(--button-depth-danger);
   color: white;
   min-height: 44px;
   padding: 0 15px;
@@ -1146,17 +1165,62 @@ textarea:focus {
 }
 
 .compactPanelButton {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(232, 240, 247, 0.98)),
+    var(--panel);
+  border-color: var(--panel-border);
+  border-radius: 7px;
+  color: var(--ink);
   font-size: 12px;
+  max-width: 100%;
   min-height: 30px;
+  min-width: 0;
   padding: 0 10px;
   white-space: nowrap;
 }
 
+.compactPanelButton.danger {
+  background:
+    linear-gradient(180deg, rgba(255, 245, 245, 0.98), rgba(254, 226, 226, 0.98)),
+    var(--red-soft);
+  border-color: #fecaca;
+  box-shadow: 0 4px 0 var(--button-depth-danger);
+  color: var(--red);
+}
+
 .primaryButton:disabled,
 .stopButton:disabled,
-.dangerButton:disabled {
+.dangerButton:disabled,
+.compactPanelButton:disabled {
+  box-shadow: 0 1px 0 rgba(148, 163, 184, 0.9);
   cursor: not-allowed;
-  opacity: 0.45;
+  opacity: 0.68;
+  transform: translateY(0);
+}
+
+.primaryButton:focus-visible,
+.stopButton:focus-visible,
+.dangerButton:focus-visible,
+.iconTextButton:focus-visible,
+.iconButton:focus-visible,
+.compactPanelButton:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}
+
+.primaryButton:active,
+.stopButton:active,
+.dangerButton:active,
+.iconTextButton:active,
+.iconButton:active,
+.compactPanelButton:active {
+  box-shadow: 0 1px 0 var(--button-depth);
+  transform: translateY(3px);
+}
+
+.dangerButton:active,
+.compactPanelButton.danger:active {
+  box-shadow: 0 1px 0 var(--button-depth-danger);
 }
 
 .iconButton {
@@ -1798,12 +1862,16 @@ small,
   align-items: center;
   border-bottom: 1px solid var(--border);
   display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
   justify-content: space-between;
   padding: 16px 18px;
 }
 
 .taskConversationHeader h2 { margin-top: 3px; }
-.taskConversationHeaderActions { align-items: center; display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
+.taskConversationHeader > :first-child { min-width: 0; }
+.taskConversationHeaderActions { align-items: center; display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; min-width: 0; width: 100%; }
+.taskConversationHeaderActions > * { max-width: 100%; min-width: 0; }
 .conversationBindingStatus { color: var(--muted); font-size: 12px; font-weight: 800; }
 .codexActivity { background: linear-gradient(135deg, rgba(224, 242, 254, 0.92), rgba(236, 253, 245, 0.88)); border-bottom: 1px solid var(--border); display: grid; gap: 9px; padding: 12px 18px; }
 .codexActivityHeader { align-items: center; display: flex; gap: 12px; justify-content: space-between; }
@@ -1832,6 +1900,17 @@ small,
 .conversationComposer label > span { color: var(--muted); font-size: 11px; font-weight: 800; text-transform: uppercase; }
 .conversationComposer select, .conversationComposer textarea { border: 1px solid var(--border); border-radius: 7px; font: inherit; padding: 9px; }
 .conversationComposer textarea { min-height: 58px; resize: vertical; }
+
+@media (prefers-reduced-motion: reduce) {
+  .primaryButton,
+  .stopButton,
+  .dangerButton,
+  .iconTextButton,
+  .iconButton,
+  .compactPanelButton {
+    transition: none;
+  }
+}
 
 .taskStatusSidebar { align-content: start; display: grid; gap: 10px; }
 .taskStatusSidebar.collapsed { padding: 4px; }
@@ -2684,6 +2763,16 @@ pre {
   .taskConversationHeader,
   .conversationEntries {
     padding-inline: 12px;
+  }
+
+  .taskConversationHeader {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .taskConversationHeaderActions {
+    justify-content: flex-start;
+    width: 100%;
   }
 
   .conversationEntry {

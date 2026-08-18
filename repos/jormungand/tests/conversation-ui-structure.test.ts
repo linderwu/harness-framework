@@ -83,6 +83,10 @@ test("dashboard resets bound workspace selection when a new conversation starts"
 })
 
 test("conversation header exposes the action layout styles without changing the wider layout system", () => {
+  assert.match(taskConversation, /<div style=\{\{ display: "grid", gap: "0\.25rem", flex: "1 1 14rem", minWidth: 0 \}\}>/)
+  assert.match(taskConversation, /<h2 style=\{\{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" \}\}>/)
+  assert.match(taskConversation, /<div className="taskConversationHeaderActions" style=\{\{ flex: "1 1 18rem", minWidth: 0, justifyContent: "flex-end" \}\}>/)
+  assert.doesNotMatch(taskConversation, /className="compactPanelButton"[^>\n]*style=\{\{[^}]*width:/)
   assert.match(globalsCss, /\.taskConversationHeaderActions/)
   assert.match(globalsCss, /\.taskConversationHeaderActions\s*\{[\s\S]*display:\s*flex/)
   assert.match(globalsCss, /\.taskConversationHeaderActions\s*\{[\s\S]*flex-wrap:\s*wrap/)
