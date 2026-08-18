@@ -245,3 +245,96 @@ npm run typecheck
 
 Result:
 - Passed
+
+## Follow-up Move Atomicity Fix
+
+Date: 2026-08-18
+Change: `fix: make conversation moves atomic`
+
+### Root Cause
+
+`moveConversation(...)` still used `this.database.write(...)` even though it performed multiple dependent statements:
+- move `conversation_entries` from source to target
+- move/copy/delete conversation metadata through `moveConversationMetadata(...)`
+
+That meant a late metadata failure could leave entries moved while metadata cleanup or copy/delete only partially completed.
+
+### RED
+
+Added focused regression coverage in:
+- `tests/conversation-management.test.ts`
+
+Regression command:
+
+```powershell
+npx tsc -p tsconfig.tests.json
+node --test .tmp-tests/tests/hive-memory-database.test.js .tmp-tests/tests/hive-memory-repository.test.js .tmp-tests/tests/conversation-management.test.js
+```
+
+Result before fix:
+- Compile: passed
+- Focused tests: failed
+- Counts: 11 passed, 1 failed
+
+Failure:
+- `conversation move rolls back when metadata move cleanup fails`
+
+Observed broken behavior:
+- A trigger forced the late metadata delete in `moveConversationMetadata(...)` to fail.
+- The source conversation had already lost its entry, proving the entry move had committed before the metadata cleanup failure.
+
+### Fix
+
+Changed:
+- `lib/hive-memory/repository.ts`
+
+Implementation:
+- switched `moveConversation(...)` from `this.database.write(...)` to `this.database.transaction(...)`
+
+Behavior preserved:
+- no route or component changes
+- no API changes
+- only the transaction boundary changed
+
+### GREEN
+
+Focused compile:
+
+```powershell
+npx tsc -p tsconfig.tests.json
+```
+
+Result:
+- Passed
+
+Focused Task 4 tests:
+
+```powershell
+node --test .tmp-tests/tests/hive-memory-database.test.js .tmp-tests/tests/hive-memory-repository.test.js .tmp-tests/tests/conversation-management.test.js
+```
+
+Result:
+- Passed
+- 12 tests passed
+- 0 failed
+
+Full suite:
+
+```powershell
+npm test
+```
+
+Result:
+- Passed
+- 193 tests passed
+- 0 failed
+- 1 suite passed
+
+Typecheck:
+
+```powershell
+npm run typecheck
+```
+
+Result:
+- Passed

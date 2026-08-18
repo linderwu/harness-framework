@@ -301,3 +301,50 @@ test("conversation metadata mutations roll back when the metadata timestamp refr
   assert.equal(entryAfterFailure.status, "queued")
   assert.deepEqual(repository.getConversationMetadata(updateConversationId), metadataBeforeUpdate)
 })
+
+test("conversation move rolls back when metadata move cleanup fails", async (t) => {
+  const { database, repository } = await createConversationFixture(t)
+  const sourceConversationId = "conversation:66666666-6666-4666-8666-666666666666"
+  const targetWorkflowRunId = "run-bound-move"
+
+  await repository.createConversation({
+    id: sourceConversationId,
+    title: "Move source"
+  })
+  const inserted = await repository.insertConversation({
+    workflowRunId: sourceConversationId,
+    role: "user",
+    content: "This move must stay atomic.",
+    importance: "normal",
+    status: "completed",
+    artifactIds: [],
+    memoryIds: [],
+    idempotencyKey: "conversation-management:atomic-move"
+  })
+  const sourceMetadataBeforeMove = repository.getConversationMetadata(sourceConversationId)
+  assert.ok(sourceMetadataBeforeMove)
+
+  await database.write((connection) => {
+    connection.prepare(`
+      CREATE TRIGGER fail_move_metadata_delete
+      BEFORE DELETE ON conversations
+      WHEN OLD.id = '${sourceConversationId}'
+      BEGIN
+        SELECT RAISE(FAIL, 'metadata move failed');
+      END;
+    `).run()
+  })
+
+  await assert.rejects(
+    repository.moveConversation(sourceConversationId, targetWorkflowRunId),
+    /metadata move failed/i
+  )
+
+  const sourceEntries = repository.listConversation(sourceConversationId)
+  const targetEntries = repository.listConversation(targetWorkflowRunId)
+  assert.equal(sourceEntries.length, 1)
+  assert.equal(sourceEntries[0]?.id, inserted.entry.id)
+  assert.deepEqual(targetEntries, [])
+  assert.deepEqual(repository.getConversationMetadata(sourceConversationId), sourceMetadataBeforeMove)
+  assert.equal(repository.getConversationMetadata(targetWorkflowRunId), undefined)
+})

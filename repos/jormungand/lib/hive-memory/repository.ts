@@ -609,7 +609,7 @@ export class HiveMemoryRepository {
   }
 
   async moveConversation(sourceWorkflowRunId: string, targetWorkflowRunId: string) {
-    await this.database.write((connection) => {
+    await this.database.transaction((connection) => {
       connection.prepare(`
         UPDATE conversation_entries SET workflow_run_id = ?
         WHERE workflow_run_id = ?
