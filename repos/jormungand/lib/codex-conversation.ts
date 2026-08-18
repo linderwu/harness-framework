@@ -1,7 +1,11 @@
-import type { HiveMemoryRepository } from "@/lib/hive-memory/repository"
-import type { ConversationEntry } from "@/lib/hive-memory/types"
+import { formatSharedConversationPrompt } from "./conversation-history"
+import { ConversationHistorySync } from "./conversation-history-sync"
+import type { HiveMemoryRepository } from "./hive-memory/repository"
+import type { ConversationEntry } from "./hive-memory/types"
 
 export const codexConversationId = "global:unbound-conversation"
+
+const codexConversationSync = new ConversationHistorySync()
 
 export interface CodexConversationEvent {
   id: string
@@ -17,7 +21,7 @@ export interface CodexConversationEvent {
 export interface CodexConversationState {
   conversationId: string
   entries: ConversationEntry[]
-  allowedAgents: import("@/lib/types").AgentKind[]
+  allowedAgents: import("./types").AgentKind[]
   session?: {
     id: string
     threadId: string
@@ -150,11 +154,25 @@ export async function postCodexConversationMessage(input: {
     idempotencyKey: storageIdempotencyKey
   })
   const userEntry = userInsert.entry
+  const sessionIdentity = `${session.bridgeSessionId}:${session.codexThreadId}`
+  const syncKey = `codex:${conversationId}`
+  const delta = codexConversationSync.getDelta({
+    key: syncKey,
+    sessionIdentity,
+    targetAgent: "codex",
+    entries: input.repository.listConversation(conversationId)
+  })
+  const requestContent = formatSharedConversationPrompt(delta.history)
 
   try {
     await bridgeRequest(`/sessions/${encodeURIComponent(session.bridgeSessionId)}/turns`, {
       method: "POST",
-      body: JSON.stringify({ content })
+      body: JSON.stringify({ content: requestContent })
+    })
+    codexConversationSync.markDelivered({
+      key: syncKey,
+      sessionIdentity,
+      cursorEntryId: delta.cursorEntryId
     })
     await input.repository.updateCodexSession({
       conversationId,
