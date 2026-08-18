@@ -166,3 +166,86 @@ Task 3 implementation is complete and verified:
 - Restricted mode keeps the existing approval-gated behavior.
 - Audit/checkpoint recording for `request_approval` remains intact.
 - Documentation now reflects that workflow full-mode wiring is complete.
+
+## Follow-up Quality Fix
+
+### 9. RED for explicit permission threading and runtime prompt coverage
+
+Command:
+
+```powershell
+node -e "require('fs').rmSync('.tmp-tests',{recursive:true,force:true})"
+npx tsc -p tsconfig.tests.json
+node --test .tmp-tests/tests/bridge-security.test.js .tmp-tests/tests/context-builder.test.js .tmp-tests/tests/workflow.test.js .tmp-tests/tests/hive-manager.test.js .tmp-tests/tests/hive-mission-e2e.test.js .tmp-tests/tests/managed-workflows.test.js
+```
+
+Observed RED result:
+
+- `npx tsc -p tsconfig.tests.json` failed with:
+  - `tests/bridge-security.test.ts(4,10): error TS2305: Module '"../lib/hive-services"' has no exported member 'createConversationPermissionContract'.`
+
+Expected failure reason observed:
+
+- Runtime prompt/security coverage was still source-regex-only, and there was no runtime helper exposing the permission-scoped prompt contract for test assertions.
+
+### 10. GREEN for explicit permission threading and runtime prompt coverage
+
+Implemented follow-up changes:
+
+- Removed ambient env fallback from reusable helper boundaries:
+  - `lib/workflow.ts`
+  - `lib/context-builder.ts`
+  - `lib/managed-workflows.ts`
+  - `lib/manager-scheduler.ts`
+- Threaded explicit `permissionMode` from runtime boundaries:
+  - `app/api/workflow-runs/route.ts`
+  - `app/api/workflow-runs/[id]/advance/route.ts`
+  - `app/api/projects/[id]/workflow-runs/route.ts`
+  - `lib/hive-services.ts`
+  - affected tests and callers
+- Added runtime permission-mode text coverage via `createPermissionModeText(...)`.
+
+Targeted GREEN command:
+
+```powershell
+node -e "require('fs').rmSync('.tmp-tests',{recursive:true,force:true})"
+npx tsc -p tsconfig.tests.json
+node --test .tmp-tests/tests/bridge-security.test.js .tmp-tests/tests/context-builder.test.js .tmp-tests/tests/workflow.test.js .tmp-tests/tests/hive-manager.test.js .tmp-tests/tests/hive-mission-e2e.test.js .tmp-tests/tests/managed-workflows.test.js
+```
+
+Observed GREEN result:
+
+- Targeted Task 3 suite passed: `40` pass / `0` fail
+
+### 11. Follow-up required verification
+
+Standalone tests TypeScript compile:
+
+```powershell
+npx tsc -p tsconfig.tests.json
+```
+
+Observed result:
+
+- Exit code `0`
+
+Full test suite:
+
+```powershell
+npm test
+```
+
+Observed result:
+
+- Exit code `0`
+- Full suite passed: `186` pass / `0` fail
+
+App typecheck:
+
+```powershell
+npm run typecheck
+```
+
+Observed result:
+
+- Exit code `0`

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import { readFileSync } from "node:fs"
 import test from "node:test"
+import { createPermissionModeText } from "../lib/context-builder"
 
 const codexBridgeSource = readFileSync("scripts/codex-bridge.mjs", "utf8")
 const agentBridgeSource = readFileSync("lib/agent-bridge.ts", "utf8")
@@ -57,10 +58,36 @@ test("Codex bridge rejects a successful exit without a final response", () => {
 })
 
 test("unbound Codex conversation switches between restricted and full operator scope language", () => {
-  assert.match(hiveServicesSource, /inspect and operate the local Jormungand harness/)
-  assert.match(hiveServicesSource, /operator-approved workspace and workflow scope/)
-  assert.match(hiveServicesSource, /current sandbox and approval policy/)
+  assert.match(hiveServicesSource, /createPermissionModeText/)
+  assert.match(hiveServicesSource, /permissionText\.operatorScopeLine/)
+  assert.match(hiveServicesSource, /permissionText\.workflowAuthorityConstraint/)
   assert.match(hiveServicesSource, /Recent conversation:/)
+})
+
+test("permission mode text returns runtime full and restricted prompt wording", () => {
+  const restricted = createPermissionModeText("restricted")
+  const full = createPermissionModeText("full")
+
+  assert.match(
+    restricted.operatorScopeLine,
+    /current sandbox and approval policy/
+  )
+  assert.match(
+    restricted.workflowAuthorityConstraint,
+    /current Codex sandbox, approval policy, and Jormungand workflow authority/
+  )
+  assert.match(
+    full.operatorScopeLine,
+    /operator-approved workspace and workflow scope/
+  )
+  assert.match(
+    full.workflowAuthorityConstraint,
+    /keep Jormungand in control of project binding and workflow authority/
+  )
+  assert.match(
+    full.conversationConstraint,
+    /Use full permissions only inside the operator-approved workspace and the active workflow scope/
+  )
 })
 
 test("agent bridges mark memory as evidence rather than authority", () => {

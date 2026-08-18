@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 import { publishAgentTaskResponseRecord } from "@/lib/agent-response-records"
 import { invokeConfiguredAgent } from "@/lib/agent-bridge"
+import { getAgentPermissionMode, type AgentPermissionMode } from "@/lib/agent-permissions"
 import { defaultAgentKind, normalizeAgentKind } from "@/lib/agents"
 import { createRuntimeSkillResolver } from "@/lib/runtime-skills"
 import { getProject, upsertWorkflowRun } from "@/lib/store"
@@ -18,6 +19,7 @@ export async function POST(
   request: Request,
   context: { params: Promise<{ id: string }> }
 ) {
+  const permissionMode = getAgentPermissionMode()
   const allowedReasoningIntensities: CodexReasoningIntensity[] = [
     "auto",
     "low",
@@ -120,7 +122,7 @@ export async function POST(
       updatedAt: new Date().toISOString()
     })
 
-  void advanceAgentTaskRun(runningRun)
+  void advanceAgentTaskRun(runningRun, permissionMode)
 
     return NextResponse.json(runningRun, { status: 201 })
   }
@@ -128,19 +130,24 @@ export async function POST(
   const intakeRun = await advanceWorkflow(run, {
     invokeAgent: invokeConfiguredAgent,
     resolveRuntimeSkillBundles: createRuntimeSkillResolver(),
-    publishAgentTaskRecord: publishAgentTaskResponseRecord
+    publishAgentTaskRecord: publishAgentTaskResponseRecord,
+    permissionMode
   })
 
   await upsertWorkflowRun(intakeRun)
   return NextResponse.json(intakeRun, { status: 201 })
 }
 
-async function advanceAgentTaskRun(run: WorkflowRun) {
+async function advanceAgentTaskRun(
+  run: WorkflowRun,
+  permissionMode: AgentPermissionMode
+) {
   try {
     const advancedRun = await advanceWorkflow(run, {
       invokeAgent: invokeConfiguredAgent,
       resolveRuntimeSkillBundles: createRuntimeSkillResolver(),
-      publishAgentTaskRecord: publishAgentTaskResponseRecord
+      publishAgentTaskRecord: publishAgentTaskResponseRecord,
+      permissionMode
     })
 
   await upsertWorkflowRun(advancedRun, { expectedVersion: run.version })

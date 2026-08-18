@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 import { publishAgentTaskResponseRecord } from "@/lib/agent-response-records"
 import { invokeConfiguredAgent } from "@/lib/agent-bridge"
+import { getAgentPermissionMode } from "@/lib/agent-permissions"
 import { defaultAgentKind, normalizeAgentKind } from "@/lib/agents"
 import { createRuntimeSkillResolver } from "@/lib/runtime-skills"
 import { advanceWorkflow, createWorkflowRun } from "@/lib/workflow"
@@ -22,6 +23,7 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
+  const permissionMode = getAgentPermissionMode()
   const allowedReasoningIntensities: CodexReasoningIntensity[] = [
     "auto",
     "low",
@@ -119,7 +121,8 @@ export async function POST(request: Request) {
   const intakeRun = await advanceWorkflow(run, {
     invokeAgent: invokeConfiguredAgent,
     resolveRuntimeSkillBundles: createRuntimeSkillResolver(),
-    publishAgentTaskRecord: publishAgentTaskResponseRecord
+    publishAgentTaskRecord: publishAgentTaskResponseRecord,
+    permissionMode
   })
 
   await upsertWorkflowRun(intakeRun)

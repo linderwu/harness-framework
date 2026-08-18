@@ -31,6 +31,7 @@ test("Hive Mission survives a runtime restart, uses two worker types, governs me
     repository,
     getRun: async (id: string) => id === run.id ? run : undefined,
     saveRun,
+    permissionMode: "restricted" as const,
     allowedAgents: () => ["codex", "openclaw.rowlet", "openclaw.gengar"] as AgentKind[],
     invokeManager: async () => JSON.stringify(managerProposal(repository.listManagerTasks(run.id))),
     dispatchWorker: async ({ agentId }: { agentId: string }) => {
@@ -88,7 +89,7 @@ test("Arceus irreversible effects stop at human approval", async (t) => {
     } satisfies ManagerProposal),
     requestApproval: async () => { approvals += 1 },
     permissionMode: "restricted"
-  } as Parameters<typeof createManagerScheduler>[0])
+  })
   await scheduler.enqueue({ workflowRunId: run.id, reason: "mission_created", idempotencyKey: "arceus-wake" })
   await scheduler.runNext(run.id)
   assert.equal(approvals, 1)
@@ -120,7 +121,7 @@ test("Arceus full mode audits irreversible effects without entering approval wai
     } satisfies ManagerProposal),
     requestApproval: async () => { approvals += 1 },
     permissionMode: "full"
-  } as Parameters<typeof createManagerScheduler>[0])
+  })
   await scheduler.enqueue({ workflowRunId: run.id, reason: "mission_created", idempotencyKey: "arceus-full" })
   await scheduler.runNext(run.id)
   assert.equal(approvals, 0)

@@ -80,8 +80,9 @@ function advanceRun(
   permissionMode: AgentPermissionMode = "restricted"
 ) {
   return advanceWorkflow(run, {
-    resolveRuntimeSkillBundles: runtimeSkillResolver
-  , permissionMode } as Parameters<typeof advanceWorkflow>[1])
+    resolveRuntimeSkillBundles: runtimeSkillResolver,
+    permissionMode
+  })
 }
 
 function getPendingGate(run: WorkflowRun, stage: ApprovalGate["stage"]) {

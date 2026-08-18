@@ -157,7 +157,8 @@ test("scheduler deduplicates wakes and accounts for one manager call", async (t)
       invocations += 1
       return JSON.stringify(proposal({ proposed_actions: [] }))
     },
-    allowedAgents: () => ["codex", "openclaw.rowlet"]
+    allowedAgents: () => ["codex", "openclaw.rowlet"],
+    permissionMode: "restricted"
   })
 
   await scheduler.enqueue({ workflowRunId: run.id, reason: "mission_created", idempotencyKey: "wake-1" })
@@ -200,7 +201,8 @@ test("scheduler pauses before invoking manager when budget is exhausted", async 
     getRun: async () => run,
     saveRun: async (next) => { run = next; return next },
     invokeManager: async () => { throw new Error("manager must not be invoked") },
-    allowedAgents: () => ["codex"]
+    allowedAgents: () => ["codex"],
+    permissionMode: "restricted"
   })
   await scheduler.enqueue({ workflowRunId: run.id, reason: "health_check", idempotencyKey: "wake-budget" })
   const result = await scheduler.runNext(run.id)
@@ -250,7 +252,7 @@ test("scheduler keeps approval actions in audit without pausing in full mode", a
     allowedAgents: () => ["codex"],
     requestApproval: async () => { approvals += 1 },
     permissionMode: "full"
-  } as Parameters<typeof createManagerScheduler>[0])
+  })
 
   await scheduler.enqueue({ workflowRunId: run.id, reason: "mission_created", idempotencyKey: "wake-full" })
   const result = await scheduler.runNext(run.id)

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
 import { invokeConfiguredAgent } from "@/lib/agent-bridge"
+import { getAgentPermissionMode } from "@/lib/agent-permissions"
 import { createRuntimeSkillResolver } from "@/lib/runtime-skills"
 import {
   getWorkflowRun,
@@ -16,6 +17,7 @@ export async function POST(
   context: { params: Promise<{ id: string }> }
 ) {
   const { id } = await context.params
+  const permissionMode = getAgentPermissionMode()
   return withWorkflowRunLock(id, async () => {
     const run = await getWorkflowRun(id)
 
@@ -39,7 +41,8 @@ export async function POST(
       const advancedRun = await advanceWorkflow(run, {
         invokeAgent: invokeConfiguredAgent,
         resolveRuntimeSkillBundles: createRuntimeSkillResolver(),
-        onProgress: replaceWorkflowRunSnapshot
+        onProgress: replaceWorkflowRunSnapshot,
+        permissionMode
       })
       const nextRun = await upsertWorkflowRun(advancedRun, {
         expectedVersion: run.version

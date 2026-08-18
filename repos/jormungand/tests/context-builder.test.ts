@@ -82,6 +82,7 @@ test("worker context is scoped, deduplicated, budgeted, and audited", async (t) 
     projectId: "project-a",
     taskId: "task-1",
     targetAgent: "openclaw.rowlet",
+    permissionMode: "restricted",
     task: "Verify memory isolation",
     successCriteria: ["Project B content is absent"],
     constraints: ["No external effects"],
@@ -133,7 +134,7 @@ test("active conflicts are surfaced instead of silently resolved", async (t) => 
 
   const pack = await createContextBuilder(repository).buildWorkerPack({
     workflowRunId: "run-1", projectId: "project-a", taskId: "task-1",
-    targetAgent: "codex", task: "Check runtime", successCriteria: ["Report conflict"],
+    targetAgent: "codex", permissionMode: "restricted", task: "Check runtime", successCriteria: ["Report conflict"],
     constraints: [], projectState: "running", artifacts: []
   })
   assert.equal(pack.conflicts.length, 1)

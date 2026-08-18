@@ -279,7 +279,8 @@ test("agent task workflow completes in one agent response without a repository",
       status: "completed",
       source: "codex-bridge",
       body: "Action 1: follow up with the team."
-    })
+    }),
+    permissionMode: "restricted"
   })
 
   assert.equal(project.repository, "")
@@ -336,7 +337,8 @@ test("research workflow generates a prompt and then researches with that prompt"
       source: "codex-bridge",
       repository: input.run.repository,
       body: input.fallbackBody
-    })
+    }),
+    permissionMode: "restricted"
   })
   run = await advanceWorkflow(run, {
     invokeAgent: async (input) => {
@@ -351,7 +353,8 @@ test("research workflow generates a prompt and then researches with that prompt"
           `Research ${input.run.requirement} with cited sources.`
         ].join("\n")
       }
-    }
+    },
+    permissionMode: "restricted"
   })
   run = await advanceWorkflow(run, {
     invokeAgent: async (input) => {
@@ -368,7 +371,8 @@ test("research workflow generates a prompt and then researches with that prompt"
           "Final research output based on the generated prompt."
         ].join("\n")
       }
-    }
+    },
+    permissionMode: "restricted"
   })
 
   assert.equal(run.status, "completed")
@@ -427,7 +431,8 @@ test("agent task workflow publishes completed response records when a publisher 
         htmlUrl:
           "https://github.com/linderwu/jormungand-record/blob/main/records/2026/08/13/run.md"
       }
-    }
+    },
+    permissionMode: "restricted"
   })
 
   assert.equal(completedRun.status, "completed")
@@ -468,7 +473,8 @@ test("agent task workflow records full artifact content over a short final messa
           body: "Full report with findings, evidence, and conclusions."
         }
       ]
-    })
+    }),
+    permissionMode: "restricted"
   })
 
   assert.equal(completedRun.status, "completed")
@@ -520,7 +526,8 @@ test("agent task workflow rejects metadata-only response envelopes", async () =>
     publishAgentTaskRecord: async () => {
       publishCalls += 1
       return { status: "published" }
-    }
+    },
+    permissionMode: "restricted"
   })
 
   assert.equal(completedRun.status, "failed")
@@ -561,7 +568,8 @@ test("agent task workflow extracts populated response envelopes", async () => {
         "agent_response:",
         "Full report body."
       ].join("\n")
-    })
+    }),
+    permissionMode: "restricted"
   })
 
   assert.equal(completedRun.status, "completed")
@@ -598,7 +606,8 @@ test("agent task workflow keeps completed response when record publishing fails"
     }),
     publishAgentTaskRecord: async () => {
       throw new Error("GitHub unavailable")
-    }
+    },
+    permissionMode: "restricted"
   })
 
   assert.equal(completedRun.status, "completed")
@@ -704,7 +713,8 @@ test("agent invocation receives resolved runtime skill bundle descriptors", asyn
         }
       ],
       statusMessage: `received ${input.runtimeSkillBundles?.length ?? 0} runtime bundle`
-    })
+    }),
+    permissionMode: "restricted"
   })
 
   assert.equal(nextRun.agentRuns[0].statusMessage?.includes("runtimeSkillBundleResults"), true)
@@ -737,7 +747,8 @@ test("workflow fails before agent invocation when runtime skill resolution fails
         source: "codex-bridge",
         body: "Should not run."
       }
-    }
+    },
+    permissionMode: "restricted"
   })
 
   assert.equal(invoked, false)

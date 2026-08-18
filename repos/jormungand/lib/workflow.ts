@@ -20,10 +20,7 @@ import type {
   ProjectType
 } from "./types"
 import { getAgentLabel, normalizeAgentKind, openClawAgentKinds } from "./agents"
-import {
-  getAgentPermissionMode,
-  type AgentPermissionMode
-} from "./agent-permissions"
+import type { AgentPermissionMode } from "./agent-permissions"
 import type { ContextPack } from "./context-builder"
 import {
   createArceusMaintenanceEventSkills,
@@ -125,7 +122,7 @@ interface AdvanceWorkflowOptions {
   resolveRuntimeSkillBundles?: RuntimeSkillResolver
   publishAgentTaskRecord?: AgentTaskRecordPublisher
   onProgress?: (run: WorkflowRun) => Promise<unknown>
-  permissionMode?: AgentPermissionMode
+  permissionMode: AgentPermissionMode
 }
 
 export function createDefaultEventSkills(): WorkflowEventSkill[] {
@@ -748,7 +745,7 @@ export function createWorkflowRun(input: {
 
 export async function advanceWorkflow(
   run: WorkflowRun,
-  options: AdvanceWorkflowOptions = {}
+  options: AdvanceWorkflowOptions
 ): Promise<WorkflowRun> {
   if (isTerminalStatus(run.status)) {
     return run
@@ -764,7 +761,7 @@ export async function advanceWorkflow(
 
   const nextRun = cloneRun(run)
   ensureEventSkillState(nextRun)
-  const permissionMode = getAgentPermissionMode(options.permissionMode)
+  const permissionMode = options.permissionMode
 
   if (nextRun.customStages?.length) {
     return advanceCustomWorkflow(nextRun, options)
