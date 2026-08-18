@@ -10,6 +10,7 @@ const eslintConfig = [
       ".tmp-tests*/**",
       ".worktrees/**",
       "worktrees/**",
+      ".harness/**",
       ".agents/**",
       ".logs/**",
       "data/harness-state.json"

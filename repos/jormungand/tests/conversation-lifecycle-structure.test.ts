@@ -157,8 +157,8 @@ async function importRouteWithIsolatedDataDir<T>(t: test.TestContext, routeModul
   return await import(routeModulePath) as T
 }
 
-function getRouteServices() {
-  return require("../lib/hive-services") as typeof import("../lib/hive-services")
+async function getRouteServices() {
+  return await import("../lib/hive-services") as typeof import("../lib/hive-services")
 }
 
 function restoreEnv(t: test.TestContext, key: string) {
@@ -198,6 +198,31 @@ describe("conversation route contracts", { concurrency: false }, () => {
     assert.notEqual(body.conversationId, unboundConversationId)
   })
 
+  test("conversation GET persists metadata when it creates a fresh unbound conversation", async (t) => {
+    const { GET } = await importRouteWithIsolatedDataDir<{
+      GET: (request: Request) => Promise<Response>
+    }>(t, "../app/api/conversation/route")
+    const { getDefaultHiveServices } = await getRouteServices()
+
+    const response = await GET(new Request("http://localhost/api/conversation"))
+    const body = await response.json() as {
+      conversationId?: string
+      metadata?: ConversationMetadata
+    }
+    const persistedMetadata = body.conversationId
+      ? getDefaultHiveServices().repository.getConversationMetadata(body.conversationId)
+      : undefined
+
+    assert.equal(response.status, 200)
+    assert.match(body.conversationId ?? "", /^conversation:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i)
+    assert.equal(body.metadata?.conversationId, body.conversationId)
+    assert.equal(body.metadata?.title, "New conversation")
+    assert.equal(body.metadata?.state, "active")
+    assert.equal(persistedMetadata?.conversationId, body.conversationId)
+    assert.equal(persistedMetadata?.title, "New conversation")
+    assert.equal(persistedMetadata?.state, "active")
+  })
+
   test("conversation control route requires a conversation id for Codex session controls", async (t) => {
     const { POST: postConversationControlRoute } = await importRouteWithIsolatedDataDir<{
       POST: (request: Request) => Promise<Response>
@@ -222,7 +247,7 @@ describe("conversation route contracts", { concurrency: false }, () => {
     const { GET } = await importRouteWithIsolatedDataDir<{
       GET: (request: Request) => Promise<Response>
     }>(t, "../app/api/conversation/route")
-    const { getDefaultHiveServices } = getRouteServices()
+    const { getDefaultHiveServices } = await getRouteServices()
     const services = getDefaultHiveServices()
     const conversationId = "conversation:99999999-9999-4999-8999-999999999999"
 
@@ -252,7 +277,7 @@ describe("conversation route contracts", { concurrency: false }, () => {
     const { POST } = await importRouteWithIsolatedDataDir<{
       POST: (request: Request) => Promise<Response>
     }>(t, "../app/api/conversation/new/route")
-    const { getDefaultHiveServices } = getRouteServices()
+    const { getDefaultHiveServices } = await getRouteServices()
 
     const response = await POST(new Request("http://localhost/api/conversation/new", {
       method: "POST"
@@ -311,7 +336,7 @@ describe("conversation route contracts", { concurrency: false }, () => {
       GET: (request: Request) => Promise<Response>
       POST: (request: Request) => Promise<Response>
     }>(t, "../app/api/conversations/route")
-    const { getDefaultHiveServices } = getRouteServices()
+    const { getDefaultHiveServices } = await getRouteServices()
     const services = getDefaultHiveServices()
 
     const createResponse = await POST(new Request("http://localhost/api/conversations", {
@@ -377,7 +402,7 @@ describe("conversation route contracts", { concurrency: false }, () => {
         context: { params: Promise<{ id: string }> }
       ) => Promise<Response>
     }>(t, "../app/api/conversations/[id]/route")
-    const { getDefaultHiveServices } = getRouteServices()
+    const { getDefaultHiveServices } = await getRouteServices()
     const services = getDefaultHiveServices()
     const conversationId = "conversation:bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
 

@@ -1,6 +1,6 @@
 "use client"
 
-import { FormEvent, KeyboardEvent, useEffect, useMemo, useRef, useState } from "react"
+import { FormEvent, KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Send } from "lucide-react"
 import type {
   CodexConversationEvent,
@@ -78,6 +78,7 @@ export function TaskConversation(props: {
   const deleteDialogRef = useRef<HTMLDialogElement>(null)
   const deleteTriggerRef = useRef<HTMLButtonElement>(null)
   const deleteCancelRef = useRef<HTMLButtonElement>(null)
+  const isRenameFormOpenRef = useRef(false)
   const pollingInFlight = useRef<{
     generation: number
     promise: ReturnType<typeof loadConversation>
@@ -140,7 +141,7 @@ export function TaskConversation(props: {
     return request
   }
 
-  async function refreshConversations(generation = requestGeneration.current) {
+  const refreshConversations = useCallback(async (generation = requestGeneration.current) => {
     try {
       const nextConversations = await requestConversationSummaries(fetch, includeArchived)
       if (generation !== requestGeneration.current) return
@@ -149,7 +150,11 @@ export function TaskConversation(props: {
       if (generation !== requestGeneration.current) return
       setError(formatError(conversationListError))
     }
-  }
+  }, [includeArchived])
+
+  useEffect(() => {
+    isRenameFormOpenRef.current = isRenameFormOpen
+  }, [isRenameFormOpen])
 
   useEffect(() => {
     if (!isRenameFormOpen) return
@@ -170,6 +175,8 @@ export function TaskConversation(props: {
       isUnbound
     })) return
     let active = true
+    // This effect owns the request lifecycle for active-conversation hydration.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setIsLoadingConversation(true)
     const request = loadConversationWithGuard(conversationLoadPath, isUnbound)
     const { generation } = request
@@ -183,7 +190,7 @@ export function TaskConversation(props: {
       setEvents(data.events ?? [])
       setMetadata(data.metadata)
       setPermissionMode(data.permissionMode)
-      if (!isRenameFormOpen) {
+      if (!isRenameFormOpenRef.current) {
         setRenameDraft(data.metadata?.title ?? "")
       }
       onEntriesChanged(data.entries)
@@ -230,8 +237,10 @@ export function TaskConversation(props: {
   useEffect(() => {
     if (!isUnbound) return
     if (isStartingConversation && !activeConversationId) return
+    // This effect refreshes managed conversation summaries after identity/filter changes.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void refreshConversations()
-  }, [activeConversationId, includeArchived, isStartingConversation, isUnbound])
+  }, [activeConversationId, isStartingConversation, isUnbound, refreshConversations])
 
   useEffect(() => () => {
     invalidateConversationRequests()

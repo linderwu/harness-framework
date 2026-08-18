@@ -81,7 +81,7 @@ async function createConversationFixture(t: test.TestContext) {
 }
 
 async function loadConversationManagementModule() {
-  return require("../lib/conversation-management") as {
+  return await import("../lib/conversation-management") as {
     createConversationManagementService?: (dependencies: {
       repository: ConversationManagementRepository
       stopSession: (conversationId: string) => Promise<void>
@@ -381,13 +381,13 @@ test("conversation move rolls back when metadata move cleanup fails", async (t) 
 
 test("conversation management service validates updates, blocks running transitions, and hides bound ids", async (t) => {
   const repository = await createRepositoryFixture(t)
-  const module = await loadConversationManagementModule()
+  const conversationManagementModule = await loadConversationManagementModule()
   assert.equal(
-    typeof module.createConversationManagementService,
+    typeof conversationManagementModule.createConversationManagementService,
     "function",
     "lib/conversation-management.ts must export createConversationManagementService()."
   )
-  const service = module.createConversationManagementService!({
+  const service = conversationManagementModule.createConversationManagementService!({
     repository,
     stopSession: async () => undefined
   })
@@ -456,13 +456,13 @@ test("conversation management service validates updates, blocks running transiti
 
 test("conversation management service does not delete rows when stopSession fails", async (t) => {
   const repository = await createRepositoryFixture(t)
-  const module = await loadConversationManagementModule()
+  const conversationManagementModule = await loadConversationManagementModule()
   assert.equal(
-    typeof module.createConversationManagementService,
+    typeof conversationManagementModule.createConversationManagementService,
     "function",
     "lib/conversation-management.ts must export createConversationManagementService()."
   )
-  const service = module.createConversationManagementService!({
+  const service = conversationManagementModule.createConversationManagementService!({
     repository,
     stopSession: async () => {
       throw new Error("bridge stop refused")
@@ -505,13 +505,13 @@ test("conversation management service does not delete rows when stopSession fail
 
 test("conversation management service preserves known Codex stop errors", async (t) => {
   const repository = await createRepositoryFixture(t)
-  const module = await loadConversationManagementModule()
+  const conversationManagementModule = await loadConversationManagementModule()
   assert.equal(
-    typeof module.createConversationManagementService,
+    typeof conversationManagementModule.createConversationManagementService,
     "function",
     "lib/conversation-management.ts must export createConversationManagementService()."
   )
-  const service = module.createConversationManagementService!({
+  const service = conversationManagementModule.createConversationManagementService!({
     repository,
     stopSession: async () => {
       throw new CodexConversationError("Codex bridge is unavailable.", 503)

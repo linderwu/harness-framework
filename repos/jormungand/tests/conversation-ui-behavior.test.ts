@@ -97,17 +97,17 @@ function jsonResponse(body: unknown, status = 200) {
 }
 
 test("conversation manager helpers use the list, new, rename, and archive routes with normalized payloads", async () => {
-  const module = await loadTaskConversationModule()
-  const requestConversationSummaries = (module as Record<string, unknown>).requestConversationSummaries as
+  const taskConversationModule = await loadTaskConversationModule()
+  const requestConversationSummaries = (taskConversationModule as Record<string, unknown>).requestConversationSummaries as
     | ((fetchImpl: typeof fetch, includeArchived?: boolean) => Promise<unknown>)
     | undefined
-  const requestNewConversation = (module as Record<string, unknown>).requestNewConversation as
+  const requestNewConversation = (taskConversationModule as Record<string, unknown>).requestNewConversation as
     | ((fetchImpl: typeof fetch) => Promise<unknown>)
     | undefined
-  const requestConversationRename = (module as Record<string, unknown>).requestConversationRename as
+  const requestConversationRename = (taskConversationModule as Record<string, unknown>).requestConversationRename as
     | ((fetchImpl: typeof fetch, conversationId: string, title: string) => Promise<unknown>)
     | undefined
-  const requestConversationState = (module as Record<string, unknown>).requestConversationState as
+  const requestConversationState = (taskConversationModule as Record<string, unknown>).requestConversationState as
     | ((fetchImpl: typeof fetch, conversationId: string, state: "active" | "archived") => Promise<unknown>)
     | undefined
 
@@ -185,11 +185,11 @@ test("conversation manager helpers use the list, new, rename, and archive routes
 })
 
 test("conversation deletion replacement flow confirms deletion, clears stale switch state, and stops on delete errors", async () => {
-  const module = await loadTaskConversationModule()
-  const requestConversationDeletionAndReplacement = (module as Record<string, unknown>).requestConversationDeletionAndReplacement as
+  const taskConversationModule = await loadTaskConversationModule()
+  const requestConversationDeletionAndReplacement = (taskConversationModule as Record<string, unknown>).requestConversationDeletionAndReplacement as
     | ((fetchImpl: typeof fetch, conversationId: string) => Promise<unknown>)
     | undefined
-  const buildConversationSwitchState = (module as Record<string, unknown>).buildConversationSwitchState as
+  const buildConversationSwitchState = (taskConversationModule as Record<string, unknown>).buildConversationSwitchState as
     | ((conversationId: string) => Record<string, unknown>)
     | undefined
 
@@ -252,25 +252,25 @@ test("conversation deletion replacement flow confirms deletion, clears stale swi
 })
 
 test("conversation deletion clears stale state before replacement-create failure leaves the UI without a new identity", async () => {
-  const module = await loadTaskConversationModule()
-  const requestConversationDeletionAndReplacement = (module as Record<string, unknown>).requestConversationDeletionAndReplacement as
+  const taskConversationModule = await loadTaskConversationModule()
+  const requestConversationDeletionAndReplacement = (taskConversationModule as Record<string, unknown>).requestConversationDeletionAndReplacement as
     | ((fetchImpl: typeof fetch, conversationId: string) => Promise<unknown>)
     | undefined
   const buildDeletedConversationState = (
-    Reflect.get(module, "buildDeletedConversationState")
-    ?? Reflect.get((module as { default?: unknown }).default ?? {}, "buildDeletedConversationState")
+    Reflect.get(taskConversationModule, "buildDeletedConversationState")
+    ?? Reflect.get((taskConversationModule as { default?: unknown }).default ?? {}, "buildDeletedConversationState")
   ) as
     | (() => Record<string, unknown>)
     | undefined
   const buildReplacementFailureState = (
-    Reflect.get(module, "buildReplacementFailureState")
-    ?? Reflect.get((module as { default?: unknown }).default ?? {}, "buildReplacementFailureState")
+    Reflect.get(taskConversationModule, "buildReplacementFailureState")
+    ?? Reflect.get((taskConversationModule as { default?: unknown }).default ?? {}, "buildReplacementFailureState")
   ) as
     | (() => Record<string, unknown>)
     | undefined
   const shouldSkipUnboundHydration = (
-    Reflect.get(module, "shouldSkipUnboundHydration")
-    ?? Reflect.get((module as { default?: unknown }).default ?? {}, "shouldSkipUnboundHydration")
+    Reflect.get(taskConversationModule, "shouldSkipUnboundHydration")
+    ?? Reflect.get((taskConversationModule as { default?: unknown }).default ?? {}, "shouldSkipUnboundHydration")
   ) as
     | ((input: {
         activeConversationId?: string
@@ -280,8 +280,8 @@ test("conversation deletion clears stale state before replacement-create failure
       }) => boolean)
     | undefined
   const isConversationManagerLocked = (
-    Reflect.get(module, "isConversationManagerLocked")
-    ?? Reflect.get((module as { default?: unknown }).default ?? {}, "isConversationManagerLocked")
+    Reflect.get(taskConversationModule, "isConversationManagerLocked")
+    ?? Reflect.get((taskConversationModule as { default?: unknown }).default ?? {}, "isConversationManagerLocked")
   ) as
     | ((input: {
         isLoadingConversation: boolean
@@ -362,10 +362,10 @@ test("conversation deletion clears stale state before replacement-create failure
 })
 
 test("replacement hydration guard skips unbound GET while delete replacement is still in progress", async () => {
-  const module = await loadTaskConversationModule()
+  const taskConversationModule = await loadTaskConversationModule()
   const shouldSkipUnboundHydration = (
-    Reflect.get(module, "shouldSkipUnboundHydration")
-    ?? Reflect.get((module as { default?: unknown }).default ?? {}, "shouldSkipUnboundHydration")
+    Reflect.get(taskConversationModule, "shouldSkipUnboundHydration")
+    ?? Reflect.get((taskConversationModule as { default?: unknown }).default ?? {}, "shouldSkipUnboundHydration")
   ) as
     | ((input: {
         activeConversationId?: string
@@ -400,10 +400,10 @@ test("replacement hydration guard skips unbound GET while delete replacement is 
 })
 
 test("conversation manager lock state disables new conversation while running or controlling", async () => {
-  const module = await loadTaskConversationModule()
+  const taskConversationModule = await loadTaskConversationModule()
   const isConversationManagerLocked = (
-    Reflect.get(module, "isConversationManagerLocked")
-    ?? Reflect.get((module as { default?: unknown }).default ?? {}, "isConversationManagerLocked")
+    Reflect.get(taskConversationModule, "isConversationManagerLocked")
+    ?? Reflect.get((taskConversationModule as { default?: unknown }).default ?? {}, "isConversationManagerLocked")
   ) as
     | ((input: {
         isLoadingConversation: boolean

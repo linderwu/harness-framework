@@ -28,7 +28,7 @@ export async function POST(
   ]
 
   const { id } = await context.params
-  let project = await getProject(id)
+  const project = await getProject(id)
 
   if (!project) {
     return NextResponse.json({ error: "Project not found" }, { status: 404 })

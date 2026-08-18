@@ -2299,14 +2299,16 @@ function AgentBridgeRow({
   const [reasoningIntensity, setReasoningIntensity] =
     useState<CodexReasoningIntensity>(initialReasoningIntensity)
 
-  if (!profile) {
-    return null
-  }
-
   useEffect(() => {
+    // This local control mirrors persisted run profile changes for the active row.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setModelId(run?.selectedModelId ?? "ChatGPT OAuth")
     setReasoningIntensity(run?.selectedReasoningIntensity ?? "auto")
   }, [run?.id, run?.selectedModelId, run?.selectedReasoningIntensity])
+
+  if (!profile) {
+    return null
+  }
 
   const modelOptions = new Set([
     ...codexModelOptions,

@@ -24,6 +24,13 @@ export async function GET(request?: Request) {
     legacyMode: "rotate"
   })
   const services = getDefaultHiveServices()
+  const metadata = identity.conversationId.startsWith("conversation:")
+    ? services.repository.getConversationMetadata(identity.conversationId)
+      ?? await services.repository.createConversation({
+        id: identity.conversationId,
+        title: "New conversation"
+      })
+    : services.repository.getConversationMetadata(identity.conversationId)
   const codexState = await getCodexConversationState(
     services.repository,
     identity.conversationId
@@ -37,7 +44,7 @@ export async function GET(request?: Request) {
     allowedAgents: unboundConversation.allowedAgents,
     binding: unboundConversation.binding,
     permissionMode: getAgentPermissionMode(),
-    metadata: services.repository.getConversationMetadata(identity.conversationId)
+    metadata
   })
   return identity.shouldSetCookie
     ? setConversationCookie(response, identity.conversationId, request)
