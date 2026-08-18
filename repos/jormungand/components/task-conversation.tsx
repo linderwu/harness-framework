@@ -8,8 +8,33 @@ import type {
 } from "@/lib/codex-conversation"
 import { getAgentLabel } from "@/lib/agents"
 import type { ConversationBinding } from "@/lib/conversation"
-import type { ConversationEntry } from "@/lib/hive-memory/types"
+import type {
+  ConversationEntry,
+  ConversationMetadata,
+  ConversationState,
+  ConversationSummary
+} from "@/lib/hive-memory/types"
 import type { AgentKind, WorkflowRun } from "@/lib/types"
+
+type ConversationHeaderMetadata = Pick<
+  ConversationMetadata,
+  "conversationId" | "title" | "state"
+>
+
+type ConversationPermissionMode = "full" | "restricted"
+
+type ConversationLoadResult = Partial<CodexConversationState> & {
+  entries: ConversationEntry[]
+  allowedAgents: AgentKind[]
+  error?: string
+  metadata?: ConversationHeaderMetadata
+  permissionMode?: ConversationPermissionMode
+}
+
+type NewConversationResult = {
+  conversationId: string
+  metadata?: ConversationHeaderMetadata
+}
 
 export function TaskConversation(props: {
   run?: WorkflowRun
@@ -30,18 +55,63 @@ export function TaskConversation(props: {
   const [conversationId, setConversationId] = useState<string | undefined>(runId)
   const [content, setContent] = useState("")
   const [error, setError] = useState<string>()
+  const [statusMessage, setStatusMessage] = useState<string>()
   const [session, setSession] = useState<CodexConversationState["session"]>()
   const [events, setEvents] = useState<CodexConversationEvent[]>([])
   const [isControlling, setIsControlling] = useState(false)
   const [isLoadingConversation, setIsLoadingConversation] = useState(true)
   const [isStartingConversation, setIsStartingConversation] = useState(false)
+  const [conversations, setConversations] = useState<ConversationSummary[]>([])
+  const [metadata, setMetadata] = useState<ConversationHeaderMetadata>()
+  const [permissionMode, setPermissionMode] = useState<ConversationPermissionMode>()
+  const [includeArchived, setIncludeArchived] = useState(false)
+  const [isRenameFormOpen, setIsRenameFormOpen] = useState(false)
+  const [renameDraft, setRenameDraft] = useState("")
+  const [activeManagerAction, setActiveManagerAction] = useState<
+    "rename" | "archive" | "unarchive" | "delete" | undefined
+  >()
+  const [isDeleteDialogFallbackOpen, setIsDeleteDialogFallbackOpen] = useState(false)
   const requestGeneration = useRef(0)
+  const renameInputRef = useRef<HTMLInputElement>(null)
+  const deleteDialogRef = useRef<HTMLDialogElement>(null)
+  const deleteTriggerRef = useRef<HTMLButtonElement>(null)
+  const deleteCancelRef = useRef<HTMLButtonElement>(null)
   const pollingInFlight = useRef<{
     generation: number
     promise: ReturnType<typeof loadConversation>
   } | undefined>(undefined)
   const pending = useMemo(() => entries.some((entry) => entry.status === "queued" || entry.status === "running"), [entries])
   const activeConversationId = isUnbound ? conversationId : runId
+  const conversationLoadPath = isUnbound && activeConversationId
+    ? `${conversationPath}?conversationId=${encodeURIComponent(activeConversationId)}`
+    : conversationPath
+  const currentConversationSummary = useMemo(() => {
+    if (!isUnbound || !activeConversationId) return undefined
+    const listed = conversations.find((conversation) => conversation.conversationId === activeConversationId)
+    if (listed) return listed
+    if (!metadata || metadata.conversationId !== activeConversationId) return undefined
+    const latestEntry = entries.at(-1)
+    return {
+      conversationId: activeConversationId,
+      title: metadata.title,
+      state: metadata.state,
+      messageCount: entries.length,
+      latestMessage: latestEntry?.content,
+      latestMessageAt: latestEntry?.createdAt
+    } satisfies ConversationSummary
+  }, [activeConversationId, conversations, entries, isUnbound, metadata])
+  const conversationOptions = useMemo(() => {
+    if (!isUnbound) return []
+    if (!currentConversationSummary) return conversations
+    const found = conversations.some(
+      (conversation) => conversation.conversationId === currentConversationSummary.conversationId
+    )
+    return found ? conversations : [...conversations, currentConversationSummary]
+  }, [conversations, currentConversationSummary, isUnbound])
+  const currentConversationTitle = props.run?.projectName
+    ?? metadata?.title
+    ?? currentConversationSummary?.title
+    ?? (isUnbound ? (isLoadingConversation ? "Loading conversation" : "New conversation") : "Conversation")
 
   function invalidateConversationRequests() {
     requestGeneration.current += 1
@@ -68,9 +138,32 @@ export function TaskConversation(props: {
     return request
   }
 
+  async function refreshConversations(generation = requestGeneration.current) {
+    try {
+      const nextConversations = await requestConversationSummaries(fetch, includeArchived)
+      if (generation !== requestGeneration.current) return
+      setConversations(nextConversations)
+    } catch (conversationListError) {
+      if (generation !== requestGeneration.current) return
+      setError(formatError(conversationListError))
+    }
+  }
+
+  useEffect(() => {
+    if (!isRenameFormOpen) return
+    renameInputRef.current?.focus()
+    renameInputRef.current?.select()
+  }, [isRenameFormOpen])
+
+  useEffect(() => {
+    if (!isDeleteDialogFallbackOpen) return
+    queueDeleteDialogFocus()
+  }, [isDeleteDialogFallbackOpen])
+
   useEffect(() => {
     let active = true
-    const request = loadConversationWithGuard(conversationPath, isUnbound)
+    setIsLoadingConversation(true)
+    const request = loadConversationWithGuard(conversationLoadPath, isUnbound)
     const { generation } = request
     void request.promise.then((data) => {
       if (!active || generation !== requestGeneration.current) return
@@ -80,6 +173,11 @@ export function TaskConversation(props: {
       setTargetAgent((current) => data.allowedAgents.includes(current) ? current : data.allowedAgents[0] ?? "codex")
       setSession(data.session)
       setEvents(data.events ?? [])
+      setMetadata(data.metadata)
+      setPermissionMode(data.permissionMode)
+      if (!isRenameFormOpen) {
+        setRenameDraft(data.metadata?.title ?? "")
+      }
       onEntriesChanged(data.entries)
     }).catch((loadError) => {
       if (!active || generation !== requestGeneration.current) return
@@ -92,14 +190,14 @@ export function TaskConversation(props: {
       active = false
       invalidateConversationRequests()
     }
-  }, [conversationPath, isUnbound, onEntriesChanged, runId])
+  }, [conversationLoadPath, isUnbound, onEntriesChanged, runId])
 
   useEffect(() => {
     if (!pending) return
     let active = true
     const timer = window.setInterval(() => {
       if (pollingInFlight.current) return
-      const request = loadConversationWithGuard(conversationPath, isUnbound)
+      const request = loadConversationWithGuard(conversationLoadPath, isUnbound)
       const { generation } = request
       void request.promise.then((data) => {
         if (!active || generation !== requestGeneration.current) return
@@ -107,6 +205,8 @@ export function TaskConversation(props: {
         setEntries(data.entries)
         setSession(data.session)
         setEvents(data.events ?? [])
+        setMetadata(data.metadata)
+        setPermissionMode(data.permissionMode)
         onEntriesChanged(data.entries)
       }).catch((loadError) => {
         if (!active || generation !== requestGeneration.current) return
@@ -117,7 +217,12 @@ export function TaskConversation(props: {
       active = false
       window.clearInterval(timer)
     }
-  }, [conversationPath, isUnbound, onEntriesChanged, pending, runId])
+  }, [conversationLoadPath, isUnbound, onEntriesChanged, pending, runId])
+
+  useEffect(() => {
+    if (!isUnbound) return
+    void refreshConversations()
+  }, [activeConversationId, includeArchived, isUnbound])
 
   useEffect(() => () => {
     invalidateConversationRequests()
@@ -127,6 +232,7 @@ export function TaskConversation(props: {
     event?.preventDefault()
     const message = content.trim()
     if (!message || allowedAgents.length === 0 || !activeConversationId || isLoadingConversation || isStartingConversation) return
+    if (activeManagerAction) return
     const generation = requestGeneration.current
     let idempotencyKey: string
     try {
@@ -150,6 +256,7 @@ export function TaskConversation(props: {
     setEntries((current) => [...current, optimistic])
     setContent("")
     setError(undefined)
+    setStatusMessage(undefined)
     try {
       const response = await fetch(conversationPath, {
         method: "POST",
@@ -172,6 +279,7 @@ export function TaskConversation(props: {
       setEntries((current) => result.entries ?? mergeResult(current, optimistic.id, result.userEntry!, result.responseEntry))
       setSession(result.session)
       setEvents(result.events ?? [])
+      if (isUnbound) void refreshConversations(generation)
       if (result.binding) props.onBound?.(result.binding)
     } catch (submitError) {
       if (generation !== requestGeneration.current) return
@@ -185,6 +293,7 @@ export function TaskConversation(props: {
     const generation = requestGeneration.current
     setIsControlling(true)
     setError(undefined)
+    setStatusMessage(undefined)
     try {
       const response = await fetch("/api/conversation/control", {
         method: "POST",
@@ -213,24 +322,24 @@ export function TaskConversation(props: {
     invalidateConversationRequests()
     setIsStartingConversation(true)
     setError(undefined)
+    setStatusMessage(undefined)
     try {
-      const response = await fetch("/api/conversation/new", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" }
-      })
-      const result = await response.json() as { conversationId?: string; error?: string }
-      if (!response.ok || !result.conversationId) {
-        throw new Error(result.error ?? "New conversation could not be started")
-      }
+      const result = await requestNewConversation(fetch)
       setConversationId(result.conversationId)
       setEntries([])
       setAllowedAgents(initialAllowedAgents)
       setTargetAgent((current) => initialAllowedAgents.includes(current) ? current : initialAllowedAgents[0] ?? "codex")
       setContent("")
+      setMetadata(result.metadata)
       setSession(undefined)
       setEvents([])
+      setIsLoadingConversation(true)
+      setIsRenameFormOpen(false)
+      setRenameDraft(result.metadata?.title ?? "")
+      if (isUnbound) void refreshConversations(requestGeneration.current)
       onEntriesChanged([])
       props.onNewConversation?.()
+      setStatusMessage(`Started ${result.metadata?.title ?? "a new conversation"}.`)
     } catch (startError) {
       setError(formatError(startError))
     } finally {
@@ -238,13 +347,162 @@ export function TaskConversation(props: {
     }
   }
 
+  function handleConversationSwitch(nextConversationId: string) {
+    if (!nextConversationId || nextConversationId === activeConversationId) return
+    invalidateConversationRequests()
+    const nextState = buildConversationSwitchState(nextConversationId)
+    setConversationId(nextState.conversationId)
+    setContent(nextState.content)
+    setEntries(nextState.entries)
+    setError(nextState.error)
+    setEvents(nextState.events)
+    setIsLoadingConversation(nextState.isLoadingConversation)
+    setMetadata(undefined)
+    setSession(nextState.session)
+    setStatusMessage(nextState.statusMessage)
+    setIsRenameFormOpen(false)
+    setRenameDraft("")
+    onEntriesChanged([])
+  }
+
+  function openRenameForm() {
+    setError(undefined)
+    setStatusMessage(undefined)
+    setRenameDraft(metadata?.title ?? currentConversationTitle)
+    setIsRenameFormOpen(true)
+  }
+
+  function closeRenameForm() {
+    setIsRenameFormOpen(false)
+    setRenameDraft(metadata?.title ?? "")
+  }
+
+  async function handleRenameSubmit(event: FormEvent) {
+    event.preventDefault()
+    if (!activeConversationId || !isUnbound) return
+    const generation = requestGeneration.current
+    setActiveManagerAction("rename")
+    setError(undefined)
+    setStatusMessage(undefined)
+    try {
+      const summary = await requestConversationRename(fetch, activeConversationId, renameDraft)
+      if (generation !== requestGeneration.current) return
+      setMetadata(toConversationHeaderMetadata(summary))
+      setRenameDraft(summary.title)
+      setIsRenameFormOpen(false)
+      setStatusMessage(`Renamed to ${summary.title}.`)
+      void refreshConversations(generation)
+    } catch (renameError) {
+      if (generation !== requestGeneration.current) return
+      setError(formatError(renameError))
+    } finally {
+      setActiveManagerAction(undefined)
+    }
+  }
+
+  async function handleConversationStateChange(nextState: ConversationState) {
+    if (!activeConversationId || !isUnbound) return
+    const generation = requestGeneration.current
+    setActiveManagerAction(nextState === "archived" ? "archive" : "unarchive")
+    setError(undefined)
+    setStatusMessage(undefined)
+    try {
+      const summary = await requestConversationState(fetch, activeConversationId, nextState)
+      if (generation !== requestGeneration.current) return
+      setMetadata(toConversationHeaderMetadata(summary))
+      setStatusMessage(
+        nextState === "archived"
+          ? "Conversation archived."
+          : "Conversation restored."
+      )
+      void refreshConversations(generation)
+    } catch (stateError) {
+      if (generation !== requestGeneration.current) return
+      setError(formatError(stateError))
+    } finally {
+      setActiveManagerAction(undefined)
+    }
+  }
+
+  function queueDeleteDialogFocus() {
+    if (typeof window === "undefined") return
+    window.requestAnimationFrame(() => {
+      deleteCancelRef.current?.focus()
+    })
+  }
+
+  function closeDeleteDialog() {
+    setIsDeleteDialogFallbackOpen(false)
+    const dialog = deleteDialogRef.current
+    if (dialog?.open && dialog.close) {
+      dialog.close()
+    }
+    if (typeof window === "undefined") return
+    window.requestAnimationFrame(() => {
+      deleteTriggerRef.current?.focus()
+    })
+  }
+
+  function openDeleteDialog() {
+    setError(undefined)
+    setStatusMessage(undefined)
+    const dialog = deleteDialogRef.current
+    if (dialog?.showModal) {
+      if (!dialog.open) {
+        dialog.showModal()
+      }
+      queueDeleteDialogFocus()
+      return
+    }
+    setIsDeleteDialogFallbackOpen(true)
+  }
+
+  async function handleDeleteConversation() {
+    if (!activeConversationId || !isUnbound) return
+    const currentId = activeConversationId
+    setActiveManagerAction("delete")
+    setError(undefined)
+    setStatusMessage(undefined)
+    try {
+      const replacement = await requestConversationDeletionAndReplacement(fetch, currentId)
+      closeDeleteDialog()
+      invalidateConversationRequests()
+      const nextState = buildConversationSwitchState(replacement.conversationId)
+      setConversationId(nextState.conversationId)
+      setContent(nextState.content)
+      setEntries(nextState.entries)
+      setError(nextState.error)
+      setEvents(nextState.events)
+      setIsLoadingConversation(nextState.isLoadingConversation)
+      setMetadata(replacement.metadata)
+      setSession(nextState.session)
+      setStatusMessage("Conversation deleted.")
+      setAllowedAgents(initialAllowedAgents)
+      setTargetAgent((current) => initialAllowedAgents.includes(current) ? current : initialAllowedAgents[0] ?? "codex")
+      setIsRenameFormOpen(false)
+      setRenameDraft(replacement.metadata?.title ?? "")
+      onEntriesChanged([])
+      props.onNewConversation?.()
+      void refreshConversations(requestGeneration.current)
+    } catch (deleteError) {
+      setError(formatError(deleteError))
+      closeDeleteDialog()
+    } finally {
+      setActiveManagerAction(undefined)
+    }
+  }
+
   const isTurnRunning = isUnbound && session?.turnStatus === "inProgress"
+  const isArchivedConversation = metadata?.state === "archived" || currentConversationSummary?.state === "archived"
   const isPaused = isUnbound && session?.status === "paused"
   const visibleActivityEvents = events
     .filter((event) => event.type !== "assistant_delta")
     .slice(-18)
   const liveAssistantText = session?.liveText?.trim()
-  const isConversationActionPending = isLoadingConversation || isStartingConversation
+  const isConversationActionPending = isLoadingConversation || isStartingConversation || !!activeManagerAction
+  const areManagerControlsDisabled = isConversationActionPending || isControlling || isTurnRunning
+  const isConversationSelectable = !areManagerControlsDisabled && conversationOptions.length > 1
+  const permissionStatus = permissionMode ? `${formatPermissionMode(permissionMode)} · ` : ""
 
   function handleComposerKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
     if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing || event.keyCode === 229) {
@@ -257,15 +515,146 @@ export function TaskConversation(props: {
 
   return (
     <section className="panel taskConversation" aria-label="Conversation">
-      <header className="taskConversationHeader">
-        <div><p className="eyebrow">Conversation</p><h2>{props.run?.projectName ?? "Unbound conversation"}</h2></div>
-        <div className="taskConversationHeaderActions">
-          {props.run ? <span className={`status ${props.run.status}`}>{props.run.status.replaceAll("_", " ")}</span> : <span className="conversationBindingStatus">No project or task · Codex {formatSessionStatus(session)}</span>}
+      <header className="taskConversationHeader" style={{ alignItems: "flex-start" }}>
+        <div style={{ display: "grid", gap: "0.25rem", flex: "1 1 14rem", minWidth: 0 }}>
+          <p className="eyebrow">Conversation</p>
+          <h2 style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {currentConversationTitle}
+          </h2>
+          <span className="conversationBindingStatus" role="status">
+            {props.run ? `${props.run.status.replaceAll("_", " ")} · ` : "No project or task · "}
+            {permissionStatus}
+            Codex {formatSessionStatus(session)}
+          </span>
+        </div>
+        <div className="taskConversationHeaderActions" style={{ flex: "1 1 18rem", minWidth: 0, justifyContent: "flex-end" }}>
+          {isUnbound ? (
+            <label style={{ display: "grid", gap: "0.25rem", minWidth: 0, flex: "1 1 12rem" }}>
+              <span className="eyebrow" aria-label="Conversation list">Conversations</span>
+              <select
+                value={activeConversationId ?? ""}
+                onChange={(event) => {
+                  const nextConversationId = event.target.value
+                  if (!nextConversationId) return
+                  handleConversationSwitch(nextConversationId)
+                }}
+                disabled={!isConversationSelectable}
+                style={{ minWidth: 0, maxWidth: "100%" }}
+              >
+                {conversationOptions.map((conversation) => (
+                  <option value={conversation.conversationId} key={conversation.conversationId}>
+                    {formatConversationOptionLabel(conversation)}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
+          {isUnbound ? (
+            <label style={{ alignItems: "center", display: "inline-flex", gap: "0.35rem", minWidth: 0 }}>
+              <input
+                aria-label="Show archived conversations"
+                checked={includeArchived}
+                disabled={areManagerControlsDisabled}
+                onChange={(event) => setIncludeArchived(event.target.checked)}
+                type="checkbox"
+              />
+              <span>Archived</span>
+            </label>
+          ) : null}
+          {isUnbound && activeConversationId ? (
+            <>
+              <button
+                aria-label="Rename conversation"
+                className="compactPanelButton"
+                disabled={areManagerControlsDisabled}
+                onClick={openRenameForm}
+                type="button"
+              >
+                Rename
+              </button>
+              <button
+                aria-label={isArchivedConversation ? "Unarchive conversation" : "Archive conversation"}
+                className="compactPanelButton"
+                disabled={areManagerControlsDisabled}
+                onClick={() => void handleConversationStateChange(isArchivedConversation ? "active" : "archived")}
+                type="button"
+              >
+                {activeManagerAction === "archive" || activeManagerAction === "unarchive"
+                  ? "Saving..."
+                  : isArchivedConversation
+                    ? "Unarchive"
+                    : "Archive"}
+              </button>
+              <button
+                aria-label="Delete conversation"
+                className="compactPanelButton danger"
+                disabled={areManagerControlsDisabled}
+                onClick={openDeleteDialog}
+                ref={deleteTriggerRef}
+                type="button"
+              >
+                Delete
+              </button>
+            </>
+          ) : null}
           <button aria-label="New conversation" className="compactPanelButton" disabled={isConversationActionPending} onClick={() => void startNewConversation()} type="button">
             {isLoadingConversation ? "Loading..." : isStartingConversation ? "Starting..." : "New conversation"}
           </button>
         </div>
       </header>
+      {isUnbound && isRenameFormOpen && activeConversationId ? (
+        <form
+          aria-label="Rename conversation form"
+          className="conversationComposer"
+          onSubmit={handleRenameSubmit}
+          style={{ alignItems: "flex-end", flexWrap: "wrap", marginTop: "0.75rem" }}
+        >
+          <label className="conversationInput" style={{ flex: "1 1 14rem", minWidth: 0 }}>
+            <span>Conversation title</span>
+            <input
+              maxLength={80}
+              onChange={(event) => setRenameDraft(event.target.value)}
+              ref={renameInputRef}
+              required
+              type="text"
+              value={renameDraft}
+            />
+          </label>
+          <button className="compactPanelButton" disabled={!!activeManagerAction} type="submit">
+            {activeManagerAction === "rename" ? "Saving..." : "Save"}
+          </button>
+          <button className="compactPanelButton" disabled={!!activeManagerAction} onClick={closeRenameForm} type="button">
+            Cancel
+          </button>
+        </form>
+      ) : null}
+      {isUnbound && activeConversationId ? (
+        <dialog
+          aria-describedby="delete-conversation-description"
+          aria-labelledby="delete-conversation-title"
+          onCancel={(event) => {
+            event.preventDefault()
+            closeDeleteDialog()
+          }}
+          onClose={() => setIsDeleteDialogFallbackOpen(false)}
+          open={isDeleteDialogFallbackOpen ? true : undefined}
+          ref={deleteDialogRef}
+        >
+          <form method="dialog" style={{ display: "grid", gap: "0.75rem", minWidth: 0 }}>
+            <h3 id="delete-conversation-title">Delete conversation</h3>
+            <p id="delete-conversation-description">Delete this conversation and its Codex session?</p>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem", justifyContent: "flex-end", minWidth: 0 }}>
+              <button className="compactPanelButton" onClick={closeDeleteDialog} ref={deleteCancelRef} type="button">
+                Cancel
+              </button>
+              <button className="compactPanelButton danger" disabled={activeManagerAction === "delete"} onClick={() => void handleDeleteConversation()} type="button">
+                {activeManagerAction === "delete" ? "Deleting..." : "Delete"}
+              </button>
+            </div>
+          </form>
+        </dialog>
+      ) : null}
+      {statusMessage ? <p role="status">{statusMessage}</p> : null}
       {isUnbound && session ? (
         <section className="codexActivity" aria-label="Codex activity">
           <div className="codexActivityHeader">
@@ -306,8 +695,8 @@ export function TaskConversation(props: {
       </ol>
       <form className="conversationComposer" onSubmit={submit}>
         <label><span>Agent</span><select value={targetAgent} disabled={props.run?.projectType === "arceus_maintenance" || allowedAgents.length <= 1} onChange={(event) => setTargetAgent(event.target.value as AgentKind)}>{allowedAgents.map((agent) => <option value={agent} key={agent}>{getAgentLabel(agent)}</option>)}</select></label>
-        <label className="conversationInput"><span>Message</span><textarea disabled={isTurnRunning} onKeyDown={handleComposerKeyDown} value={content} onChange={(event) => setContent(event.target.value)} placeholder={isTurnRunning ? "Codex is working. Pause or wait for the turn to finish." : props.run ? "Ask for progress, evidence, or a scoped action" : targetAgent === "codex" ? "Ask Codex to inspect or use the harness" : `Ask ${getAgentLabel(targetAgent)} for a response`} /></label>
-        <button className="primaryButton" disabled={!content.trim() || !allowedAgents.length || !activeConversationId || isTurnRunning || isLoadingConversation || isStartingConversation}><Send size={16} />Send</button>
+        <label className="conversationInput"><span>Message</span><textarea disabled={isTurnRunning || isConversationActionPending} onKeyDown={handleComposerKeyDown} value={content} onChange={(event) => setContent(event.target.value)} placeholder={isTurnRunning ? "Codex is working. Pause or wait for the turn to finish." : props.run ? "Ask for progress, evidence, or a scoped action" : targetAgent === "codex" ? "Ask Codex to inspect or use the harness" : `Ask ${getAgentLabel(targetAgent)} for a response`} /></label>
+        <button className="primaryButton" disabled={!content.trim() || !allowedAgents.length || !activeConversationId || isTurnRunning || isLoadingConversation || isStartingConversation || !!activeManagerAction}><Send size={16} />Send</button>
       </form>
       {error ? <p className="formError" role="alert">{error}</p> : null}
     </section>
@@ -316,11 +705,7 @@ export function TaskConversation(props: {
 
 async function loadConversation(path: string, requireConversationId = false) {
   const response = await fetch(path, { cache: "no-store" })
-  const data = await response.json() as Partial<CodexConversationState> & {
-    entries: ConversationEntry[]
-    allowedAgents: AgentKind[]
-    error?: string
-  }
+  const data = await response.json() as ConversationLoadResult
   if (!response.ok) throw new Error(data.error ?? "Conversation could not be loaded")
   if (requireConversationId && !data.conversationId) {
     throw new Error("Conversation response did not include a conversationId")
@@ -349,3 +734,164 @@ function mergeResult(current: ConversationEntry[], optimisticId: string, userEnt
 }
 
 function formatError(error: unknown) { return error instanceof Error ? error.message : String(error) }
+
+export function requestConversationSummaries(
+  fetchImpl: typeof fetch,
+  includeArchived = false
+) {
+  const path = includeArchived
+    ? "/api/conversations?includeArchived=true"
+    : "/api/conversations"
+  return requestJson<
+    { conversations?: ConversationSummary[]; error?: string },
+    ConversationSummary[]
+  >(
+    fetchImpl,
+    path,
+    { cache: "no-store" },
+    "Conversation list could not be loaded",
+    (result) => result.conversations ?? []
+  )
+}
+
+export function requestNewConversation(fetchImpl: typeof fetch) {
+  return requestJson<
+    { conversationId?: string; metadata?: ConversationHeaderMetadata; error?: string },
+    NewConversationResult
+  >(
+    fetchImpl,
+    "/api/conversation/new",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" }
+    },
+    "New conversation could not be started",
+    (result) => {
+      if (!result.conversationId) {
+        throw new Error(result.error ?? "New conversation could not be started")
+      }
+      return {
+        conversationId: result.conversationId,
+        metadata: result.metadata ?? {
+          conversationId: result.conversationId,
+          title: "New conversation",
+          state: "active"
+        }
+      } satisfies NewConversationResult
+    }
+  )
+}
+
+export function requestConversationRename(
+  fetchImpl: typeof fetch,
+  conversationId: string,
+  title: string
+) {
+  const normalized = normalizeConversationTitle(title)
+  if (!normalized || normalized.length > 80) {
+    throw new Error("title must be between 1 and 80 characters.")
+  }
+  return requestManagedConversationUpdate(
+    fetchImpl,
+    conversationId,
+    { title: normalized },
+    "Conversation could not be renamed"
+  )
+}
+
+export function requestConversationState(
+  fetchImpl: typeof fetch,
+  conversationId: string,
+  state: ConversationState
+) {
+  return requestManagedConversationUpdate(
+    fetchImpl,
+    conversationId,
+    { state },
+    "Conversation state could not be updated"
+  )
+}
+
+export async function requestConversationDeletionAndReplacement(
+  fetchImpl: typeof fetch,
+  conversationId: string
+) {
+  const response = await fetchImpl(`/api/conversations/${conversationId}`, {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ confirm: true })
+  })
+  if (!response.ok) {
+    const result = await response.json().catch(() => ({})) as { error?: string }
+    throw new Error(result.error ?? "Conversation could not be deleted")
+  }
+  return requestNewConversation(fetchImpl)
+}
+
+export function buildConversationSwitchState(conversationId: string) {
+  return {
+    conversationId,
+    content: "",
+    entries: [],
+    error: undefined,
+    events: [],
+    isLoadingConversation: true,
+    session: undefined,
+    statusMessage: undefined
+  }
+}
+
+function formatConversationOptionLabel(summary: ConversationSummary) {
+  const countLabel = `${summary.messageCount} msg${summary.messageCount === 1 ? "" : "s"}`
+  const stateLabel = summary.state === "archived" ? "Archived · " : ""
+  return `${stateLabel}${summary.title} (${countLabel})`
+}
+
+function formatPermissionMode(permissionMode: ConversationPermissionMode) {
+  return permissionMode === "full" ? "Full access" : "Restricted access"
+}
+
+function normalizeConversationTitle(value: string) {
+  return value.trim().replaceAll(/\s+/g, " ")
+}
+
+function toConversationHeaderMetadata(summary: ConversationSummary): ConversationHeaderMetadata {
+  return {
+    conversationId: summary.conversationId,
+    title: summary.title,
+    state: summary.state
+  }
+}
+
+function requestManagedConversationUpdate(
+  fetchImpl: typeof fetch,
+  conversationId: string,
+  body: { title?: string; state?: ConversationState },
+  fallbackError: string
+) {
+  return requestJson<ConversationSummary & { error?: string }>(
+    fetchImpl,
+    `/api/conversations/${conversationId}`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    },
+    fallbackError
+  )
+}
+
+async function requestJson<T, TResult = T>(
+  fetchImpl: typeof fetch,
+  input: string,
+  init: RequestInit,
+  fallbackError: string,
+  select?: (result: T) => TResult
+): Promise<TResult> {
+  const response = await fetchImpl(input, init)
+  const result = await response.json().catch(() => ({})) as T & { error?: string }
+  if (!response.ok) {
+    throw new Error(result.error ?? fallbackError)
+  }
+  return select ? select(result) : result as unknown as TResult
+}
