@@ -130,6 +130,7 @@ export interface AgentIdentity {
 export type ConversationRole = "user" | "agent" | "manager" | "system"
 export type ConversationImportance = "normal" | "important" | "critical"
 export type ConversationStatus = "queued" | "running" | "completed" | "failed"
+export type ConversationState = "active" | "archived"
 
 export interface ConversationEntry {
   id: string
@@ -145,6 +146,24 @@ export interface ConversationEntry {
   memoryIds: string[]
   idempotencyKey: string
   createdAt: string
+}
+
+export interface ConversationMetadata {
+  conversationId: string
+  title: string
+  state: ConversationState
+  createdAt: string
+  updatedAt: string
+  archivedAt?: string
+}
+
+export interface ConversationSummary {
+  conversationId: string
+  title: string
+  state: ConversationState
+  messageCount: number
+  latestMessageAt?: string
+  latestMessage?: string
 }
 
 export type PromotionOutcome =

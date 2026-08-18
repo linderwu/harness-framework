@@ -12,13 +12,34 @@ test("database initializes WAL schema and survives restart", async (t) => {
   const first = openHiveDatabase({ dataDir })
   assert.equal(first.health().status, "ready")
   assert.equal(first.pragma("journal_mode"), "wal")
-  assert.equal(first.schemaVersion(), 2)
+  assert.equal(first.schemaVersion(), 3)
   first.close()
 
   const second = openHiveDatabase({ dataDir })
   assert.equal(second.health().status, "ready")
-  assert.equal(second.schemaVersion(), 2)
+  assert.equal(second.schemaVersion(), 3)
   second.close()
+})
+
+test("database opening with an explicit data directory does not mutate process-global env", async (t) => {
+  const dataDir = await mkdtemp(join(tmpdir(), "jormungand-memory-"))
+  t.after(() => rm(dataDir, { recursive: true, force: true }))
+
+  const previousDataDir = process.env.JORMUNGAND_DATA_DIR
+  process.env.JORMUNGAND_DATA_DIR = "keep-existing-env"
+  t.after(() => {
+    if (previousDataDir === undefined) {
+      delete process.env.JORMUNGAND_DATA_DIR
+      return
+    }
+
+    process.env.JORMUNGAND_DATA_DIR = previousDataDir
+  })
+
+  const database = openHiveDatabase({ dataDir })
+  assert.equal(database.health().status, "ready")
+  assert.equal(process.env.JORMUNGAND_DATA_DIR, "keep-existing-env")
+  database.close()
 })
 
 test("database serializes writes", async (t) => {

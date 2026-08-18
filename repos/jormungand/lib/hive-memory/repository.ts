@@ -3,6 +3,9 @@ import type { HiveDatabase } from "./database"
 import type {
   AgentIdentity,
   ConversationEntry,
+  ConversationMetadata,
+  ConversationState,
+  ConversationSummary,
   CreateMemoryInput,
   FormalMemory,
   HiveEvent,
@@ -14,6 +17,7 @@ import type {
   SubmitMemoryCandidate
 } from "./types"
 import type { ManagerCheckpoint, ManagerProposal } from "../types"
+import { legacyConversationId } from "../conversation-identity"
 
 type MemoryRow = {
   id: string
@@ -69,6 +73,24 @@ type ConversationRow = {
   memory_ids_json: string
   idempotency_key: string
   created_at: string
+}
+
+type ConversationMetadataRow = {
+  id: string
+  title: string
+  state: ConversationState
+  created_at: string
+  updated_at: string
+  archived_at: string | null
+}
+
+type ConversationSummaryRow = {
+  conversationId: string
+  title: string
+  state: ConversationState
+  messageCount: number
+  latestMessageAt: string | null
+  latestMessage: string | null
 }
 
 export class HiveMemoryRepository {
@@ -544,6 +566,7 @@ export class HiveMemoryRepository {
       createdAt: new Date().toISOString()
     }
     const inserted = await this.database.write((connection) => {
+      this.ensureConversationMetadata(connection, input.workflowRunId, deriveConversationTitle(input.role, input.content), entry.createdAt)
       const result = connection.prepare(`
         INSERT OR IGNORE INTO conversation_entries(
           id, workflow_run_id, task_id, role, agent_id, content, importance,
@@ -556,6 +579,9 @@ export class HiveMemoryRepository {
         entry.replyToId ?? null, JSON.stringify(entry.artifactIds),
         JSON.stringify(entry.memoryIds), entry.idempotencyKey, entry.createdAt
       )
+      if (result.changes > 0) {
+        this.touchConversationMetadata(connection, input.workflowRunId, entry.createdAt)
+      }
       return result.changes > 0
     })
     return {
@@ -573,12 +599,22 @@ export class HiveMemoryRepository {
     )
   }
 
+  listUnboundConversations() {
+    return this.listConversationSummaries({ includeArchived: true }).map((summary) => ({
+      conversationId: summary.conversationId,
+      messageCount: summary.messageCount,
+      latestMessageAt: summary.latestMessageAt,
+      latestMessage: summary.latestMessage
+    }))
+  }
+
   async moveConversation(sourceWorkflowRunId: string, targetWorkflowRunId: string) {
     await this.database.write((connection) => {
       connection.prepare(`
         UPDATE conversation_entries SET workflow_run_id = ?
         WHERE workflow_run_id = ?
       `).run(targetWorkflowRunId, sourceWorkflowRunId)
+      this.moveConversationMetadata(connection, sourceWorkflowRunId, targetWorkflowRunId)
     })
     return this.listConversation(targetWorkflowRunId)
   }
@@ -608,6 +644,8 @@ export class HiveMemoryRepository {
     memoryIds?: string[]
   }) {
     await this.database.write((connection) => {
+      const existing = connection.prepare("SELECT workflow_run_id FROM conversation_entries WHERE id = ?")
+        .get(input.id) as { workflow_run_id: string } | undefined
       connection.prepare(`
         UPDATE conversation_entries SET
           content = COALESCE(?, content),
@@ -622,8 +660,122 @@ export class HiveMemoryRepository {
         input.memoryIds ? JSON.stringify(input.memoryIds) : null,
         input.id
       )
+      if (existing) {
+        this.touchConversationMetadata(connection, existing.workflow_run_id)
+      }
     })
     return this.getConversationEntry(input.id)
+  }
+
+  async createConversation(input: { id: string; title: string }) {
+    const now = new Date().toISOString()
+    const title = normalizeConversationTitle(input.title)
+    await this.database.write((connection) => {
+      this.ensureConversationIdentity(input.id)
+      connection.prepare(`
+        INSERT INTO conversations(id, title, state, created_at, updated_at, archived_at)
+        VALUES (?, ?, 'active', ?, ?, NULL)
+        ON CONFLICT(id) DO UPDATE SET
+          title = excluded.title,
+          updated_at = excluded.updated_at
+      `).run(input.id, title, now, now)
+    })
+    return this.requireConversationMetadata(input.id)
+  }
+
+  getConversationMetadata(id: string) {
+    return this.database.read((connection) => {
+      const row = connection.prepare("SELECT * FROM conversations WHERE id = ?").get(id) as ConversationMetadataRow | undefined
+      return row ? conversationMetadataFromRow(row) : undefined
+    })
+  }
+
+  listConversationSummaries(input: { includeArchived?: boolean } = {}) {
+    return this.database.read((connection) =>
+      (connection.prepare(`
+        SELECT
+          conversations.id AS conversationId,
+          conversations.title AS title,
+          conversations.state AS state,
+          COALESCE(stats.messageCount, 0) AS messageCount,
+          stats.latestMessageAt AS latestMessageAt,
+          stats.latestMessage AS latestMessage
+        FROM conversations
+        LEFT JOIN (
+          SELECT
+            entry.workflow_run_id AS conversationId,
+            COUNT(*) AS messageCount,
+            (
+              SELECT latest.created_at
+              FROM conversation_entries AS latest
+              WHERE latest.workflow_run_id = entry.workflow_run_id
+              ORDER BY latest.created_at DESC, latest.id DESC
+              LIMIT 1
+            ) AS latestMessageAt,
+            (
+              SELECT latest.content
+              FROM conversation_entries AS latest
+              WHERE latest.workflow_run_id = entry.workflow_run_id
+              ORDER BY latest.created_at DESC, latest.id DESC
+              LIMIT 1
+            ) AS latestMessage
+          FROM conversation_entries AS entry
+          GROUP BY entry.workflow_run_id
+        ) AS stats
+          ON stats.conversationId = conversations.id
+        WHERE (conversations.id LIKE 'conversation:%' OR conversations.id = :legacyConversationId)
+          AND (:includeArchived = 1 OR conversations.state = 'active')
+        ORDER BY conversations.updated_at DESC, conversations.id DESC
+      `).all({
+        legacyConversationId,
+        includeArchived: input.includeArchived ? 1 : 0
+      }) as ConversationSummaryRow[]).map(conversationSummaryFromRow)
+    )
+  }
+
+  async renameConversation(id: string, title: string) {
+    await this.database.write((connection) => {
+      const updatedAt = new Date().toISOString()
+      const result = connection.prepare(`
+        UPDATE conversations
+        SET title = ?, updated_at = ?
+        WHERE id = ?
+      `).run(normalizeConversationTitle(title), updatedAt, id)
+      if (result.changes === 0) {
+        throw new Error(`Conversation ${id} not found.`)
+      }
+    })
+    return this.requireConversationMetadata(id)
+  }
+
+  async setConversationState(id: string, state: ConversationState) {
+    await this.database.write((connection) => {
+      const updatedAt = new Date().toISOString()
+      const archivedAt = state === "archived" ? updatedAt : null
+      const result = connection.prepare(`
+        UPDATE conversations
+        SET state = ?, updated_at = ?, archived_at = ?
+        WHERE id = ?
+      `).run(state, updatedAt, archivedAt, id)
+      if (result.changes === 0) {
+        throw new Error(`Conversation ${id} not found.`)
+      }
+    })
+    return this.requireConversationMetadata(id)
+  }
+
+  isConversationRunning(id: string) {
+    const session = this.getCodexSession(id)
+    return session?.status === "running" || session?.turnStatus === "inProgress"
+  }
+
+  async deleteConversation(id: string) {
+    this.assertDeletableConversationId(id)
+    await this.database.transaction((connection) => {
+      connection.prepare("DELETE FROM codex_sessions WHERE conversation_id = ?").run(id)
+      connection.prepare("DELETE FROM conversation_entries WHERE workflow_run_id = ?").run(id)
+      connection.prepare("DELETE FROM conversations WHERE id = ?").run(id)
+    })
   }
 
   getCodexSession(conversationId: string) {
@@ -813,6 +965,12 @@ export class HiveMemoryRepository {
     return memory
   }
 
+  private requireConversationMetadata(id: string) {
+    const metadata = this.getConversationMetadata(id)
+    if (!metadata) throw new Error(`Conversation ${id} not found.`)
+    return metadata
+  }
+
   private requireMemoryFromConnection(connection: Database.Database, id: string) {
     const row = connection.prepare("SELECT * FROM memories WHERE id = ?").get(id) as MemoryRow | undefined
     if (!row) throw new Error(`Memory ${id} not found.`)
@@ -845,6 +1003,65 @@ export class HiveMemoryRepository {
       JSON.stringify(input.payload), input.idempotencyKey ?? null,
       new Date().toISOString()
     )
+  }
+
+  private ensureConversationMetadata(
+    connection: Database.Database,
+    conversationId: string,
+    title: string,
+    timestamp = new Date().toISOString()
+  ) {
+    if (!isConversationMetadataIdentity(conversationId)) return
+    connection.prepare(`
+      INSERT OR IGNORE INTO conversations(id, title, state, created_at, updated_at, archived_at)
+      VALUES (?, ?, 'active', ?, ?, NULL)
+    `).run(conversationId, title, timestamp, timestamp)
+  }
+
+  private touchConversationMetadata(
+    connection: Database.Database,
+    conversationId: string,
+    timestamp = new Date().toISOString()
+  ) {
+    if (!isConversationMetadataIdentity(conversationId)) return
+    connection.prepare("UPDATE conversations SET updated_at = ? WHERE id = ?").run(timestamp, conversationId)
+  }
+
+  private moveConversationMetadata(
+    connection: Database.Database,
+    sourceWorkflowRunId: string,
+    targetWorkflowRunId: string
+  ) {
+    if (!isConversationMetadataIdentity(sourceWorkflowRunId)) return
+    const row = connection.prepare("SELECT * FROM conversations WHERE id = ?").get(sourceWorkflowRunId) as ConversationMetadataRow | undefined
+    if (!row) return
+    if (isConversationMetadataIdentity(targetWorkflowRunId)) {
+      connection.prepare(`
+        INSERT INTO conversations(id, title, state, created_at, updated_at, archived_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          title = excluded.title,
+          state = excluded.state,
+          updated_at = excluded.updated_at,
+          archived_at = excluded.archived_at
+      `).run(targetWorkflowRunId, row.title, row.state, row.created_at, row.updated_at, row.archived_at)
+    }
+    connection.prepare("DELETE FROM conversations WHERE id = ?").run(sourceWorkflowRunId)
+  }
+
+  private ensureConversationIdentity(id: string) {
+    if (!id.startsWith("conversation:")) {
+      throw new Error("Conversation id must use the conversation:* identity format.")
+    }
+  }
+
+  private assertDeletableConversationId(id: string) {
+    if (id === legacyConversationId) {
+      throw new Error("Legacy conversation data cannot be deleted through the unbound manager.")
+    }
+    if (!id.startsWith("conversation:")) {
+      throw new Error("Only conversation:* identities can be deleted through the unbound manager.")
+    }
   }
 }
 
@@ -922,6 +1139,28 @@ function candidateFromRow(row: CandidateRow): MemoryCandidate {
   }
 }
 
+function conversationMetadataFromRow(row: ConversationMetadataRow): ConversationMetadata {
+  return {
+    conversationId: row.id,
+    title: row.title,
+    state: row.state,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    archivedAt: row.archived_at ?? undefined
+  }
+}
+
+function conversationSummaryFromRow(row: ConversationSummaryRow): ConversationSummary {
+  return {
+    conversationId: row.conversationId,
+    title: row.title,
+    state: row.state,
+    messageCount: Number(row.messageCount),
+    latestMessageAt: row.latestMessageAt ?? undefined,
+    latestMessage: row.latestMessage ?? undefined
+  }
+}
+
 function eventFromRow(row: { id: string; event_type: string; actor: string; workflow_run_id: string | null; task_id: string | null; payload_json: string; idempotency_key: string | null; created_at: string }): HiveEvent {
   return {
     id: row.id,
@@ -968,6 +1207,20 @@ function unique(values: string[]) {
 
 export function normalizeContent(value: string) {
   return value.trim().replaceAll(/\s+/g, " ").toLowerCase()
+}
+
+function normalizeConversationTitle(value: string) {
+  const normalized = value.trim().replaceAll(/\s+/g, " ")
+  if (!normalized) return "New conversation"
+  return normalized.slice(0, 80)
+}
+
+function deriveConversationTitle(role: ConversationEntry["role"], content: string) {
+  return role === "user" ? normalizeConversationTitle(content) : "New conversation"
+}
+
+function isConversationMetadataIdentity(value: string) {
+  return value.startsWith("conversation:") || value === legacyConversationId
 }
 
 function tokenize(value: string) {

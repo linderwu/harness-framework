@@ -1,6 +1,7 @@
 import type Database from "better-sqlite3"
+import { legacyConversationId } from "../conversation-identity"
 
-export const hiveSchemaVersion = 2
+export const hiveSchemaVersion = 3
 
 const migrationV1 = `
 CREATE TABLE schema_migrations (
@@ -178,6 +179,18 @@ CREATE TABLE codex_sessions (
 );
 `
 
+const migrationV3 = `
+CREATE TABLE conversations (
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  state TEXT NOT NULL DEFAULT 'active' CHECK(state IN ('active', 'archived')),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  archived_at TEXT
+);
+CREATE INDEX conversations_state_updated_idx ON conversations(state, updated_at);
+`
+
 export function migrateHiveSchema(database: Database.Database) {
   const hasMigrationTable = database
     .prepare("SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'")
@@ -205,4 +218,59 @@ export function migrateHiveSchema(database: Database.Database) {
         .run(2, new Date().toISOString())
     })()
   }
+
+  if (currentVersion < 3) {
+    database.transaction(() => {
+      database.exec(migrationV3)
+      backfillConversationMetadata(database)
+      database.prepare("INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)")
+        .run(3, new Date().toISOString())
+    })()
+  }
+}
+
+function backfillConversationMetadata(database: Database.Database) {
+  const rows = database.prepare(`
+    SELECT
+      entry.workflow_run_id AS conversationId,
+      MIN(entry.created_at) AS createdAt,
+      MAX(entry.created_at) AS updatedAt,
+      (
+        SELECT first_user.content
+        FROM conversation_entries AS first_user
+        WHERE first_user.workflow_run_id = entry.workflow_run_id
+          AND first_user.role = 'user'
+        ORDER BY first_user.created_at ASC, first_user.id ASC
+        LIMIT 1
+      ) AS firstUserContent
+    FROM conversation_entries AS entry
+    WHERE entry.workflow_run_id LIKE 'conversation:%'
+      OR entry.workflow_run_id = :legacyConversationId
+    GROUP BY entry.workflow_run_id
+  `).all({ legacyConversationId }) as Array<{
+    conversationId: string
+    createdAt: string
+    updatedAt: string
+    firstUserContent: string | null
+  }>
+
+  const insert = database.prepare(`
+    INSERT OR IGNORE INTO conversations(id, title, state, created_at, updated_at, archived_at)
+    VALUES (?, ?, 'active', ?, ?, NULL)
+  `)
+
+  for (const row of rows) {
+    insert.run(
+      row.conversationId,
+      normalizeConversationTitle(row.firstUserContent),
+      row.createdAt,
+      row.updatedAt
+    )
+  }
+}
+
+function normalizeConversationTitle(value?: string | null) {
+  const normalized = value?.trim().replaceAll(/\s+/g, " ")
+  if (!normalized) return "New conversation"
+  return normalized.slice(0, 80)
 }
