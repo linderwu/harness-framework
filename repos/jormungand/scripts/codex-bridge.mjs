@@ -4,6 +4,7 @@ import path from "node:path"
 import { promises as fs } from "node:fs"
 import { spawn } from "node:child_process"
 import { createHash, randomUUID } from "node:crypto"
+import { normalizePermissionMode } from "./agent-permissions.mjs"
 
 const host = process.env.CODEX_BRIDGE_HOST ?? "127.0.0.1"
 const port = Number(process.env.CODEX_BRIDGE_PORT ?? 4177)
@@ -23,11 +24,9 @@ const runtimeSkillCacheRoot = path.resolve(
   process.env.CODEX_BRIDGE_RUNTIME_SKILL_CACHE ??
     path.join(repoRoot, ".harness", "cache", "skills")
 )
-const permissionMode =
-  process.env.JORMUNGAND_AGENT_PERMISSION_MODE?.trim().toLowerCase() ===
-  "restricted"
-    ? "restricted"
-    : "full"
+const permissionMode = normalizePermissionMode(
+  process.env.JORMUNGAND_AGENT_PERMISSION_MODE
+)
 const activeAgentRuns = new Map()
 const activeWorkflowRuns = new Map()
 const activeIdempotencyKeys = new Map()
@@ -1486,8 +1485,4 @@ function formatError(error) {
 
 function isLoopbackHost(value) {
   return ["127.0.0.1", "::1", "localhost"].includes(value)
-}
-
-function normalizePermissionMode(value) {
-  return value === "restricted" ? "restricted" : "full"
 }

@@ -9,12 +9,28 @@ const openClawBridgeSource = readFileSync(
   "scripts/openclaw-bridge.mjs",
   "utf8"
 )
+const agentPermissionsSource = readFileSync(
+  "scripts/agent-permissions.mjs",
+  "utf8"
+)
 const openClawDeploySource = readFileSync(
   "scripts/deploy-openclaw-bridge.ps1",
   "utf8"
 )
 const proxySource = readFileSync("proxy.ts", "utf8")
 const healthSource = readFileSync("app/health/route.ts", "utf8")
+
+function loadNormalizePermissionMode(source: string) {
+  const match = source.match(
+    /function normalizePermissionMode\(value\) \{[\s\S]*?\n\}/
+  )
+
+  assert.ok(match, "normalizePermissionMode function must exist")
+
+  return new Function(`${match[0]}; return normalizePermissionMode;`)() as (
+    value?: unknown
+  ) => "full" | "restricted"
+}
 
 test("Codex bridge rejects repository mismatches before execution", () => {
   assert.match(codexBridgeSource, /remote[\s\S]*get-url[\s\S]*origin/)
@@ -69,9 +85,20 @@ test("Codex bridge supports idempotency recovery for long runs", () => {
 })
 
 test("Codex bridge source contracts full and restricted permission modes", () => {
+  const normalizePermissionMode = loadNormalizePermissionMode(
+    agentPermissionsSource
+  )
+
+  assert.equal(normalizePermissionMode(" restricted "), "restricted")
+  assert.equal(normalizePermissionMode("RESTRICTED"), "restricted")
+  assert.equal(normalizePermissionMode(" FULL "), "full")
   assert.match(
     codexBridgeSource,
-    /JORMUNGAND_AGENT_PERMISSION_MODE\?\s*\.trim\(\)\.toLowerCase\(\)\s*===\s*"restricted"\s*\?\s*"restricted"\s*:\s*"full"/
+    /import \{ normalizePermissionMode \} from "\.\/agent-permissions\.mjs"/
+  )
+  assert.match(
+    codexBridgeSource,
+    /const permissionMode = normalizePermissionMode\(\s*process\.env\.JORMUNGAND_AGENT_PERMISSION_MODE\s*\)/
   )
   assert.match(
     codexBridgeSource,
@@ -87,11 +114,25 @@ test("Codex bridge source contracts full and restricted permission modes", () =>
 })
 
 test("OpenClaw bridge accepts the compatibility token and enforces its local skill lock", () => {
+  const normalizePermissionMode = loadNormalizePermissionMode(
+    agentPermissionsSource
+  )
+
+  assert.equal(normalizePermissionMode(" restricted "), "restricted")
+  assert.equal(normalizePermissionMode("RESTRICTED"), "restricted")
+  assert.equal(normalizePermissionMode(" FULL "), "full")
+  assert.match(
+    openClawBridgeSource,
+    /import \{ normalizePermissionMode \} from "\.\/agent-permissions\.mjs"/
+  )
   assert.match(openClawBridgeSource, /from "\.\/openclaw-session\.mjs"/)
   assert.match(openClawBridgeSource, /OPENCLAW_GATEWAY_TOKEN/)
   assert.match(openClawBridgeSource, /OPENCLAW_RUNTIME_SKILL_LOCK/)
   assert.match(openClawBridgeSource, /bundle_not_locked/)
-  assert.match(openClawBridgeSource, /permissionMode/)
+  assert.match(
+    openClawBridgeSource,
+    /const permissionMode = normalizePermissionMode\(payload\.permissionMode\)/
+  )
   assert.match(openClawBridgeSource, /"mrmime"/)
   assert.match(openClawBridgeSource, /"gengar"/)
   assert.doesNotMatch(openClawBridgeSource, /"mrmine"/)

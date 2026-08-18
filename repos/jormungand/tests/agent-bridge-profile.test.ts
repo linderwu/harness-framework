@@ -39,44 +39,12 @@ function jsonResponse(body: unknown, status = 200) {
   })
 }
 
-test("Codex bridge receives workflow run model and reasoning intensity", async (t) => {
+test("Codex bridge receives normalized permission mode with workflow run profile", async (t) => {
   restoreEnv(t, "CODEX_BRIDGE_URL")
   restoreEnv(t, "JORMUNGAND_AGENT_PERMISSION_MODE")
   process.env.CODEX_BRIDGE_URL = "http://codex.test"
-  process.env.JORMUNGAND_AGENT_PERMISSION_MODE = " restricted "
-
-  let capturedPayload: AgentBridgePayload = {}
-
-  installFetchMock(t, async (input, init) => {
-    assert.equal(String(input), "http://codex.test/agent-runs")
-    const payload = JSON.parse(String(init?.body ?? "{}")) as AgentBridgePayload
-
-    capturedPayload = {
-      workflowRunId: payload.workflowRunId,
-      permissionMode: payload.permissionMode,
-      selectedModelId: payload.selectedModelId,
-      selectedReasoningIntensity: payload.selectedReasoningIntensity
-    }
-
-    return jsonResponse({
-      id: `bridge-run-${capturedPayload.workflowRunId}`,
-      status: "completed",
-      output: "Codex bridge completed."
-    })
-  })
 
   const { invokeConfiguredAgent } = await import("../lib/agent-bridge") as typeof import("../lib/agent-bridge")
-  const run = createWorkflowRun({
-    projectId: "project-1",
-    projectName: "Codex profile test",
-    repository: "owner/repo",
-    requirement: "Validate codex profile forwarding.",
-    selectedAgent: "codex" as AgentKind,
-    selectedModelId: "gpt-4.1",
-    selectedReasoningIntensity: "high",
-    designApprovalActor: "independent_agent",
-    verificationApprovalActor: "verification_subagent"
-  })
   const skill = {
     id: "agent_task.response",
     eventType: "requirement_intake",
@@ -93,19 +61,58 @@ test("Codex bridge receives workflow run model and reasoning intensity", async (
     verificationRules: []
   } satisfies WorkflowEventSkill
 
-  const result = await invokeConfiguredAgent({
-    run,
-    executor: "codex",
-    stage: "implementation",
-    artifactType: "log",
-    title: "Profile test",
-    fallbackBody: "Fallback profile test",
-    skill
-  })
+  for (const [envValue, expectedMode] of [
+    [" restricted ", "restricted"],
+    ["RESTRICTED", "restricted"],
+    [" FULL ", "full"]
+  ] as const) {
+    process.env.JORMUNGAND_AGENT_PERMISSION_MODE = envValue
+    let capturedPayload: AgentBridgePayload = {}
 
-  assert.equal(result.status, "completed")
-  assert.equal(capturedPayload.permissionMode, "restricted")
-  assert.equal(capturedPayload.selectedModelId, "gpt-4.1")
-  assert.equal(capturedPayload.selectedReasoningIntensity, "high")
-  assert.equal(typeof capturedPayload.workflowRunId, "string")
+    installFetchMock(t, async (input, init) => {
+      assert.equal(String(input), "http://codex.test/agent-runs")
+      const payload = JSON.parse(String(init?.body ?? "{}")) as AgentBridgePayload
+
+      capturedPayload = {
+        workflowRunId: payload.workflowRunId,
+        permissionMode: payload.permissionMode,
+        selectedModelId: payload.selectedModelId,
+        selectedReasoningIntensity: payload.selectedReasoningIntensity
+      }
+
+      return jsonResponse({
+        id: `bridge-run-${capturedPayload.workflowRunId}`,
+        status: "completed",
+        output: "Codex bridge completed."
+      })
+    })
+
+    const run = createWorkflowRun({
+      projectId: "project-1",
+      projectName: "Codex profile test",
+      repository: "owner/repo",
+      requirement: "Validate codex profile forwarding.",
+      selectedAgent: "codex" as AgentKind,
+      selectedModelId: "gpt-4.1",
+      selectedReasoningIntensity: "high",
+      designApprovalActor: "independent_agent",
+      verificationApprovalActor: "verification_subagent"
+    })
+
+    const result = await invokeConfiguredAgent({
+      run,
+      executor: "codex",
+      stage: "implementation",
+      artifactType: "log",
+      title: "Profile test",
+      fallbackBody: "Fallback profile test",
+      skill
+    })
+
+    assert.equal(result.status, "completed")
+    assert.equal(capturedPayload.permissionMode, expectedMode)
+    assert.equal(capturedPayload.selectedModelId, "gpt-4.1")
+    assert.equal(capturedPayload.selectedReasoningIntensity, "high")
+    assert.equal(typeof capturedPayload.workflowRunId, "string")
+  }
 })

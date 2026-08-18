@@ -31,9 +31,10 @@ the unauthenticated liveness endpoint for Zeabur. Set `SITE_AUTH_MODE=mutations`
 only when public read-only access is intentional.
 
 Set `JORMUNGAND_AGENT_PERMISSION_MODE=full` to select the shared full-access
-agent permission contract that later bridge and workflow consumers will enforce.
-Once those consumers are wired, full mode disables agent sandboxing and
-workflow approval pauses. Site Basic authentication remains enabled.
+agent permission contract. The current Codex bridge implementation already
+enforces it: full mode disables Codex bridge sandboxing and Codex app-server
+approval pauses. Workflow approval consumers still switch in Task 3. Site
+Basic authentication remains enabled.
 
 The OpenClaw HTTP bridge uses `OPENCLAW_BRIDGE_TOKEN`; when that value is blank,
 the app can reuse `OPENCLAW_GATEWAY_TOKEN` for compatibility with an existing

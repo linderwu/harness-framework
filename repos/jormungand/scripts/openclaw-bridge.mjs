@@ -8,6 +8,7 @@ import {
   deriveOpenClawSessionKey,
   sanitizeConversationHistory
 } from "./openclaw-session.mjs"
+import { normalizePermissionMode } from "./agent-permissions.mjs"
 
 const host = process.env.OPENCLAW_BRIDGE_HOST ?? "127.0.0.1"
 const port = Number(process.env.OPENCLAW_BRIDGE_PORT ?? 4188)
@@ -518,8 +519,7 @@ function stopWorkflowRun(workflowRunId) {
 }
 
 function buildOpenClawMessage(payload, context) {
-  const permissionMode =
-    payload.permissionMode === "restricted" ? "restricted" : "full"
+  const permissionMode = normalizePermissionMode(payload.permissionMode)
   const runtimeSkillSummary = context.runtimeSkillBundleResults
     .filter((result) => result.verified)
     .map((result) => `${result.id}@${result.version}: ${result.installedPath}`)
