@@ -565,7 +565,7 @@ export class HiveMemoryRepository {
       id: crypto.randomUUID(),
       createdAt: new Date().toISOString()
     }
-    const inserted = await this.database.write((connection) => {
+    const inserted = await this.database.transaction((connection) => {
       this.ensureConversationMetadata(connection, input.workflowRunId, deriveConversationTitle(input.role, input.content), entry.createdAt)
       const result = connection.prepare(`
         INSERT OR IGNORE INTO conversation_entries(
@@ -643,7 +643,7 @@ export class HiveMemoryRepository {
     artifactIds?: string[]
     memoryIds?: string[]
   }) {
-    await this.database.write((connection) => {
+    await this.database.transaction((connection) => {
       const existing = connection.prepare("SELECT workflow_run_id FROM conversation_entries WHERE id = ?")
         .get(input.id) as { workflow_run_id: string } | undefined
       connection.prepare(`

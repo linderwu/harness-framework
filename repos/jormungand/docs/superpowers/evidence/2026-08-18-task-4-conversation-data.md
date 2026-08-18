@@ -151,3 +151,97 @@ Preserved and left unstaged:
 
 Task 4 scope also intentionally included the pre-existing related repository work in:
 - `lib/hive-memory/repository.ts`
+
+## Follow-up Atomicity Fix
+
+Date: 2026-08-18
+Change: `fix: make conversation metadata writes atomic`
+
+### Root Cause
+
+`insertConversation` and `updateConversation` each performed multiple conversation metadata and conversation entry statements under `this.database.write(...)`.
+
+That meant a later statement failure could leave earlier statements committed:
+- `insertConversation`: metadata insert or conversation entry insert could persist before a later metadata timestamp refresh failure
+- `updateConversation`: conversation entry updates could persist before a later metadata timestamp refresh failure
+
+### RED
+
+Added focused regression coverage in:
+- `tests/conversation-management.test.ts`
+
+Regression command:
+
+```powershell
+npx tsc -p tsconfig.tests.json
+node --test .tmp-tests/tests/hive-memory-database.test.js .tmp-tests/tests/hive-memory-repository.test.js .tmp-tests/tests/conversation-management.test.js
+```
+
+Result before fix:
+- Compile: passed
+- Focused tests: failed
+- Counts: 10 passed, 1 failed
+
+Failure:
+- `conversation metadata mutations roll back when the metadata timestamp refresh fails`
+
+Observed broken behavior:
+- A trigger forced a late `conversations` update failure.
+- `insertConversation` still left a persisted metadata row behind, proving the autocommit boundary was wrong.
+
+### Fix
+
+Changed:
+- `lib/hive-memory/repository.ts`
+
+Implementation:
+- switched `insertConversation(...)` from `this.database.write(...)` to `this.database.transaction(...)`
+- switched `updateConversation(...)` from `this.database.write(...)` to `this.database.transaction(...)`
+
+Behavior preserved:
+- no route or component changes
+- no API contract changes
+- only the transaction boundary changed
+
+### GREEN
+
+Focused compile:
+
+```powershell
+npx tsc -p tsconfig.tests.json
+```
+
+Result:
+- Passed
+
+Focused Task 4 tests:
+
+```powershell
+node --test .tmp-tests/tests/hive-memory-database.test.js .tmp-tests/tests/hive-memory-repository.test.js .tmp-tests/tests/conversation-management.test.js
+```
+
+Result:
+- Passed
+- 11 tests passed
+- 0 failed
+
+Full suite:
+
+```powershell
+npm test
+```
+
+Result:
+- Passed
+- 192 tests passed
+- 0 failed
+- 1 suite passed
+
+Typecheck:
+
+```powershell
+npm run typecheck
+```
+
+Result:
+- Passed

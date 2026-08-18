@@ -48,6 +48,17 @@ async function createRepositoryFixture(t: test.TestContext) {
   return createHiveMemoryRepository(database) as ConversationManagementRepository
 }
 
+async function createConversationFixture(t: test.TestContext) {
+  const dataDir = await mkdtemp(join(tmpdir(), "jormungand-conversation-management-"))
+  const database = openHiveDatabase({ dataDir })
+  const repository = createHiveMemoryRepository(database) as ConversationManagementRepository
+  t.after(async () => {
+    database.close()
+    await rm(dataDir, { recursive: true, force: true })
+  })
+  return { database, repository }
+}
+
 test("conversation metadata can be created, listed, renamed, archived, and restored", async (t) => {
   const repository = await createRepositoryFixture(t)
   const conversationId = "conversation:11111111-1111-4111-8111-111111111111"
@@ -212,4 +223,81 @@ test("conversation deletion removes unbound metadata, entries, and sessions whil
   )
   assert.equal(repository.listConversation("run-bound-1").length, 1)
   assert.ok(repository.getCodexSession("run-bound-1"))
+})
+
+test("conversation metadata mutations roll back when the metadata timestamp refresh fails", async (t) => {
+  const { database, repository } = await createConversationFixture(t)
+  const insertConversationId = "conversation:44444444-4444-4444-8444-444444444444"
+
+  database.write((connection) => {
+    connection.prepare(`
+      CREATE TRIGGER fail_insert_metadata_touch
+      BEFORE UPDATE ON conversations
+      WHEN OLD.id = '${insertConversationId}'
+      BEGIN
+        SELECT RAISE(FAIL, 'metadata touch failed');
+      END;
+    `).run()
+  })
+
+  await assert.rejects(
+    repository.insertConversation({
+      workflowRunId: insertConversationId,
+      role: "user",
+      content: "Atomic insert must not leak conversation rows.",
+      importance: "normal",
+      status: "queued",
+      artifactIds: [],
+      memoryIds: [],
+      idempotencyKey: "conversation-management:atomic-insert"
+    }),
+    /metadata touch failed/i
+  )
+  assert.equal(repository.getConversationMetadata(insertConversationId), undefined)
+  assert.deepEqual(repository.listConversation(insertConversationId), [])
+
+  await database.write((connection) => {
+    connection.prepare("DROP TRIGGER fail_insert_metadata_touch").run()
+  })
+
+  const updateConversationId = "conversation:55555555-5555-4555-8555-555555555555"
+  await repository.createConversation({ id: updateConversationId, title: "Stable title" })
+  const inserted = await repository.insertConversation({
+    workflowRunId: updateConversationId,
+    role: "user",
+    content: "Original content",
+    importance: "normal",
+    status: "queued",
+    artifactIds: [],
+    memoryIds: [],
+    idempotencyKey: "conversation-management:atomic-update"
+  })
+  const metadataBeforeUpdate = repository.getConversationMetadata(updateConversationId)
+  assert.ok(metadataBeforeUpdate)
+
+  await database.write((connection) => {
+    connection.prepare(`
+      CREATE TRIGGER fail_update_metadata_touch
+      BEFORE UPDATE ON conversations
+      WHEN OLD.id = '${updateConversationId}'
+      BEGIN
+        SELECT RAISE(FAIL, 'metadata touch failed');
+      END;
+    `).run()
+  })
+
+  await assert.rejects(
+    repository.updateConversation({
+      id: inserted.entry.id,
+      content: "Changed content",
+      status: "running"
+    }),
+    /metadata touch failed/i
+  )
+
+  const entryAfterFailure = repository.getConversationEntry(inserted.entry.id)
+  assert.ok(entryAfterFailure)
+  assert.equal(entryAfterFailure.content, "Original content")
+  assert.equal(entryAfterFailure.status, "queued")
+  assert.deepEqual(repository.getConversationMetadata(updateConversationId), metadataBeforeUpdate)
 })
