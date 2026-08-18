@@ -56,8 +56,9 @@ test("Codex bridge rejects a successful exit without a final response", () => {
   assert.match(codexBridgeSource, /Codex exited successfully but produced no final message/)
 })
 
-test("unbound Codex conversation can operate the harness within current permissions", () => {
+test("unbound Codex conversation switches between restricted and full operator scope language", () => {
   assert.match(hiveServicesSource, /inspect and operate the local Jormungand harness/)
+  assert.match(hiveServicesSource, /operator-approved workspace and workflow scope/)
   assert.match(hiveServicesSource, /current sandbox and approval policy/)
   assert.match(hiveServicesSource, /Recent conversation:/)
 })
@@ -73,6 +74,7 @@ test("Codex manager bridge requires a bare structured JSON proposal", () => {
   assert.match(codexBridgeSource, /buildHiveManagerPrompt/)
   assert.match(codexBridgeSource, /Return exactly one JSON object/)
   assert.match(codexBridgeSource, /Do not wrap the JSON in Markdown/)
+  assert.match(codexBridgeSource, /operator-approved workspace and workflow scope/)
 })
 
 test("Codex bridge supports idempotency recovery for long runs", () => {

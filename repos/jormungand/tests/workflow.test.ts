@@ -6,6 +6,7 @@ import {
   decideApprovalGate,
   getDefaultSkillExecutor
 } from "../lib/workflow"
+import type { AgentPermissionMode } from "../lib/agent-permissions"
 import type { RuntimeSkillResolver } from "../lib/workflow"
 import type { ApprovalGate, WorkflowRun } from "../lib/types"
 
@@ -38,37 +39,49 @@ function createRun() {
   })
 }
 
-async function advanceToPlanGate(run: WorkflowRun) {
-  let nextRun = await advanceRun(run)
-  nextRun = await advanceRun(nextRun)
-  nextRun = await advanceRun(nextRun)
+async function advanceToPlanGate(
+  run: WorkflowRun,
+  permissionMode: AgentPermissionMode = "restricted"
+) {
+  let nextRun = await advanceRun(run, permissionMode)
+  nextRun = await advanceRun(nextRun, permissionMode)
+  nextRun = await advanceRun(nextRun, permissionMode)
 
   return nextRun
 }
 
-async function advanceToDesignGate(run: WorkflowRun) {
-  let nextRun = await advanceToPlanGate(run)
+async function advanceToDesignGate(
+  run: WorkflowRun,
+  permissionMode: AgentPermissionMode = "restricted"
+) {
+  let nextRun = await advanceToPlanGate(run, permissionMode)
   const planGate = getPendingGate(nextRun, "plan")
 
   nextRun = decideApprovalGate(nextRun, planGate.id, "approved")
-  return advanceRun(nextRun)
+  return advanceRun(nextRun, permissionMode)
 }
 
-async function advanceToVerificationGate(run: WorkflowRun) {
-  let nextRun = await advanceToDesignGate(run)
+async function advanceToVerificationGate(
+  run: WorkflowRun,
+  permissionMode: AgentPermissionMode = "restricted"
+) {
+  let nextRun = await advanceToDesignGate(run, permissionMode)
   const designGate = getPendingGate(nextRun, "design")
 
   nextRun = decideApprovalGate(nextRun, designGate.id, "approved")
-  nextRun = await advanceRun(nextRun)
-  nextRun = await advanceRun(nextRun)
-  nextRun = await advanceRun(nextRun)
-  return advanceRun(nextRun)
+  nextRun = await advanceRun(nextRun, permissionMode)
+  nextRun = await advanceRun(nextRun, permissionMode)
+  nextRun = await advanceRun(nextRun, permissionMode)
+  return advanceRun(nextRun, permissionMode)
 }
 
-function advanceRun(run: WorkflowRun) {
+function advanceRun(
+  run: WorkflowRun,
+  permissionMode: AgentPermissionMode = "restricted"
+) {
   return advanceWorkflow(run, {
     resolveRuntimeSkillBundles: runtimeSkillResolver
-  })
+  , permissionMode } as Parameters<typeof advanceWorkflow>[1])
 }
 
 function getPendingGate(run: WorkflowRun, stage: ApprovalGate["stage"]) {
@@ -160,6 +173,48 @@ test("non-human verification approval remains pending until an explicit decision
   assert.equal(verificationGate.actorType, "verification_subagent")
   assert.equal(verificationGate.status, "pending")
   assert.equal(verificationGate.decidedAt, undefined)
+})
+
+test("full mode bypasses plan and design approval gates", async () => {
+  let run = createRun()
+
+  run = await advanceRun(run, "full")
+  run = await advanceRun(run, "full")
+  run = await advanceRun(run, "full")
+
+  assert.equal(run.currentStage, "design")
+  assert.equal(run.status, "pending")
+  assert.equal(run.approvalGates.length, 0)
+
+  run = await advanceRun(run, "full")
+
+  assert.equal(run.currentStage, "implementation")
+  assert.equal(run.status, "pending")
+  assert.equal(run.approvalGates.length, 0)
+})
+
+test("full mode completes verification without waiting for approval", async () => {
+  let run = createRun()
+
+  run = await advanceRun(run, "full")
+  run = await advanceRun(run, "full")
+  run = await advanceRun(run, "full")
+  run = await advanceRun(run, "full")
+  run = await advanceRun(run, "full")
+  run = await advanceRun(run, "full")
+  run = await advanceRun(run, "full")
+  run = await advanceRun(run, "full")
+
+  assert.equal(run.currentStage, "completed")
+  assert.equal(run.status, "completed")
+  assert.equal(run.approvalGates.length, 0)
+  assert.equal(
+    run.events.some(
+      (event) =>
+        event.eventType === "closeout" && event.status === "completed"
+    ),
+    true
+  )
 })
 
 test("verification changes requested creates a revised implementation artifact", async () => {

@@ -207,3 +207,61 @@ test("scheduler pauses before invoking manager when budget is exhausted", async 
   assert.deepEqual(result, { status: "paused", reason: "budget_exhausted" })
   assert.equal(run.managed?.state, "paused")
 })
+
+test("scheduler keeps approval actions in audit without pausing in full mode", async (t) => {
+  const dataDir = await mkdtemp(join(tmpdir(), "jormungand-scheduler-"))
+  const database = openHiveDatabase({ dataDir })
+  t.after(async () => {
+    database.close()
+    await rm(dataDir, { recursive: true, force: true })
+  })
+  const repository = createHiveMemoryRepository(database)
+  let run = createWorkflowRun({
+    projectId: "project-1", projectName: "Mission", repository: "owner/repo",
+    requirement: "Publish reviewed changes", selectedAgent: "codex",
+    designApprovalActor: "human", verificationApprovalActor: "human"
+  })
+  run = {
+    ...run,
+    managed: {
+      manager: "codex", state: "idle",
+      taskCounts: { pending: 0, running: 0, completed: 0, failed: 0, stopped: 0 },
+      budget: {
+        callLimit: 3, callsUsed: 0, timeLimitMs: 60000,
+        startedAt: new Date().toISOString(), costLimitUsd: 1, costUsedUsd: 0
+      },
+      circuitBreakerOpen: false
+    }
+  }
+  let approvals = 0
+  const scheduler = createManagerScheduler({
+    repository,
+    getRun: async () => run,
+    saveRun: async (next) => { run = next; return next },
+    invokeManager: async () => JSON.stringify(proposal({
+      proposed_actions: [
+        { type: "request_approval", effect: "protected_push", reason: "Publish reviewed changes." }
+      ],
+      approval_requests: [
+        { effect: "protected_push", reason: "Publish reviewed changes." }
+      ],
+      next_wake_condition: "approval_decided"
+    })),
+    allowedAgents: () => ["codex"],
+    requestApproval: async () => { approvals += 1 },
+    permissionMode: "full"
+  } as Parameters<typeof createManagerScheduler>[0])
+
+  await scheduler.enqueue({ workflowRunId: run.id, reason: "mission_created", idempotencyKey: "wake-full" })
+  const result = await scheduler.runNext(run.id)
+  const checkpoint = repository.getLatestManagerCheckpoint(run.id)
+
+  assert.equal(result.status, "completed")
+  assert.equal(result.acceptedActionCount, 1)
+  assert.equal(approvals, 0)
+  assert.equal(run.status, "pending")
+  assert.equal(run.managed?.state, "idle")
+  assert.deepEqual(checkpoint?.checkpoint.pendingApprovals, [
+    { effect: "protected_push", reason: "Publish reviewed changes." }
+  ])
+})

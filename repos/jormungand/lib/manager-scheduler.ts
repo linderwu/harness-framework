@@ -1,4 +1,8 @@
 import { estimateTokens, type ContextPack } from "./context-builder"
+import {
+  getAgentPermissionMode,
+  type AgentPermissionMode
+} from "./agent-permissions"
 import { parseManagerProposal, validateManagerProposal, type HiveManagerInvoker } from "./hive-manager"
 import type { HiveMemoryRepository } from "./hive-memory/repository"
 import type { AgentKind, ManagerAction, ManagerCheckpoint, WorkflowRun } from "./types"
@@ -23,6 +27,7 @@ export interface ManagerSchedulerDependencies {
   saveRun: (run: WorkflowRun) => Promise<WorkflowRun>
   invokeManager: HiveManagerInvoker
   allowedAgents: (run: WorkflowRun) => AgentKind[]
+  permissionMode?: AgentPermissionMode
   dispatchWorker?: (input: {
     run: WorkflowRun
     task: ManagerTask
@@ -174,6 +179,9 @@ export class ManagerScheduler {
     const appliedActions: ManagerAction[] = []
     const rejectedActions: Array<{ action: unknown; reason: string }> = []
     let waitingForApproval = false
+    const permissionMode = getAgentPermissionMode(
+      this.dependencies.permissionMode
+    )
 
     for (const action of actions) {
       if (action.type === "create_task") {
@@ -188,9 +196,11 @@ export class ManagerScheduler {
         continue
       }
       if (action.type === "request_approval") {
-        await this.dependencies.requestApproval?.({ run, action })
         appliedActions.push(action)
-        waitingForApproval = true
+        if (permissionMode !== "full") {
+          await this.dependencies.requestApproval?.({ run, action })
+          waitingForApproval = true
+        }
         continue
       }
       const task = this.dependencies.repository.listManagerTasks(run.id).find((item) => item.id === action.taskId)

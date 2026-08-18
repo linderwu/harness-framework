@@ -6,6 +6,10 @@ import type {
   ManagedRunSummary,
   WorkflowEventSkill
 } from "./types"
+import {
+  getAgentPermissionMode,
+  type AgentPermissionMode
+} from "./agent-permissions"
 
 export const arceusMaintenanceStages: ArceusMaintenanceConfig["stages"] = [
   "Intake", "Plan", "Modify", "Test", "Code Review", "Ready"
@@ -95,9 +99,12 @@ export function createArceusMaintenanceEventSkills(): WorkflowEventSkill[] {
   ])
 }
 
-export function requiresHumanApproval(effect: ExternalEffect) {
+export function requiresHumanApproval(
+  effect: ExternalEffect,
+  mode: AgentPermissionMode = getAgentPermissionMode()
+) {
   void effect
-  return true
+  return getAgentPermissionMode(mode) !== "full"
 }
 
 function managedSkills(

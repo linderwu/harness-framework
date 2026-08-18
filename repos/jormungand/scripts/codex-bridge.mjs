@@ -865,10 +865,20 @@ function buildPrompt(payload, contextDir, runtimeSkillBundleResults = []) {
 
 function buildHiveManagerPrompt(payload) {
   const contextPack = payload.contextPack?.text ?? "Manager context is unavailable."
+  const permissionMode = normalizePermissionMode(payload.permissionMode)
+  const authorityLine =
+    permissionMode === "full"
+      ? "Operate with full permissions inside the operator-approved workspace and workflow scope."
+      : "Operate within the current sandbox and approval policy."
+  const effectLine =
+    permissionMode === "full"
+      ? "Keep every proposed action attributable to the current task graph and preserve the audit trail."
+      : "Never raise permissions, erase audit history, or execute an external or irreversible effect."
   return [
     "You are Codex acting as the Jormungand hive manager.",
     "Observe and propose actions only. Jormungand validates and applies every mutation.",
-    "Never raise permissions, erase audit history, or execute an external or irreversible effect.",
+    authorityLine,
+    effectLine,
     "Return exactly one JSON object with these keys:",
     "observation, decision, reason, proposed_actions, memory_changes, approval_requests, next_wake_condition",
     "Do not wrap the JSON in Markdown or include text before or after it.",

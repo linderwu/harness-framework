@@ -68,6 +68,11 @@ test("external and irreversible effects always require human approval", () => {
     "physical_delete", "protected_push", "merge", "production_deploy",
     "paid_operation", "external_message", "other_irreversible"
   ] as const) {
-    assert.equal(requiresHumanApproval(effect), true)
+    assert.equal(requiresHumanApproval(effect, "restricted"), true)
   }
+})
+
+test("full mode bypasses managed human approval while restricted mode preserves it", () => {
+  assert.equal(requiresHumanApproval("protected_push", "full"), false)
+  assert.equal(requiresHumanApproval("protected_push", "restricted"), true)
 })

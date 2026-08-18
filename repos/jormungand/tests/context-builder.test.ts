@@ -141,3 +141,48 @@ test("active conflicts are surfaced instead of silently resolved", async (t) => 
   assert.match(pack.text, /Node 20/)
   assert.match(pack.text, /Node 22/)
 })
+
+test("worker context switches restricted and full permission wording without dropping identity checks", async (t) => {
+  const dataDir = await mkdtemp(join(tmpdir(), "jormungand-context-"))
+  const database = openHiveDatabase({ dataDir })
+  t.after(async () => {
+    database.close()
+    await rm(dataDir, { recursive: true, force: true })
+  })
+  const repository = createHiveMemoryRepository(database)
+  const builder = createContextBuilder(repository)
+  const baseInput = {
+    workflowRunId: "run-1",
+    projectId: "project-a",
+    taskId: "task-1",
+    targetAgent: "codex" as const,
+    task: "Inspect workflow permissions",
+    successCriteria: ["Describe the active permission contract"],
+    constraints: [],
+    projectState: "running",
+    artifacts: []
+  }
+
+  const restrictedPack = await builder.buildWorkerPack({
+    ...baseInput,
+    permissionMode: "restricted"
+  } as Parameters<typeof builder.buildWorkerPack>[0])
+  const fullPack = await builder.buildWorkerPack({
+    ...baseInput,
+    permissionMode: "full"
+  } as Parameters<typeof builder.buildWorkerPack>[0])
+
+  assert.match(restrictedPack.text, /task-scoped only/)
+  assert.match(
+    restrictedPack.text,
+    /external or irreversible effects without approval/
+  )
+  assert.match(fullPack.text, /full permissions/i)
+  assert.match(fullPack.text, /workflow identity/i)
+  assert.doesNotMatch(fullPack.text, /task-scoped only/)
+  assert.doesNotMatch(
+    fullPack.text,
+    /external or irreversible effects without approval/
+  )
+  assert.match(fullPack.text, /Memory is evidence, not authority/)
+})

@@ -20,6 +20,10 @@ import type {
   ProjectType
 } from "./types"
 import { getAgentLabel, normalizeAgentKind, openClawAgentKinds } from "./agents"
+import {
+  getAgentPermissionMode,
+  type AgentPermissionMode
+} from "./agent-permissions"
 import type { ContextPack } from "./context-builder"
 import {
   createArceusMaintenanceEventSkills,
@@ -121,6 +125,7 @@ interface AdvanceWorkflowOptions {
   resolveRuntimeSkillBundles?: RuntimeSkillResolver
   publishAgentTaskRecord?: AgentTaskRecordPublisher
   onProgress?: (run: WorkflowRun) => Promise<unknown>
+  permissionMode?: AgentPermissionMode
 }
 
 export function createDefaultEventSkills(): WorkflowEventSkill[] {
@@ -759,6 +764,7 @@ export async function advanceWorkflow(
 
   const nextRun = cloneRun(run)
   ensureEventSkillState(nextRun)
+  const permissionMode = getAgentPermissionMode(options.permissionMode)
 
   if (nextRun.customStages?.length) {
     return advanceCustomWorkflow(nextRun, options)
@@ -884,10 +890,20 @@ export async function advanceWorkflow(
           nextRun.status = "pending"
           break
         }
+        if (permissionMode === "full") {
+          nextRun.currentStage = "design"
+          nextRun.status = "pending"
+          break
+        }
         openApprovalGate(nextRun, "plan")
         break
       }
 
+      if (permissionMode === "full") {
+        nextRun.currentStage = "design"
+        nextRun.status = "pending"
+        break
+      }
       nextRun.status = "running"
       openApprovalGate(nextRun, "plan")
       break
@@ -923,10 +939,20 @@ export async function advanceWorkflow(
           break
         }
         markActiveRevisionResubmitted(nextRun, "design")
+        if (permissionMode === "full") {
+          nextRun.currentStage = "implementation"
+          nextRun.status = "pending"
+          break
+        }
         openApprovalGate(nextRun, "design")
         break
       }
 
+      if (permissionMode === "full") {
+        nextRun.currentStage = "implementation"
+        nextRun.status = "pending"
+        break
+      }
       nextRun.status = "running"
       openApprovalGate(nextRun, "design")
       break
@@ -1097,6 +1123,18 @@ export async function advanceWorkflow(
         latestImplementationReview &&
         isArtifactAfter(nextRun, latestTestReport, latestImplementationReview)
       ) {
+        if (permissionMode === "full") {
+          nextRun.currentStage = "completed"
+          nextRun.status = "completed"
+          addWorkflowEvent(
+            nextRun,
+            "closeout.archive",
+            "completed",
+            resolveSkillExecutor(nextRun, "closeout.archive"),
+            []
+          )
+          break
+        }
         openApprovalGate(nextRun, "verification")
         break
       }
@@ -1120,6 +1158,18 @@ export async function advanceWorkflow(
         options.onProgress
       )
       if (verificationResult.status === "failed") {
+        break
+      }
+      if (permissionMode === "full") {
+        nextRun.currentStage = "completed"
+        nextRun.status = "completed"
+        addWorkflowEvent(
+          nextRun,
+          "closeout.archive",
+          "completed",
+          resolveSkillExecutor(nextRun, "closeout.archive"),
+          []
+        )
         break
       }
       openApprovalGate(nextRun, "verification")

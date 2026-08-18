@@ -86,13 +86,49 @@ test("Arceus irreversible effects stop at human approval", async (t) => {
       memory_changes: [], approval_requests: [{ effect: "protected_push", reason: "Publish reviewed changes." }],
       next_wake_condition: "approval_decided"
     } satisfies ManagerProposal),
-    requestApproval: async () => { approvals += 1 }
-  })
+    requestApproval: async () => { approvals += 1 },
+    permissionMode: "restricted"
+  } as Parameters<typeof createManagerScheduler>[0])
   await scheduler.enqueue({ workflowRunId: run.id, reason: "mission_created", idempotencyKey: "arceus-wake" })
   await scheduler.runNext(run.id)
   assert.equal(approvals, 1)
   assert.equal(run.status, "waiting_for_approval")
   assert.equal(run.managed?.state, "waiting_for_approval")
+  t.after(async () => { database.close(); await rm(dataDir, { recursive: true, force: true }) })
+})
+
+test("Arceus full mode audits irreversible effects without entering approval wait", async (t) => {
+  const dataDir = await mkdtemp(join(tmpdir(), "jormungand-arceus-e2e-"))
+  const database = openHiveDatabase({ dataDir })
+  const repository = createHiveMemoryRepository(database)
+  let run = createWorkflowRun({
+    projectId: "project-arceus", projectName: "Arceus", projectType: "arceus_maintenance",
+    repository: "owner/jormungand", requirement: "Plan, modify, test, and review", selectedAgent: "codex",
+    designApprovalActor: "human", verificationApprovalActor: "human",
+    managedConfig: createArceusMaintenanceConfig({ repository: "owner/jormungand", successCriteria: ["Ready"], constraints: [], nonGoals: [] })
+  })
+  let approvals = 0
+  const scheduler = createManagerScheduler({
+    repository, getRun: async () => run,
+    saveRun: async (next) => (run = { ...next, version: run.version + 1 }),
+    allowedAgents: () => ["codex"],
+    invokeManager: async () => JSON.stringify({
+      observation: "Code review passed.", decision: "Request protected push approval.", reason: "Push is external.",
+      proposed_actions: [{ type: "request_approval", effect: "protected_push", reason: "Publish reviewed changes." }],
+      memory_changes: [], approval_requests: [{ effect: "protected_push", reason: "Publish reviewed changes." }],
+      next_wake_condition: "approval_decided"
+    } satisfies ManagerProposal),
+    requestApproval: async () => { approvals += 1 },
+    permissionMode: "full"
+  } as Parameters<typeof createManagerScheduler>[0])
+  await scheduler.enqueue({ workflowRunId: run.id, reason: "mission_created", idempotencyKey: "arceus-full" })
+  await scheduler.runNext(run.id)
+  assert.equal(approvals, 0)
+  assert.equal(run.status, "pending")
+  assert.equal(run.managed?.state, "idle")
+  assert.deepEqual(repository.getLatestManagerCheckpoint(run.id)?.checkpoint.pendingApprovals, [
+    { effect: "protected_push", reason: "Publish reviewed changes." }
+  ])
   t.after(async () => { database.close(); await rm(dataDir, { recursive: true, force: true }) })
 })
 
