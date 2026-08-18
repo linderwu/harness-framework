@@ -1,13 +1,15 @@
 import assert from "node:assert/strict"
+import { lstat, mkdir, realpath, rm, symlink } from "node:fs/promises"
+import { join } from "node:path"
 import test from "node:test"
 
 import { createOpenClawA2AEnvelope } from "../lib/a2a-protocol"
 import { buildSharedConversationHistory } from "../lib/conversation-history"
 import { ConversationHistorySync } from "../lib/conversation-history-sync"
-import { routeOpenClawUnboundConversation } from "../lib/hive-services"
 import type { ConversationEntry } from "../lib/hive-memory/types"
 import type { AgentInvocationInput } from "../lib/agent-bridge"
 import type { Artifact, WorkflowEventSkill, WorkflowRun } from "../lib/types"
+type HiveServicesModule = typeof import("../lib/hive-services")
 
 const conversationHistory = [
   { role: "user" as const, content: "[operator] status update" },
@@ -90,6 +92,36 @@ function makeEntry(input: {
   return input
 }
 
+async function ensureCompiledAlias() {
+  const tmpRoot = join(process.cwd(), ".tmp-tests")
+  const scopedRoot = join(tmpRoot, "node_modules", "@")
+  const libLink = join(scopedRoot, "lib")
+  const expectedTarget = join(tmpRoot, "lib")
+
+  await mkdir(scopedRoot, { recursive: true })
+  const existingLink = await lstat(libLink).catch(() => undefined)
+  const existingTarget = existingLink?.isSymbolicLink()
+    ? await realpath(libLink).catch(() => undefined)
+    : undefined
+  const expectedRealTarget = await realpath(expectedTarget).catch(() => undefined)
+  if (existingTarget && expectedRealTarget && existingTarget === expectedRealTarget) {
+    return
+  }
+  if (existingLink) {
+    await rm(libLink, { recursive: true, force: true })
+  }
+  await symlink(expectedTarget, libLink, "junction").catch(async (error) => {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error
+  })
+}
+
+async function loadRouteOpenClawUnboundConversation() {
+  await ensureCompiledAlias()
+  const { routeOpenClawUnboundConversation } =
+    await import("../lib/hive-services") as HiveServicesModule
+  return routeOpenClawUnboundConversation
+}
+
 test("legacy OpenClaw A2A envelope includes conversationId and conversationHistory in the task payload", () => {
   const envelope = createOpenClawA2AEnvelope(
     createEnvelopeInput() as never,
@@ -155,6 +187,7 @@ test("ConversationHistorySync returns only the post-delivery delta for the same 
 })
 
 test("unbound OpenClaw routing seeds once, then sends only delta, and failed delivery does not advance cursor", async () => {
+  const routeOpenClawUnboundConversation = await loadRouteOpenClawUnboundConversation()
   const sync = new ConversationHistorySync()
   const capturedInputs: AgentInvocationInput[] = []
   const statuses: Array<"completed" | "failed"> = [
@@ -236,6 +269,7 @@ test("unbound OpenClaw routing seeds once, then sends only delta, and failed del
 })
 
 test("unbound OpenClaw routing keeps an independent seed and cursor per agent in the same conversation", async () => {
+  const routeOpenClawUnboundConversation = await loadRouteOpenClawUnboundConversation()
   const sync = new ConversationHistorySync()
   const capturedInputs: AgentInvocationInput[] = []
   const baseEntries = [
