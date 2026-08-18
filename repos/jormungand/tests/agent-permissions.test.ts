@@ -12,9 +12,12 @@ test("agent permission mode defaults to full when unset or unknown", () => {
 
 test("agent permission mode preserves restricted mode", () => {
   assert.equal(getAgentPermissionMode("restricted"), "restricted")
+  assert.equal(getAgentPermissionMode(" restricted "), "restricted")
+  assert.equal(getAgentPermissionMode("RESTRICTED"), "restricted")
 })
 
 test("full agent permission mode detection is explicit", () => {
+  assert.equal(getAgentPermissionMode(" FULL "), "full")
   assert.equal(isFullAgentPermissionMode("full"), true)
   assert.equal(isFullAgentPermissionMode("restricted"), false)
 })
