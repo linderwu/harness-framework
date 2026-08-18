@@ -6,7 +6,6 @@ import {
   Bot,
   Check,
   ChevronDown,
-  ChevronLeft,
   ChevronRight,
   CircleDot,
   ClipboardList,
@@ -772,7 +771,6 @@ export function HarnessDashboard({
       <section
         className="taskWorkspaceGrid"
         data-left-collapsed={!isNavigationExpanded}
-        data-right-collapsed={!isMonitoringExpanded}
       >
         <aside className={`taskNavigation${isNavigationExpanded ? "" : " collapsed"}${mobilePanel === "navigation" ? " mobilePanelOpen" : ""}`}>
           <div className="mobileDrawerHeader">
@@ -1279,43 +1277,19 @@ export function HarnessDashboard({
             </details>
           ) : null}
         </section>
-        {selectedRun ? (
-          <TaskStatusSidebar
-            bridgeConnections={<BridgeStatusPanel
-              onCodexProfileChange={updateCodexProfileForRun}
-              run={selectedRun}
-              showHeading={false}
-            />}
-            entries={conversationEntries.filter((entry) => entry.workflowRunId === selectedRun.id)}
-            isExpanded={isMonitoringExpanded}
-            isMobileOpen={mobilePanel === "monitoring"}
-            onMobileClose={() => setMobilePanel(undefined)}
-            onExpandedChange={setIsMonitoringExpanded}
+        <TaskStatusSidebar
+          bridgeConnections={<BridgeStatusPanel
+            onCodexProfileChange={updateCodexProfileForRun}
             run={selectedRun}
-          />
-        ) : (
-          <aside className={`panel taskStatusSidebar${isMonitoringExpanded ? "" : " collapsed"}${mobilePanel === "monitoring" ? " mobilePanelOpen" : ""}`} data-right-collapsed={!isMonitoringExpanded}>
-            <div className="mobileDrawerHeader">
-              <strong>Task monitoring</strong>
-              <button aria-label="Close task monitoring" className="iconButton" onClick={() => setMobilePanel(undefined)} type="button"><X size={18} /></button>
-            </div>
-            <button
-              aria-expanded={isMonitoringExpanded}
-              aria-label={isMonitoringExpanded ? "Collapse task monitoring" : "Expand task monitoring"}
-              className="railToggle monitoringRailToggle"
-              onClick={() => setIsMonitoringExpanded((current) => !current)}
-              type="button"
-            >
-              {isMonitoringExpanded ? <><span>Task monitoring</span><ChevronDown size={16} /></> : <ChevronLeft size={18} />}
-            </button>
-            {isMonitoringExpanded ? (
-              <>
-                <p>No active task.</p>
-                <BridgeStatusPanel />
-              </>
-            ) : null}
-          </aside>
-        )}
+            showHeading={false}
+          />}
+          entries={selectedRun ? conversationEntries.filter((entry) => entry.workflowRunId === selectedRun.id) : []}
+          isExpanded={isMonitoringExpanded}
+          isMobileOpen={mobilePanel === "monitoring"}
+          onMobileClose={() => setMobilePanel(undefined)}
+          onExpandedChange={setIsMonitoringExpanded}
+          run={selectedRun}
+        />
       </section>
       {mobilePanel ? <button aria-label="Close open menu" className="mobilePanelBackdrop" onClick={() => setMobilePanel(undefined)} type="button" /> : null}
     </main>

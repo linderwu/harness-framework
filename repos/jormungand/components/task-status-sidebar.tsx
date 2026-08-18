@@ -25,7 +25,7 @@ export function TaskStatusSidebar({
   onMobileClose,
   onExpandedChange
 }: {
-  run: WorkflowRun
+  run?: WorkflowRun
   entries: ConversationEntry[]
   bridgeConnections: ReactNode
   isExpanded: boolean
@@ -33,22 +33,22 @@ export function TaskStatusSidebar({
   onMobileClose?: () => void
   onExpandedChange: (expanded: boolean) => void
 }) {
-  const memoryIds = Array.from(new Set(entries.flatMap((entry) => entry.memoryIds))).slice(-8)
-  const budget = run.managed?.budget
-  const managedTaskTotal = run.managed
+  const memoryIds = run
+    ? Array.from(new Set(entries.flatMap((entry) => entry.memoryIds))).slice(-8)
+    : []
+  const budget = run?.managed?.budget
+  const managedTaskTotal = run?.managed
     ? Object.values(run.managed.taskCounts).reduce((total, count) => total + count, 0)
-    : run.events.length
-  const agentStatuses = getAgentStatuses(run)
+    : run?.events.length ?? 0
+  const agentStatuses = run ? getAgentStatuses(run) : []
 
   return (
-    <aside
-      className={`panel taskStatusSidebar${isExpanded ? "" : " collapsed"}${isMobileOpen ? " mobilePanelOpen" : ""}`}
-      data-right-collapsed={!isExpanded}
-    >
+    <div className={`taskStatusSidebar${isMobileOpen ? " mobilePanelOpen" : ""}`}>
       <div className="mobileDrawerHeader">
         <strong>Task monitoring</strong>
         <button aria-label="Close task monitoring" className="iconButton" onClick={onMobileClose} type="button">×</button>
       </div>
+      <aside className={`panel taskMonitoringPanel${isExpanded ? "" : " collapsed"}`}>
       <button
         aria-expanded={isExpanded}
         aria-label={isExpanded ? "Collapse task monitoring" : "Expand task monitoring"}
@@ -60,7 +60,8 @@ export function TaskStatusSidebar({
       </button>
 
       {isExpanded ? (
-        <div className="monitoringSections">
+        run ? (
+          <div className="monitoringSections">
           <MonitoringSection icon={<Activity size={16} />} title="Current Task">
             <dl>
               <div><dt>Stage</dt><dd>{run.currentStage}</dd></div>
@@ -95,11 +96,30 @@ export function TaskStatusSidebar({
             {memoryIds.length ? <div className="monitoringMemoryLinks"><Archive size={14} />{memoryIds.map((id) => <a id={`memory-${id}`} href={`#memory-${id}`} key={id}>Memory {id.slice(0, 8)}</a>)}</div> : null}
           </MonitoringSection>
 
-          <MonitoringSection icon={<Network size={16} />} title="Bridge Connections">
-            {bridgeConnections}
-          </MonitoringSection>
         </div>
+        ) : <p>No active task.</p>
       ) : null}
+      </aside>
+      <BridgeConnectionsPanel>{bridgeConnections}</BridgeConnectionsPanel>
+    </div>
+  )
+}
+
+function BridgeConnectionsPanel({ children }: { children: ReactNode }) {
+  const [isBridgeExpanded, setIsBridgeExpanded] = useState(true)
+
+  return (
+    <aside className={`panel bridgeConnectionsPanel${isBridgeExpanded ? "" : " collapsed"}`}>
+      <button
+        aria-expanded={isBridgeExpanded}
+        aria-label={isBridgeExpanded ? "Collapse Bridge Connections" : "Expand Bridge Connections"}
+        className="railToggle bridgeConnectionsToggle"
+        onClick={() => setIsBridgeExpanded((current) => !current)}
+        type="button"
+      >
+        {isBridgeExpanded ? <><span><Network size={16} />Bridge Connections</span><ChevronDown size={16} /></> : <><span><Network size={16} />Bridge Connections</span><ChevronLeft size={16} /></>}
+      </button>
+      {isBridgeExpanded ? <div className="monitoringSectionBody">{children}</div> : null}
     </aside>
   )
 }

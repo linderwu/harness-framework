@@ -1743,14 +1743,6 @@ small,
   grid-template-columns: 48px minmax(520px, 2fr) minmax(260px, 0.8fr);
 }
 
-.taskWorkspaceGrid[data-right-collapsed="true"] {
-  grid-template-columns: minmax(240px, 0.72fr) minmax(520px, 2fr) 48px;
-}
-
-.taskWorkspaceGrid[data-left-collapsed="true"][data-right-collapsed="true"] {
-  grid-template-columns: 48px minmax(520px, 1fr) 48px;
-}
-
 .taskNavigation,
 .conversationWorkspace {
   align-content: start;
@@ -1788,7 +1780,8 @@ small,
 .railToggle:active { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12), 0 1px 0 rgba(2, 12, 20, 0.72); transform: translateY(2px); }
 .taskNavigation:not(.collapsed) .navigationRailToggle { margin-bottom: 10px; }
 .taskNavigation.collapsed .railToggle,
-.taskStatusSidebar.collapsed .railToggle { justify-content: center; padding-inline: 0; }
+.taskMonitoringPanel.collapsed .railToggle,
+.bridgeConnectionsPanel.collapsed .railToggle { justify-content: center; padding-inline: 0; }
 
 .taskConversation {
   display: grid;
@@ -1923,7 +1916,8 @@ small,
 }
 
 .taskStatusSidebar { align-content: start; display: grid; gap: 10px; }
-.taskStatusSidebar.collapsed { padding: 4px; }
+.taskMonitoringPanel.collapsed,
+.bridgeConnectionsPanel.collapsed { padding: 4px; }
 .monitoringSections { display: grid; gap: 2px; }
 .monitoringSection { border-bottom: 1px solid var(--border); padding: 3px 0; }
 .monitoringSectionToggle { align-items: center; background: transparent; border: 0; color: var(--ink); display: flex; justify-content: space-between; min-height: 40px; padding: 7px 2px; width: 100%; }
@@ -1932,6 +1926,7 @@ small,
 .monitoringSectionToggle:focus-visible { color: #0e7490; }
 .monitoringSectionToggle:focus-visible { outline: 2px solid #0891b2; outline-offset: 2px; }
 .monitoringSectionBody { padding: 3px 0 10px; }
+.bridgeConnectionsToggle > span { align-items: center; display: flex; gap: 7px; }
 .taskStatusSidebar dl { display: grid; gap: 8px; }
 .taskStatusSidebar dl div { display: flex; justify-content: space-between; }
 .taskStatusSidebar dt { color: var(--muted); }
@@ -2559,9 +2554,7 @@ pre {
   }
 
   .taskWorkspaceGrid,
-  .taskWorkspaceGrid[data-left-collapsed="true"],
-  .taskWorkspaceGrid[data-right-collapsed="true"],
-  .taskWorkspaceGrid[data-left-collapsed="true"][data-right-collapsed="true"] { grid-template-columns: 1fr; }
+  .taskWorkspaceGrid[data-left-collapsed="true"] { grid-template-columns: 1fr; }
   .conversationWorkspace { order: -1; }
 
   .projectTypeGrid {
@@ -2686,9 +2679,7 @@ pre {
   }
 
   .taskWorkspaceGrid,
-  .taskWorkspaceGrid[data-left-collapsed="true"],
-  .taskWorkspaceGrid[data-right-collapsed="true"],
-  .taskWorkspaceGrid[data-left-collapsed="true"][data-right-collapsed="true"] {
+  .taskWorkspaceGrid[data-left-collapsed="true"] {
     display: block;
     height: 100%;
     min-height: 0;
