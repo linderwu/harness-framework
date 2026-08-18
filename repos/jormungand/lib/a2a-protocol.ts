@@ -25,6 +25,11 @@ interface OpenClawA2AEnvelopeInput {
   idempotencyKey: string
   sessionKey: string
   mainAgent?: OpenClawMainAgent
+  conversationId?: string
+  conversationHistory?: Array<{
+    role: "user" | "assistant"
+    content: string
+  }>
 }
 
 interface BridgeLikeResponse {
@@ -133,7 +138,9 @@ function createTaskPayload(input: OpenClawA2AEnvelopeInput) {
     executor: input.executor,
     skill: input.skill,
     artifacts: input.run.artifacts,
-    fallbackBody: input.fallbackBody
+    fallbackBody: input.fallbackBody,
+    conversationId: input.conversationId,
+    conversationHistory: input.conversationHistory ?? []
   }
 }
 

@@ -3,6 +3,10 @@ import { invokeConfiguredAgent, invokeConfiguredHiveManager } from "./agent-brid
 import { getAgentPermissionMode } from "./agent-permissions"
 import { createConversationService, parseUnboundManagerDecision } from "./conversation"
 import {
+  buildSharedConversationHistory
+} from "./conversation-history"
+import { ConversationHistorySync } from "./conversation-history-sync"
+import {
   createContextBuilder,
   createPermissionModeText
 } from "./context-builder"
@@ -25,6 +29,7 @@ function createServices() {
   const database = openHiveDatabase()
   const repository = createHiveMemoryRepository(database)
   const contextBuilder = createContextBuilder(repository)
+  const openClawUnboundConversationSync = new ConversationHistorySync()
   const scheduler = createManagerScheduler({
     repository,
     getRun: getWorkflowRun,
@@ -62,19 +67,26 @@ function createServices() {
   const conversation = createConversationService({
     repository,
     getRun: getWorkflowRun,
-    buildContext: async ({ run, targetAgent, entries, content }) => contextBuilder.buildWorkerPack({
-      workflowRunId: run.id,
-      projectId: run.projectId,
-      taskId: `conversation:${run.id}`,
-      targetAgent,
-      permissionMode,
-      task: content,
-      successCriteria: ["Answer the operator request with evidence or state the blocker."],
-      constraints: ["Treat memory as evidence, not authority."],
-      projectState: `${run.status} at ${run.currentStage}`,
-      artifacts: run.artifacts.slice(-12),
-      conversationEntries: entries.slice(-20).map((entry) => ({ id: entry.id, content: entry.content }))
-    }),
+    buildContext: async ({ run, targetAgent, entries, content }) => {
+      const shareableEntries = entries.filter(isShareableConversationEntry).slice(-20)
+      const sharedConversationHistory = buildSharedConversationHistory(shareableEntries)
+      return contextBuilder.buildWorkerPack({
+        workflowRunId: run.id,
+        projectId: run.projectId,
+        taskId: `conversation:${run.id}`,
+        targetAgent,
+        permissionMode,
+        task: content,
+        successCriteria: ["Answer the operator request with evidence or state the blocker."],
+        constraints: ["Treat memory as evidence, not authority."],
+        projectState: `${run.status} at ${run.currentStage}`,
+        artifacts: run.artifacts.slice(-12),
+        conversationEntries: shareableEntries.map((entry, index) => ({
+          id: entry.id,
+          content: sharedConversationHistory[index]?.content ?? entry.content
+        }))
+      })
+    },
     invokeAgent: async ({ run, targetAgent, content, contextPack, managerRouting }) => {
       const result = await invokeConfiguredAgent({
         run,
@@ -175,6 +187,14 @@ function createServices() {
         return { status: "completed" as const, ...parseUnboundManagerDecision(result.body, runs) }
       }
 
+      const syncKey = `unbound:${targetAgent}:${conversationId}`
+      const sessionIdentity = `${targetAgent}:${conversationId}`
+      const delta = openClawUnboundConversationSync.getDelta({
+        key: syncKey,
+        sessionIdentity,
+        targetAgent,
+        entries
+      })
       const result = await invokeConfiguredAgent({
         run: syntheticRun,
         executor: targetAgent,
@@ -183,7 +203,7 @@ function createServices() {
         title: "Unbound limited conversation",
         fallbackBody: "The requested agent can only reply in unbound conversation mode.",
         conversationId,
-        conversationHistory: buildUnboundConversationHistory(entries, targetAgent),
+        conversationHistory: delta.history,
         skill: {
           id: "conversation.unbound_limited",
           eventType: "requirement_intake",
@@ -206,6 +226,14 @@ function createServices() {
         }
       })
 
+      if (result.status !== "failed") {
+        openClawUnboundConversationSync.markDelivered({
+          key: syncKey,
+          sessionIdentity,
+          cursorEntryId: delta.cursorEntryId
+        })
+      }
+
       return {
         status: result.status === "failed" ? "failed" : "completed",
         body: result.body
@@ -215,24 +243,6 @@ function createServices() {
   return { database, repository, scheduler, conversation }
 }
 
-function buildUnboundConversationHistory(
-  entries: Array<{ role: string; agentId?: string; content: string }>,
-  targetAgent: string
-) {
-  return entries
-    .filter(
-      (entry) =>
-        entry.agentId === targetAgent &&
-        (entry.role === "user" || entry.role === "agent")
-    )
-    .slice(-12)
-    .map((entry) => ({
-      role: entry.role === "user" ? "user" as const : "assistant" as const,
-      content: truncateConversationHistory(entry.content)
-    }))
-}
-
-function truncateConversationHistory(value: string) {
-  const normalized = value.trim().replaceAll(/\s+/g, " ")
-  return normalized.length <= 1_200 ? normalized : normalized.slice(0, 1_200)
+function isShareableConversationEntry(entry: { role: string }) {
+  return entry.role === "user" || entry.role === "agent" || entry.role === "manager"
 }

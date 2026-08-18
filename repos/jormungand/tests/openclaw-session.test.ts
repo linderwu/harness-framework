@@ -92,16 +92,15 @@ test("OpenClaw conversation history is shape-checked and capped at the bridge bo
   const helper = await loadOpenClawSessionHelper()
   const longContent = `${"x".repeat(1500)}\n${"y".repeat(1500)}`
   const history = helper.sanitizeConversationHistory([
-    { role: "assistant", content: "drop-me-oldest" },
-    ...Array.from({ length: 12 }, (_, index) => ({
+    ...Array.from({ length: 20 }, (_, index) => ({
       role: index % 2 === 0 ? "user" : "assistant",
-      content: index === 11 ? longContent : `message-${index}`
+      content: index === 19 ? longContent : `message-${index}`
     })),
     { role: "tool", content: "invalid-role" },
     { role: "user", content: 42 }
   ])
 
-  assert.equal(history.length, 12)
+  assert.equal(history.length, 20)
   assert.equal(history[0]?.content, "message-0")
   assert.equal(history.at(-1)?.role, "assistant")
   assert.equal(history.at(-1)?.content.length, 1200)

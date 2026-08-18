@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto"
 
 const defaultMainAgent = "rowlet"
-const conversationHistoryLimit = 12
+const conversationHistoryLimit = 20
 const conversationEntryCharacterLimit = 1200
 const sessionSegmentCharacterLimit = 96
 const sessionKeyCharacterLimit = 160
