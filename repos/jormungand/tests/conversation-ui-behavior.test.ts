@@ -274,6 +274,7 @@ test("conversation deletion clears stale state before replacement-create failure
     events: [],
     isLoadingConversation: true,
     metadata: undefined,
+    replacementInProgress: true,
     session: undefined,
     statusMessage: undefined
   })
@@ -297,6 +298,37 @@ test("conversation deletion clears stale state before replacement-create failure
   assert.equal(calls.length, 2)
   assert.equal(calls[0]?.init?.method, "DELETE")
   assert.equal(calls[1]?.init?.method, "POST")
+})
+
+test("replacement hydration guard skips unbound GET while delete replacement is still in progress", async () => {
+  const module = await loadTaskConversationModule()
+  const shouldSkipUnboundHydration = (
+    Reflect.get(module, "shouldSkipUnboundHydration")
+    ?? Reflect.get((module as { default?: unknown }).default ?? {}, "shouldSkipUnboundHydration")
+  ) as
+    | ((input: {
+        activeConversationId?: string
+        isReplacingDeletedConversation: boolean
+        isUnbound: boolean
+      }) => boolean)
+    | undefined
+
+  assert.equal(typeof shouldSkipUnboundHydration, "function")
+  assert.equal(shouldSkipUnboundHydration!({
+    activeConversationId: undefined,
+    isReplacingDeletedConversation: true,
+    isUnbound: true
+  }), true)
+  assert.equal(shouldSkipUnboundHydration!({
+    activeConversationId: "conversation:replacement",
+    isReplacingDeletedConversation: true,
+    isUnbound: true
+  }), false)
+  assert.equal(shouldSkipUnboundHydration!({
+    activeConversationId: undefined,
+    isReplacingDeletedConversation: false,
+    isUnbound: true
+  }), false)
 })
 
 test("conversation manager lock state disables new conversation while running or controlling", async () => {

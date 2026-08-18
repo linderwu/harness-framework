@@ -121,3 +121,31 @@ Observed result:
 - Focused UI tests passed `13` of `13`.
 - `npm test` passed `207` of `207`.
 - `npm run typecheck` passed.
+
+## Follow-up Fix 3
+
+Issue addressed:
+
+- Delete-to-replacement still had a hydration race: after delete success, clearing `conversationId` could let the normal unbound hydration effect call `GET /api/conversation` against the stale cookie before replacement creation completed.
+
+Fix applied:
+
+- Added an explicit replacement-in-progress state for the delete -> new flow.
+- Added `shouldSkipUnboundHydration(...)` and used it to short-circuit the normal unbound hydration effect while replacement is in progress and no active identity exists.
+- Updated the cleared deleted state helper to record replacement-in-progress.
+- Kept replacement state true on replacement-create failure so the error remains visible, the active identity stays undefined, and the composer remains disabled until a fresh identity exists.
+
+Follow-up verification:
+
+```text
+npx tsc -p tsconfig.tests.json
+node --test .tmp-tests/tests/conversation-ui-structure.test.js .tmp-tests/tests/conversation-ui-behavior.test.js
+npm test
+npm run typecheck
+```
+
+Observed result:
+
+- Focused UI tests passed `14` of `14`.
+- `npm test` passed `208` of `208`.
+- `npm run typecheck` passed.

@@ -70,6 +70,7 @@ export function TaskConversation(props: {
   const [isRenameFormOpen, setIsRenameFormOpen] = useState(false)
   const [renameDraft, setRenameDraft] = useState("")
   const [activeManagerAction, setActiveManagerAction] = useState<ConversationManagerAction | undefined>()
+  const [isReplacingDeletedConversation, setIsReplacingDeletedConversation] = useState(false)
   const [isDeleteDialogFallbackOpen, setIsDeleteDialogFallbackOpen] = useState(false)
   const requestGeneration = useRef(0)
   const renameInputRef = useRef<HTMLInputElement>(null)
@@ -161,6 +162,11 @@ export function TaskConversation(props: {
   }, [isDeleteDialogFallbackOpen])
 
   useEffect(() => {
+    if (shouldSkipUnboundHydration({
+      activeConversationId,
+      isReplacingDeletedConversation,
+      isUnbound
+    })) return
     let active = true
     setIsLoadingConversation(true)
     const request = loadConversationWithGuard(conversationLoadPath, isUnbound)
@@ -190,7 +196,7 @@ export function TaskConversation(props: {
       active = false
       invalidateConversationRequests()
     }
-  }, [conversationLoadPath, isUnbound, onEntriesChanged, runId])
+  }, [activeConversationId, conversationLoadPath, isReplacingDeletedConversation, isUnbound, onEntriesChanged, runId])
 
   useEffect(() => {
     if (!pending) return
@@ -321,6 +327,7 @@ export function TaskConversation(props: {
     if (isConversationManagerLocked({
       isLoadingConversation,
       isStartingConversation,
+      isReplacingDeletedConversation,
       isControlling,
       isTurnRunning: isUnbound && session?.turnStatus === "inProgress",
       activeManagerAction
@@ -341,6 +348,7 @@ export function TaskConversation(props: {
       setSession(undefined)
       setEvents([])
       setIsLoadingConversation(true)
+      setIsReplacingDeletedConversation(false)
       setIsRenameFormOpen(false)
       setRenameDraft(result.metadata?.title ?? "")
       onEntriesChanged([])
@@ -473,8 +481,8 @@ export function TaskConversation(props: {
       await requestConversationDeletion(fetch, currentId)
       closeDeleteDialog()
       invalidateConversationRequests()
-      setIsStartingConversation(true)
       const deletedState = buildDeletedConversationState()
+      setIsReplacingDeletedConversation(true)
       setConversationId(deletedState.conversationId)
       setContent(deletedState.content)
       setEntries(deletedState.entries)
@@ -492,6 +500,7 @@ export function TaskConversation(props: {
       const replacement = await requestNewConversation(fetch)
       setConversationId(replacement.conversationId)
       setMetadata(replacement.metadata)
+      setIsReplacingDeletedConversation(false)
       setRenameDraft(replacement.metadata?.title ?? "")
       props.onNewConversation?.()
       setStatusMessage("Conversation deleted.")
@@ -499,7 +508,6 @@ export function TaskConversation(props: {
       setError(formatError(deleteError))
       closeDeleteDialog()
     } finally {
-      setIsStartingConversation(false)
       setActiveManagerAction(undefined)
     }
   }
@@ -515,6 +523,7 @@ export function TaskConversation(props: {
   const areManagerControlsDisabled = isConversationManagerLocked({
     isLoadingConversation,
     isStartingConversation,
+    isReplacingDeletedConversation,
     isControlling,
     isTurnRunning,
     activeManagerAction
@@ -860,6 +869,7 @@ export function buildDeletedConversationState() {
     events: [],
     isLoadingConversation: true,
     metadata: undefined,
+    replacementInProgress: true,
     session: undefined,
     statusMessage: undefined
   }
@@ -868,15 +878,27 @@ export function buildDeletedConversationState() {
 export function isConversationManagerLocked(input: {
   isLoadingConversation: boolean
   isStartingConversation: boolean
+  isReplacingDeletedConversation: boolean
   isControlling: boolean
   isTurnRunning: boolean
   activeManagerAction?: ConversationManagerAction
 }) {
   return input.isLoadingConversation
     || input.isStartingConversation
+    || input.isReplacingDeletedConversation
     || input.isControlling
     || input.isTurnRunning
     || !!input.activeManagerAction
+}
+
+export function shouldSkipUnboundHydration(input: {
+  activeConversationId?: string
+  isReplacingDeletedConversation: boolean
+  isUnbound: boolean
+}) {
+  return input.isUnbound
+    && input.isReplacingDeletedConversation
+    && !input.activeConversationId
 }
 
 export async function requestConversationDeletion(
