@@ -25,7 +25,7 @@ function mediaBlock(queryPattern: RegExp, description: string) {
   return css.slice(start, nextMedia === -1 ? undefined : nextMedia)
 }
 
-test("desktop layout allows the page to scroll instead of clipping content", () => {
+test("desktop layout keeps the workspace within the viewport while allowing page scrolling", () => {
   const rootRule = css.match(/html,\s*\nbody\s*\{([\s\S]*?)\n\}/)
 
   assert.ok(rootRule, "Expected html/body rule to exist")
@@ -41,7 +41,7 @@ test("desktop layout allows the page to scroll instead of clipping content", () 
   }
 
   assert.match(ruleBody(/\.shell/, ".shell"), /min-height:\s*100vh;/)
-  assert.doesNotMatch(ruleBody(/\.shell/, ".shell"), /\n\s*height:\s*100vh;/)
+  assert.match(ruleBody(/\.shell/, ".shell"), /\n\s*height:\s*100vh;/)
 })
 
 test("project hero action buttons keep stable visible dimensions", () => {
