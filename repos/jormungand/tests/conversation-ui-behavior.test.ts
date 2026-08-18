@@ -251,6 +251,54 @@ test("conversation deletion replacement flow confirms deletion, clears stale swi
   assert.equal(failureCalls, 1)
 })
 
+test("conversation deletion clears stale state before replacement-create failure leaves the UI without a new identity", async () => {
+  const module = await loadTaskConversationModule()
+  const requestConversationDeletionAndReplacement = (module as Record<string, unknown>).requestConversationDeletionAndReplacement as
+    | ((fetchImpl: typeof fetch, conversationId: string) => Promise<unknown>)
+    | undefined
+  const buildDeletedConversationState = (
+    Reflect.get(module, "buildDeletedConversationState")
+    ?? Reflect.get((module as { default?: unknown }).default ?? {}, "buildDeletedConversationState")
+  ) as
+    | (() => Record<string, unknown>)
+    | undefined
+
+  assert.equal(typeof requestConversationDeletionAndReplacement, "function")
+  assert.equal(typeof buildDeletedConversationState, "function")
+
+  assert.deepEqual(buildDeletedConversationState!(), {
+    content: "",
+    conversationId: undefined,
+    entries: [],
+    error: undefined,
+    events: [],
+    isLoadingConversation: true,
+    metadata: undefined,
+    session: undefined,
+    statusMessage: undefined
+  })
+
+  const calls: Array<{ input: RequestInfo | URL; init?: RequestInit }> = []
+  const fetchMock: typeof fetch = async (input, init) => {
+    calls.push({ input, init })
+    if (String(input) === "/api/conversations/conversation:delete-me") {
+      return new Response(null, { status: 204 })
+    }
+    if (String(input) === "/api/conversation/new") {
+      return jsonResponse({ error: "Replacement create failed" }, 500)
+    }
+    throw new Error(`Unexpected fetch: ${String(input)}`)
+  }
+
+  await assert.rejects(
+    () => requestConversationDeletionAndReplacement!(fetchMock, "conversation:delete-me"),
+    /Replacement create failed/
+  )
+  assert.equal(calls.length, 2)
+  assert.equal(calls[0]?.init?.method, "DELETE")
+  assert.equal(calls[1]?.init?.method, "POST")
+})
+
 test("conversation manager lock state disables new conversation while running or controlling", async () => {
   const module = await loadTaskConversationModule()
   const isConversationManagerLocked = (

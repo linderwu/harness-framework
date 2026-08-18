@@ -89,3 +89,35 @@ Observed result:
 - Focused UI tests passed `12` of `12`.
 - `npm test` passed `206` of `206`.
 - `npm run typecheck` passed.
+
+## Follow-up Fix 2
+
+Issues addressed:
+
+- After successful delete, the UI could still retain the deleted conversation state until replacement creation completed, which risked showing stale content if replacement creation failed.
+- New/delete identity transitions still had explicit summary refresh calls in the handlers instead of relying on the identity-change refresh effect.
+
+Fix applied:
+
+- Split deletion from replacement creation so `handleDeleteConversation()` now:
+  - waits for delete success,
+  - invalidates polling immediately,
+  - clears entries, session, events, metadata, and active selection before requesting a replacement identity,
+  - leaves the composer disabled with a visible error if replacement creation fails.
+- Added `buildDeletedConversationState()` for the cleared post-delete state contract.
+- Removed the explicit summary refresh calls from new/delete identity transitions and relied on the `activeConversationId` refresh effect instead, with a guard that skips the transient cleared identity during replacement creation.
+
+Follow-up verification:
+
+```text
+npx tsc -p tsconfig.tests.json
+node --test .tmp-tests/tests/conversation-ui-structure.test.js .tmp-tests/tests/conversation-ui-behavior.test.js
+npm test
+npm run typecheck
+```
+
+Observed result:
+
+- Focused UI tests passed `13` of `13`.
+- `npm test` passed `207` of `207`.
+- `npm run typecheck` passed.

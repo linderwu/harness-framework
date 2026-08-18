@@ -221,8 +221,9 @@ export function TaskConversation(props: {
 
   useEffect(() => {
     if (!isUnbound) return
+    if (isStartingConversation && !activeConversationId) return
     void refreshConversations()
-  }, [activeConversationId, includeArchived, isUnbound])
+  }, [activeConversationId, includeArchived, isStartingConversation, isUnbound])
 
   useEffect(() => () => {
     invalidateConversationRequests()
@@ -342,7 +343,6 @@ export function TaskConversation(props: {
       setIsLoadingConversation(true)
       setIsRenameFormOpen(false)
       setRenameDraft(result.metadata?.title ?? "")
-      if (isUnbound) void refreshConversations(requestGeneration.current)
       onEntriesChanged([])
       props.onNewConversation?.()
       setStatusMessage(`Started ${result.metadata?.title ?? "a new conversation"}.`)
@@ -470,30 +470,36 @@ export function TaskConversation(props: {
     setError(undefined)
     setStatusMessage(undefined)
     try {
-      const replacement = await requestConversationDeletionAndReplacement(fetch, currentId)
+      await requestConversationDeletion(fetch, currentId)
       closeDeleteDialog()
       invalidateConversationRequests()
-      const nextState = buildConversationSwitchState(replacement.conversationId)
-      setConversationId(nextState.conversationId)
-      setContent(nextState.content)
-      setEntries(nextState.entries)
-      setError(nextState.error)
-      setEvents(nextState.events)
-      setIsLoadingConversation(nextState.isLoadingConversation)
-      setMetadata(replacement.metadata)
-      setSession(nextState.session)
-      setStatusMessage("Conversation deleted.")
+      setIsStartingConversation(true)
+      const deletedState = buildDeletedConversationState()
+      setConversationId(deletedState.conversationId)
+      setContent(deletedState.content)
+      setEntries(deletedState.entries)
+      setError(deletedState.error)
+      setEvents(deletedState.events)
+      setIsLoadingConversation(deletedState.isLoadingConversation)
+      setMetadata(deletedState.metadata)
+      setSession(deletedState.session)
+      setStatusMessage(deletedState.statusMessage)
       setAllowedAgents(initialAllowedAgents)
       setTargetAgent((current) => initialAllowedAgents.includes(current) ? current : initialAllowedAgents[0] ?? "codex")
       setIsRenameFormOpen(false)
-      setRenameDraft(replacement.metadata?.title ?? "")
+      setRenameDraft("")
       onEntriesChanged([])
+      const replacement = await requestNewConversation(fetch)
+      setConversationId(replacement.conversationId)
+      setMetadata(replacement.metadata)
+      setRenameDraft(replacement.metadata?.title ?? "")
       props.onNewConversation?.()
-      void refreshConversations(requestGeneration.current)
+      setStatusMessage("Conversation deleted.")
     } catch (deleteError) {
       setError(formatError(deleteError))
       closeDeleteDialog()
     } finally {
+      setIsStartingConversation(false)
       setActiveManagerAction(undefined)
     }
   }
@@ -828,15 +834,7 @@ export async function requestConversationDeletionAndReplacement(
   fetchImpl: typeof fetch,
   conversationId: string
 ) {
-  const response = await fetchImpl(`/api/conversations/${conversationId}`, {
-    method: "DELETE",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ confirm: true })
-  })
-  if (!response.ok) {
-    const result = await response.json().catch(() => ({})) as { error?: string }
-    throw new Error(result.error ?? "Conversation could not be deleted")
-  }
+  await requestConversationDeletion(fetchImpl, conversationId)
   return requestNewConversation(fetchImpl)
 }
 
@@ -848,6 +846,20 @@ export function buildConversationSwitchState(conversationId: string) {
     error: undefined,
     events: [],
     isLoadingConversation: true,
+    session: undefined,
+    statusMessage: undefined
+  }
+}
+
+export function buildDeletedConversationState() {
+  return {
+    content: "",
+    conversationId: undefined,
+    entries: [],
+    error: undefined,
+    events: [],
+    isLoadingConversation: true,
+    metadata: undefined,
     session: undefined,
     statusMessage: undefined
   }
@@ -865,6 +877,21 @@ export function isConversationManagerLocked(input: {
     || input.isControlling
     || input.isTurnRunning
     || !!input.activeManagerAction
+}
+
+export async function requestConversationDeletion(
+  fetchImpl: typeof fetch,
+  conversationId: string
+) {
+  const response = await fetchImpl(`/api/conversations/${conversationId}`, {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ confirm: true })
+  })
+  if (!response.ok) {
+    const result = await response.json().catch(() => ({})) as { error?: string }
+    throw new Error(result.error ?? "Conversation could not be deleted")
+  }
 }
 
 function formatConversationOptionLabel(summary: ConversationSummary) {
