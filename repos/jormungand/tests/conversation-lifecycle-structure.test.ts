@@ -5,6 +5,8 @@ import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { pathToFileURL } from "node:url"
 import test, { describe } from "node:test"
+import type {} from "../app/api/conversations/route"
+import type {} from "../app/api/conversations/[id]/route"
 import type { AgentKind, WorkflowEventSkill } from "../lib/types"
 import {
   createConversationService,
@@ -22,6 +24,21 @@ import type { WorkflowRun } from "../lib/types"
 import { createWorkflowRun } from "../lib/workflow"
 
 const openClawBridgeSource = readFileSync("scripts/openclaw-bridge.mjs", "utf8")
+
+interface ConversationSummary {
+  conversationId: string
+  title: string
+  state: "active" | "archived"
+  messageCount: number
+  latestMessage: string
+  latestMessageAt: string
+}
+
+interface ConversationMetadata {
+  conversationId: string
+  title: string
+  state: "active" | "archived"
+}
 
 function createRun(projectType: WorkflowRun["projectType"] = "hive_mission") {
   return createWorkflowRun({
@@ -140,6 +157,10 @@ async function importRouteWithIsolatedDataDir<T>(t: test.TestContext, routeModul
   return await import(routeModulePath) as T
 }
 
+function getRouteServices() {
+  return require("../lib/hive-services") as typeof import("../lib/hive-services")
+}
+
 function restoreEnv(t: test.TestContext, key: string) {
   const previousValue = process.env[key]
   t.after(() => {
@@ -192,6 +213,176 @@ describe("conversation route contracts", { concurrency: false }, () => {
 
     assert.equal(response.status, 400)
     assert.match(body.error ?? "", /conversationId/i)
+  })
+
+  test("conversation GET includes permission mode and current conversation metadata when available", async (t) => {
+    restoreEnv(t, "JORMUNGAND_AGENT_PERMISSION_MODE")
+    process.env.JORMUNGAND_AGENT_PERMISSION_MODE = "restricted"
+
+    const { GET } = await importRouteWithIsolatedDataDir<{
+      GET: (request: Request) => Promise<Response>
+    }>(t, "../app/api/conversation/route")
+    const { getDefaultHiveServices } = getRouteServices()
+    const services = getDefaultHiveServices()
+    const conversationId = "conversation:99999999-9999-4999-8999-999999999999"
+
+    await services.repository.createConversation({
+      id: conversationId,
+      title: "Existing managed conversation"
+    })
+
+    const response = await GET(
+      new Request(`http://localhost/api/conversation?conversationId=${encodeURIComponent(conversationId)}`)
+    )
+    const body = await response.json() as {
+      conversationId?: string
+      permissionMode?: string
+      metadata?: ConversationMetadata
+    }
+
+    assert.equal(response.status, 200)
+    assert.equal(body.conversationId, conversationId)
+    assert.equal(body.permissionMode, "restricted")
+    assert.equal(body.metadata?.conversationId, conversationId)
+    assert.equal(body.metadata?.title, "Existing managed conversation")
+    assert.equal(body.metadata?.state, "active")
+  })
+
+  test("conversation new route persists active metadata as well as the cookie", async (t) => {
+    const { POST } = await importRouteWithIsolatedDataDir<{
+      POST: (request: Request) => Promise<Response>
+    }>(t, "../app/api/conversation/new/route")
+    const { getDefaultHiveServices } = getRouteServices()
+
+    const response = await POST(new Request("http://localhost/api/conversation/new", {
+      method: "POST"
+    }))
+    const body = await response.json() as { conversationId?: string }
+    const metadata = body.conversationId
+      ? getDefaultHiveServices().repository.getConversationMetadata(body.conversationId)
+      : undefined
+
+    assert.equal(response.status, 200)
+    assert.match(body.conversationId ?? "", /^conversation:[0-9a-f-]{36}$/i)
+    assert.ok(metadata)
+    assert.equal(metadata?.state, "active")
+    assert.equal(metadata?.title, "New conversation")
+    assert.match(response.headers.get("set-cookie") ?? "", /jormungand-conversation-id=/i)
+  })
+
+  test("conversations collection route creates managed conversations and filters archived items by default", async (t) => {
+    const { GET, POST } = await importRouteWithIsolatedDataDir<{
+      GET: (request: Request) => Promise<Response>
+      POST: (request: Request) => Promise<Response>
+    }>(t, "../app/api/conversations/route")
+    const { getDefaultHiveServices } = getRouteServices()
+    const services = getDefaultHiveServices()
+
+    const createResponse = await POST(new Request("http://localhost/api/conversations", {
+      method: "POST"
+    }))
+    const created = await createResponse.json() as { conversationId?: string }
+    assert.equal(createResponse.status, 201)
+    assert.ok(created.conversationId)
+
+    await services.repository.createConversation({
+      id: "conversation:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      title: "Archive me"
+    })
+    await services.repository.setConversationState(
+      "conversation:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "archived"
+    )
+
+    const activeOnlyResponse = await GET(new Request("http://localhost/api/conversations"))
+    const activeOnlyBody = await activeOnlyResponse.json() as {
+      conversations?: ConversationSummary[]
+    }
+    assert.equal(activeOnlyResponse.status, 200)
+    assert.equal(
+      activeOnlyBody.conversations?.some(
+        (conversation) =>
+          conversation.conversationId === "conversation:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+      ),
+      false
+    )
+    assert.equal(
+      activeOnlyBody.conversations?.some(
+        (conversation) => conversation.conversationId === created.conversationId
+      ),
+      true
+    )
+
+    const includeArchivedResponse = await GET(
+      new Request("http://localhost/api/conversations?includeArchived=true")
+    )
+    const includeArchivedBody = await includeArchivedResponse.json() as {
+      conversations?: ConversationSummary[]
+    }
+    assert.equal(includeArchivedResponse.status, 200)
+    assert.equal(
+      includeArchivedBody.conversations?.some(
+        (conversation) =>
+          conversation.conversationId === "conversation:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" &&
+          conversation.state === "archived"
+      ),
+      true
+    )
+  })
+
+  test("conversation detail route renames, archives, and requires delete confirmation", async (t) => {
+    const { PATCH, DELETE } = await importRouteWithIsolatedDataDir<{
+      PATCH: (
+        request: Request,
+        context: { params: Promise<{ id: string }> }
+      ) => Promise<Response>
+      DELETE: (
+        request: Request,
+        context: { params: Promise<{ id: string }> }
+      ) => Promise<Response>
+    }>(t, "../app/api/conversations/[id]/route")
+    const { getDefaultHiveServices } = getRouteServices()
+    const services = getDefaultHiveServices()
+    const conversationId = "conversation:bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+
+    await services.repository.createConversation({
+      id: conversationId,
+      title: "Rename me"
+    })
+
+    const renameResponse = await PATCH(
+      new Request(`http://localhost/api/conversations/${conversationId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: "  Renamed from route  " })
+      }),
+      { params: Promise.resolve({ id: conversationId }) }
+    )
+    const renamed = await renameResponse.json() as ConversationSummary
+    assert.equal(renameResponse.status, 200)
+    assert.equal(renamed.title, "Renamed from route")
+
+    const archiveResponse = await PATCH(
+      new Request(`http://localhost/api/conversations/${conversationId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ state: "archived" })
+      }),
+      { params: Promise.resolve({ id: conversationId }) }
+    )
+    const archived = await archiveResponse.json() as ConversationSummary
+    assert.equal(archiveResponse.status, 200)
+    assert.equal(archived.state, "archived")
+
+    const deleteWithoutConfirm = await DELETE(
+      new Request(`http://localhost/api/conversations/${conversationId}`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({})
+      }),
+      { params: Promise.resolve({ id: conversationId }) }
+    )
+    assert.equal(deleteWithoutConfirm.status, 400)
   })
 })
 

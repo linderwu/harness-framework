@@ -4,6 +4,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
 import { setTimeout as delay } from "node:timers/promises"
+import type {} from "../lib/conversation-management"
 import { legacyConversationId } from "../lib/conversation-identity"
 import { openHiveDatabase } from "../lib/hive-memory/database"
 import { createHiveMemoryRepository } from "../lib/hive-memory/repository"
@@ -38,6 +39,25 @@ type ConversationManagementRepository = ReturnType<typeof createHiveMemoryReposi
   deleteConversation(id: string): Promise<void>
 }
 
+interface ConversationManagementService {
+  createConversation(input?: {
+    conversationId?: string
+    title?: string
+  }): Promise<ConversationMetadata>
+  listConversations(input?: {
+    includeArchived?: boolean
+  }): ConversationSummary[]
+  updateConversation(input: {
+    conversationId: string
+    title?: unknown
+    state?: unknown
+  }): Promise<ConversationSummary>
+  deleteConversation(input: {
+    conversationId: string
+    confirm?: unknown
+  }): Promise<void>
+}
+
 async function createRepositoryFixture(t: test.TestContext) {
   const dataDir = await mkdtemp(join(tmpdir(), "jormungand-conversation-management-"))
   const database = openHiveDatabase({ dataDir })
@@ -57,6 +77,15 @@ async function createConversationFixture(t: test.TestContext) {
     await rm(dataDir, { recursive: true, force: true })
   })
   return { database, repository }
+}
+
+async function loadConversationManagementModule() {
+  return require("../lib/conversation-management") as {
+    createConversationManagementService?: (dependencies: {
+      repository: ConversationManagementRepository
+      stopSession: (conversationId: string) => Promise<void>
+    }) => ConversationManagementService
+  }
 }
 
 test("conversation metadata can be created, listed, renamed, archived, and restored", async (t) => {
@@ -347,4 +376,128 @@ test("conversation move rolls back when metadata move cleanup fails", async (t) 
   assert.deepEqual(targetEntries, [])
   assert.deepEqual(repository.getConversationMetadata(sourceConversationId), sourceMetadataBeforeMove)
   assert.equal(repository.getConversationMetadata(targetWorkflowRunId), undefined)
+})
+
+test("conversation management service validates updates, blocks running transitions, and hides bound ids", async (t) => {
+  const repository = await createRepositoryFixture(t)
+  const module = await loadConversationManagementModule()
+  assert.equal(
+    typeof module.createConversationManagementService,
+    "function",
+    "lib/conversation-management.ts must export createConversationManagementService()."
+  )
+  const service = module.createConversationManagementService!({
+    repository,
+    stopSession: async () => undefined
+  })
+  const conversationId = "conversation:77777777-7777-4777-8777-777777777777"
+
+  const created = await service.createConversation()
+  assert.match(created.conversationId, /^conversation:/i)
+  assert.equal(created.title, "New conversation")
+
+  await repository.createConversation({ id: conversationId, title: "Manage me" })
+  await assert.rejects(
+    service.updateConversation({ conversationId, title: "   " }),
+    (error: unknown) =>
+      typeof error === "object" &&
+      error !== null &&
+      "status" in error &&
+      (error as { status?: number }).status === 400
+  )
+  await assert.rejects(
+    service.updateConversation({ conversationId, state: "paused" }),
+    (error: unknown) =>
+      typeof error === "object" &&
+      error !== null &&
+      "status" in error &&
+      (error as { status?: number }).status === 400
+  )
+
+  await repository.upsertCodexSession({
+    conversationId,
+    bridgeSessionId: "bridge-running",
+    codexThreadId: "thread-running",
+    status: "running",
+    turnStatus: "inProgress"
+  })
+  await assert.rejects(
+    service.updateConversation({ conversationId, state: "archived" }),
+    (error: unknown) =>
+      typeof error === "object" &&
+      error !== null &&
+      "status" in error &&
+      (error as { status?: number }).status === 409
+  )
+
+  await repository.insertConversation({
+    workflowRunId: "run-bound-service",
+    role: "user",
+    content: "Bound workflow data must stay hidden.",
+    importance: "normal",
+    status: "completed",
+    artifactIds: [],
+    memoryIds: [],
+    idempotencyKey: "conversation-management:service-bound"
+  })
+  await assert.rejects(
+    service.updateConversation({
+      conversationId: "run-bound-service",
+      title: "Should not be visible"
+    }),
+    (error: unknown) =>
+      typeof error === "object" &&
+      error !== null &&
+      "status" in error &&
+      (error as { status?: number }).status === 404
+  )
+})
+
+test("conversation management service does not delete rows when stopSession fails", async (t) => {
+  const repository = await createRepositoryFixture(t)
+  const module = await loadConversationManagementModule()
+  assert.equal(
+    typeof module.createConversationManagementService,
+    "function",
+    "lib/conversation-management.ts must export createConversationManagementService()."
+  )
+  const service = module.createConversationManagementService!({
+    repository,
+    stopSession: async () => {
+      throw new Error("bridge stop refused")
+    }
+  })
+  const conversationId = "conversation:88888888-8888-4888-8888-888888888888"
+
+  await repository.createConversation({ id: conversationId, title: "Disposable through service" })
+  await repository.insertConversation({
+    workflowRunId: conversationId,
+    role: "user",
+    content: "Keep every row if stop fails.",
+    importance: "normal",
+    status: "completed",
+    artifactIds: [],
+    memoryIds: [],
+    idempotencyKey: "conversation-management:service-delete"
+  })
+  await repository.upsertCodexSession({
+    conversationId,
+    bridgeSessionId: "bridge-delete-service",
+    codexThreadId: "thread-delete-service",
+    status: "idle",
+    turnStatus: "completed"
+  })
+
+  await assert.rejects(
+    service.deleteConversation({ conversationId, confirm: true }),
+    (error: unknown) =>
+      typeof error === "object" &&
+      error !== null &&
+      "status" in error &&
+      typeof (error as { status?: number }).status === "number" &&
+      (error as { status: number }).status >= 500
+  )
+  assert.ok(repository.getConversationMetadata(conversationId))
+  assert.equal(repository.listConversation(conversationId).length, 1)
+  assert.ok(repository.getCodexSession(conversationId))
 })

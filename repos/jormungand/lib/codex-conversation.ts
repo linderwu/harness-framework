@@ -202,6 +202,13 @@ export async function controlCodexConversation(
   return getCodexConversationState(repository, conversationId)
 }
 
+export async function stopCodexConversationSession(
+  repository: HiveMemoryRepository,
+  conversationId = codexConversationId
+) {
+  await controlCodexConversation(repository, "stop", conversationId)
+}
+
 async function ensureCodexSession(
   repository: HiveMemoryRepository,
   conversationId: string

@@ -10,13 +10,16 @@ import {
   getCodexConversationState,
   postCodexConversationMessage
 } from "@/lib/codex-conversation"
+import { getAgentPermissionMode } from "@/lib/agent-permissions"
 import { getDefaultHiveServices } from "@/lib/hive-services"
 import { agentProfiles } from "@/lib/agents"
 import type { AgentKind } from "@/lib/types"
 
 export async function GET(request?: Request) {
+  const requestedConversationId = request ? new URL(request.url).searchParams.get("conversationId") : undefined
   const identity = resolveConversationId({
     request,
+    bodyConversationId: requestedConversationId ?? undefined,
     fallbackToNew: true,
     legacyMode: "rotate"
   })
@@ -32,7 +35,9 @@ export async function GET(request?: Request) {
     ...codexState,
     entries: unboundConversation.entries,
     allowedAgents: unboundConversation.allowedAgents,
-    binding: unboundConversation.binding
+    binding: unboundConversation.binding,
+    permissionMode: getAgentPermissionMode(),
+    metadata: services.repository.getConversationMetadata(identity.conversationId)
   })
   return identity.shouldSetCookie
     ? setConversationCookie(response, identity.conversationId, request)
