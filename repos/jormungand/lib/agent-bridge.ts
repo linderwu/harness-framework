@@ -15,6 +15,7 @@ import {
   resolveOpenClawA2AProtocol
 } from "./a2a-protocol"
 import { getAgentProfile } from "./agents"
+import { getAgentPermissionMode } from "./agent-permissions"
 import { ensureGitHubRepository } from "./github-repository"
 import type { AgentArtifactResult } from "@/lib/workflow"
 import type { ContextPack } from "./context-builder"
@@ -115,6 +116,7 @@ export async function invokeConfiguredAgent(
         agentFamily: profile.family,
         mainAgent: profile.mainAgent,
         skill: input.skill,
+        permissionMode: getAgentPermissionMode(),
         runtimeSkillBundles: input.runtimeSkillBundles ?? [],
         artifacts: input.run.artifacts,
         selectedModelId: input.run.selectedModelId?.trim(),

@@ -7,6 +7,7 @@ interface AgentBridgePayload {
   selectedModelId?: string
   selectedReasoningIntensity?: "low" | "medium" | "high" | "auto"
   workflowRunId?: string
+  permissionMode?: "full" | "restricted"
 }
 
 function restoreEnv(t: TestContext, key: string) {
@@ -40,7 +41,9 @@ function jsonResponse(body: unknown, status = 200) {
 
 test("Codex bridge receives workflow run model and reasoning intensity", async (t) => {
   restoreEnv(t, "CODEX_BRIDGE_URL")
+  restoreEnv(t, "JORMUNGAND_AGENT_PERMISSION_MODE")
   process.env.CODEX_BRIDGE_URL = "http://codex.test"
+  process.env.JORMUNGAND_AGENT_PERMISSION_MODE = " restricted "
 
   let capturedPayload: AgentBridgePayload = {}
 
@@ -50,6 +53,7 @@ test("Codex bridge receives workflow run model and reasoning intensity", async (
 
     capturedPayload = {
       workflowRunId: payload.workflowRunId,
+      permissionMode: payload.permissionMode,
       selectedModelId: payload.selectedModelId,
       selectedReasoningIntensity: payload.selectedReasoningIntensity
     }
@@ -100,6 +104,7 @@ test("Codex bridge receives workflow run model and reasoning intensity", async (
   })
 
   assert.equal(result.status, "completed")
+  assert.equal(capturedPayload.permissionMode, "restricted")
   assert.equal(capturedPayload.selectedModelId, "gpt-4.1")
   assert.equal(capturedPayload.selectedReasoningIntensity, "high")
   assert.equal(typeof capturedPayload.workflowRunId, "string")

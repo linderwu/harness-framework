@@ -68,11 +68,30 @@ test("Codex bridge supports idempotency recovery for long runs", () => {
   assert.match(agentBridgeSource, /encodeURIComponent\(input\.idempotencyKey\)/)
 })
 
+test("Codex bridge source contracts full and restricted permission modes", () => {
+  assert.match(
+    codexBridgeSource,
+    /JORMUNGAND_AGENT_PERMISSION_MODE\?\s*\.trim\(\)\.toLowerCase\(\)\s*===\s*"restricted"\s*\?\s*"restricted"\s*:\s*"full"/
+  )
+  assert.match(
+    codexBridgeSource,
+    /--dangerously-bypass-approvals-and-sandbox/
+  )
+  assert.match(codexBridgeSource, /danger-full-access/)
+  assert.match(codexBridgeSource, /dangerFullAccess/)
+  assert.match(codexBridgeSource, /approvalPolicy:\s*"never"/)
+  assert.match(agentBridgeSource, /permissionMode/)
+  assert.match(codexBridgeSource, /workspace-write/)
+  assert.match(codexBridgeSource, /writableRoots:\s*\[session\.workspacePath\]/)
+  assert.match(codexBridgeSource, /networkAccess:\s*false/)
+})
+
 test("OpenClaw bridge accepts the compatibility token and enforces its local skill lock", () => {
   assert.match(openClawBridgeSource, /from "\.\/openclaw-session\.mjs"/)
   assert.match(openClawBridgeSource, /OPENCLAW_GATEWAY_TOKEN/)
   assert.match(openClawBridgeSource, /OPENCLAW_RUNTIME_SKILL_LOCK/)
   assert.match(openClawBridgeSource, /bundle_not_locked/)
+  assert.match(openClawBridgeSource, /permissionMode/)
   assert.match(openClawBridgeSource, /"mrmime"/)
   assert.match(openClawBridgeSource, /"gengar"/)
   assert.doesNotMatch(openClawBridgeSource, /"mrmine"/)

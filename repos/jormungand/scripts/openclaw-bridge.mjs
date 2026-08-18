@@ -518,6 +518,8 @@ function stopWorkflowRun(workflowRunId) {
 }
 
 function buildOpenClawMessage(payload, context) {
+  const permissionMode =
+    payload.permissionMode === "restricted" ? "restricted" : "full"
   const runtimeSkillSummary = context.runtimeSkillBundleResults
     .filter((result) => result.verified)
     .map((result) => `${result.id}@${result.version}: ${result.installedPath}`)
@@ -559,6 +561,7 @@ function buildOpenClawMessage(payload, context) {
       artifactType: payload.artifactType,
       title: payload.title,
       executor: payload.executor,
+      permissionMode,
       skill: payload.skill,
       contextFiles: payload.contextFiles ?? [],
       artifacts: payload.artifacts ?? [],

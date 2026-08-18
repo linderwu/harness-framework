@@ -23,6 +23,11 @@ const runtimeSkillCacheRoot = path.resolve(
   process.env.CODEX_BRIDGE_RUNTIME_SKILL_CACHE ??
     path.join(repoRoot, ".harness", "cache", "skills")
 )
+const permissionMode =
+  process.env.JORMUNGAND_AGENT_PERMISSION_MODE?.trim().toLowerCase() ===
+  "restricted"
+    ? "restricted"
+    : "full"
 const activeAgentRuns = new Map()
 const activeWorkflowRuns = new Map()
 const activeIdempotencyKeys = new Map()
@@ -101,7 +106,7 @@ const server = http.createServer(async (request, response) => {
         return
       }
 
-      const session = await createCodexSession(workspace.path)
+      const session = await createCodexSession(workspace.path, permissionMode)
       sendJson(response, 201, codexSessionSnapshot(session))
       return
     }
@@ -265,7 +270,8 @@ const server = http.createServer(async (request, response) => {
       id,
       idempotencyKey,
       payload.workflowRunId,
-      workspace.path
+      workspace.path,
+      normalizePermissionMode(payload.permissionMode ?? permissionMode)
     ).finally(async () => {
       if (idempotencyKey) {
         activeIdempotencyKeys.delete(idempotencyKey)
@@ -354,12 +360,20 @@ function pruneCompletedAgentRuns(now = Date.now()) {
   }
 }
 
-async function runCodex(prompt, id, idempotencyKey, workflowRunId, workspacePath) {
+async function runCodex(
+  prompt,
+  id,
+  idempotencyKey,
+  workflowRunId,
+  workspacePath,
+  permissionModeInput = permissionMode
+) {
   const outputFile = path.join(os.tmpdir(), `codex-bridge-${id}.txt`)
   const command = process.env.CODEX_BRIDGE_COMMAND ?? "codex"
   const sandbox = process.env.CODEX_BRIDGE_SANDBOX ?? "workspace-write"
   const serviceTier = process.env.CODEX_BRIDGE_SERVICE_TIER ?? "fast"
   const timeoutMs = Number(process.env.CODEX_BRIDGE_TIMEOUT_MS ?? 900000)
+  const permissionMode = normalizePermissionMode(permissionModeInput)
   const args = [
     "exec",
     "-c",
@@ -367,12 +381,16 @@ async function runCodex(prompt, id, idempotencyKey, workflowRunId, workspacePath
     "-C",
     workspacePath,
     "--skip-git-repo-check",
-    "--sandbox",
-    sandbox,
     "--output-last-message",
     outputFile,
     "-"
   ]
+
+  if (permissionMode === "full") {
+    args.splice(args.length - 2, 0, "--dangerously-bypass-approvals-and-sandbox")
+  } else {
+    args.splice(args.length - 2, 0, "--sandbox", sandbox)
+  }
 
   const child = spawn(command, args, {
     cwd: workspacePath,
@@ -988,7 +1006,10 @@ function bridgeCapabilities() {
   return capabilities
 }
 
-async function createCodexSession(workspacePath) {
+async function createCodexSession(
+  workspacePath,
+  sessionPermissionMode = permissionMode
+) {
   const id = randomUUID()
   const command = process.env.CODEX_BRIDGE_COMMAND ?? "codex"
   const session = {
@@ -998,6 +1019,7 @@ async function createCodexSession(workspacePath) {
       shell: process.platform === "win32",
       stdio: ["pipe", "pipe", "pipe"]
     }),
+    permissionMode: normalizePermissionMode(sessionPermissionMode),
     workspacePath,
     threadId: undefined,
     currentTurnId: undefined,
@@ -1074,11 +1096,22 @@ async function createCodexSession(workspacePath) {
     method: "initialized",
     params: {}
   })
+  const startPolicy =
+    session.permissionMode === "full"
+      ? {
+          cwd: workspacePath,
+          sandbox: "danger-full-access",
+          approvalPolicy: "never",
+          threadSource: "jormungand"
+        }
+      : {
+          cwd: workspacePath,
+          sandbox: "workspace-write",
+          approvalPolicy: "never",
+          threadSource: "jormungand"
+        }
   const startResult = await codexSessionRequest(session, "thread/start", {
-    cwd: workspacePath,
-    sandbox: "workspace-write",
-    approvalPolicy: "never",
-    threadSource: "jormungand"
+    ...startPolicy
   })
 
   session.threadId = startResult?.thread?.id
@@ -1111,11 +1144,16 @@ async function startCodexTurn(session, content) {
     threadId: session.threadId,
     input: [{ type: "text", text: prompt, text_elements: [] }],
     approvalPolicy: "never",
-    sandboxPolicy: {
-      type: "workspaceWrite",
-      writableRoots: [session.workspacePath],
-      networkAccess: false
-    },
+    sandboxPolicy:
+      session.permissionMode === "full"
+        ? {
+            type: "dangerFullAccess"
+          }
+        : {
+            type: "workspaceWrite",
+            writableRoots: [session.workspacePath],
+            networkAccess: false
+          },
     cwd: session.workspacePath
   })
   const turnId = result?.turn?.id
@@ -1448,4 +1486,8 @@ function formatError(error) {
 
 function isLoopbackHost(value) {
   return ["127.0.0.1", "::1", "localhost"].includes(value)
+}
+
+function normalizePermissionMode(value) {
+  return value === "restricted" ? "restricted" : "full"
 }

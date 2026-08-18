@@ -54,3 +54,14 @@ test("Codex bridge exposes session events and pause controls", () => {
   assert.match(bridge, /turn_paused/)
   assert.match(bridge, /codex-session-events/)
 })
+
+test("Codex bridge conversation policies branch between full and restricted sessions", () => {
+  assert.match(bridge, /permissionMode === "full"/)
+  assert.match(bridge, /sandbox:\s*"danger-full-access"/)
+  assert.match(bridge, /sandbox:\s*"workspace-write"/)
+  assert.match(bridge, /approvalPolicy:\s*"never"/)
+  assert.match(bridge, /type:\s*"dangerFullAccess"/)
+  assert.match(bridge, /type:\s*"workspaceWrite"/)
+  assert.match(bridge, /writableRoots:\s*\[session\.workspacePath\]/)
+  assert.match(bridge, /networkAccess:\s*false/)
+})
