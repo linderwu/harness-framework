@@ -140,35 +140,38 @@ test("task workspace makes conversation the largest responsive column", () => {
 
 test("conversation buttons use short layered press depth with focus, disabled, and motion-safe states", () => {
   const rootRule = ruleBody(/:root/, ":root")
-  const sharedButtonRule = ruleBody(
-    /\.primaryButton,\s*\n\.stopButton,\s*\n\.dangerButton,\s*\n\.iconTextButton,\s*\n\.iconButton,\s*\n\.compactPanelButton/,
-    "shared button depth rule"
+  const sharedConversationRule = ruleBody(
+    /\.taskConversation\s+\.primaryButton,\s*\n\.taskConversation\s+\.dangerButton,\s*\n\.taskConversation\s+\.compactPanelButton/,
+    "conversation-scoped button depth rule"
   )
-  const primaryRule = ruleBody(/\.primaryButton/, ".primaryButton")
-  const compactRule = ruleBody(/\.compactPanelButton/, ".compactPanelButton")
-  const dangerRule = ruleBody(/\.dangerButton/, ".dangerButton")
-  const compactDangerRule = ruleBody(/\.compactPanelButton\.danger/, ".compactPanelButton.danger")
+  const primaryRule = ruleBody(/\.taskConversation\s+\.primaryButton/, ".taskConversation .primaryButton")
+  const compactRule = ruleBody(/\.taskConversation\s+\.compactPanelButton/, ".taskConversation .compactPanelButton")
+  const dangerRule = ruleBody(/\.taskConversation\s+\.dangerButton/, ".taskConversation .dangerButton")
+  const compactDangerRule = ruleBody(
+    /\.taskConversation\s+\.compactPanelButton\.danger/,
+    ".taskConversation .compactPanelButton.danger"
+  )
   const activeRule = ruleBody(
-    /\.primaryButton:active,\s*\n\.stopButton:active,\s*\n\.dangerButton:active,\s*\n\.iconTextButton:active,\s*\n\.iconButton:active,\s*\n\.compactPanelButton:active/,
-    "active layered press rule"
+    /\.taskConversation\s+\.primaryButton:active,\s*\n\.taskConversation\s+\.dangerButton:active,\s*\n\.taskConversation\s+\.compactPanelButton:active/,
+    "conversation active layered press rule"
   )
   const focusRule = ruleBody(
-    /\.primaryButton:focus-visible,\s*\n\.stopButton:focus-visible,\s*\n\.dangerButton:focus-visible,\s*\n\.iconTextButton:focus-visible,\s*\n\.iconButton:focus-visible,\s*\n\.compactPanelButton:focus-visible/,
-    "focus-visible button rule"
+    /\.taskConversation\s+\.primaryButton:focus-visible,\s*\n\.taskConversation\s+\.dangerButton:focus-visible,\s*\n\.taskConversation\s+\.compactPanelButton:focus-visible/,
+    "conversation focus-visible button rule"
   )
   const disabledRule = ruleBody(
-    /\.primaryButton:disabled,\s*\n\.stopButton:disabled,\s*\n\.dangerButton:disabled,\s*\n\.compactPanelButton:disabled/,
-    "disabled button rule"
+    /\.taskConversation\s+\.primaryButton:disabled,\s*\n\.taskConversation\s+\.dangerButton:disabled,\s*\n\.taskConversation\s+\.compactPanelButton:disabled/,
+    "conversation disabled button rule"
   )
   const reducedMotion = mediaBlock(/\(prefers-reduced-motion: reduce\)/, "reduced motion")
 
   assert.match(rootRule, /--button-depth:/)
   assert.match(rootRule, /--button-depth-danger:/)
   assert.match(rootRule, /--button-press-offset:/)
-  assert.match(sharedButtonRule, /transform:\s*translateY\(0\);/)
-  assert.match(sharedButtonRule, /transition:/)
-  assert.doesNotMatch(sharedButtonRule, /border-left:/)
-  assert.doesNotMatch(sharedButtonRule, /0 14px 34px/)
+  assert.match(sharedConversationRule, /transform:\s*translateY\(0\);/)
+  assert.match(sharedConversationRule, /transition:/)
+  assert.doesNotMatch(sharedConversationRule, /border-left:/)
+  assert.doesNotMatch(sharedConversationRule, /0 14px 34px/)
   assert.match(primaryRule, /box-shadow:\s*0 4px 0 var\(--button-depth\)/)
   assert.match(compactRule, /box-shadow:\s*0 4px 0 var\(--button-depth\)/)
   assert.match(dangerRule, /box-shadow:\s*0 4px 0 var\(--button-depth-danger\)/)
@@ -180,7 +183,9 @@ test("conversation buttons use short layered press depth with focus, disabled, a
   assert.match(disabledRule, /cursor:\s*not-allowed;/)
   assert.match(disabledRule, /opacity:\s*0\.[0-9]+;/)
   assert.match(disabledRule, /box-shadow:\s*0 1px 0/)
-  assert.match(reducedMotion, /\.primaryButton[\s\S]*?transition:\s*none;/)
+  assert.match(reducedMotion, /\.taskConversation\s+\.primaryButton[\s\S]*?transition:\s*none;/)
+  assert.doesNotMatch(css, /\.primaryButton,\s*\n\.stopButton,\s*\n\.dangerButton,\s*\n\.iconTextButton,\s*\n\.iconButton,\s*\n\.compactPanelButton\s*\{/)
+  assert.doesNotMatch(css, /\.primaryButton:active,\s*\n\.stopButton:active,\s*\n\.dangerButton:active,\s*\n\.iconTextButton:active,\s*\n\.iconButton:active,\s*\n\.compactPanelButton:active/)
 })
 
 test("conversation manager layout wraps without fixed widths and preserves narrow-screen overflow safety", () => {
