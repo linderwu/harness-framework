@@ -191,3 +191,95 @@ test("separate keys isolate", () => {
   assert.deepEqual(result.history, buildSharedConversationHistory(nextEntries))
   assert.equal(result.cursorEntryId, "entry-2")
 })
+
+test("delimiter-containing key and sessionIdentity values remain isolated", () => {
+  const sync = new ConversationHistorySync()
+  const firstEntries = [
+    makeEntry({ id: "entry-1", role: "user", content: "user 1" }),
+    makeEntry({ id: "entry-2", role: "agent", agentId: "openclaw.gengar", content: "agent 2" })
+  ]
+  const firstResult = sync.getDelta({
+    key: "conversation::a",
+    sessionIdentity: "session-b",
+    targetAgent: "openclaw.rowlet",
+    entries: firstEntries
+  })
+
+  sync.markDelivered({
+    key: "conversation::a",
+    sessionIdentity: "session-b",
+    cursorEntryId: firstResult.cursorEntryId
+  })
+
+  const secondEntries = [
+    ...firstEntries,
+    makeEntry({ id: "entry-3", role: "user", content: "user 3" })
+  ]
+
+  const result = sync.getDelta({
+    key: "conversation",
+    sessionIdentity: "a::session-b",
+    targetAgent: "openclaw.rowlet",
+    entries: secondEntries
+  })
+
+  assert.deepEqual(result.history, buildSharedConversationHistory(secondEntries))
+  assert.equal(result.cursorEntryId, "entry-3")
+})
+
+test("consecutive getDelta calls without markDelivered return identical results", () => {
+  const sync = new ConversationHistorySync()
+  const entries = [
+    makeEntry({ id: "entry-1", role: "user", content: "user 1" }),
+    makeEntry({ id: "entry-2", role: "agent", agentId: "openclaw.gengar", content: "agent 2" })
+  ]
+
+  const firstResult = sync.getDelta({
+    key: "conversation-a",
+    sessionIdentity: "native-session-1",
+    targetAgent: "openclaw.rowlet",
+    entries
+  })
+
+  const secondResult = sync.getDelta({
+    key: "conversation-a",
+    sessionIdentity: "native-session-1",
+    targetAgent: "openclaw.rowlet",
+    entries
+  })
+
+  assert.deepEqual(secondResult, firstResult)
+})
+
+test("after markDelivered with no new shareable entries returns empty history and retains cursor", () => {
+  const sync = new ConversationHistorySync()
+  const initialEntries = [
+    makeEntry({ id: "entry-1", role: "user", content: "user 1" }),
+    makeEntry({ id: "entry-2", role: "agent", agentId: "openclaw.gengar", content: "agent 2" })
+  ]
+  const initialResult = sync.getDelta({
+    key: "conversation-a",
+    sessionIdentity: "native-session-1",
+    targetAgent: "openclaw.rowlet",
+    entries: initialEntries
+  })
+
+  sync.markDelivered({
+    key: "conversation-a",
+    sessionIdentity: "native-session-1",
+    cursorEntryId: initialResult.cursorEntryId
+  })
+
+  const result = sync.getDelta({
+    key: "conversation-a",
+    sessionIdentity: "native-session-1",
+    targetAgent: "openclaw.rowlet",
+    entries: [
+      ...initialEntries,
+      makeEntry({ id: "entry-3", role: "system", content: "system 3" })
+    ]
+  })
+
+  assert.deepEqual(result.history, [])
+  assert.equal(result.cursorEntryId, "entry-2")
+})

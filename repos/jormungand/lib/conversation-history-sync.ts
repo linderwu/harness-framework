@@ -59,7 +59,7 @@ function buildSeedResult(entries: SharedConversationSourceEntry[]): Conversation
 }
 
 function buildCursorKey(key: string, sessionIdentity: string) {
-  return `${key}::${sessionIdentity}`
+  return JSON.stringify([key, sessionIdentity])
 }
 
 function isShareableConversationEntry(entry: SharedConversationSourceEntry) {
