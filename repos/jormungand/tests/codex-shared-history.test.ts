@@ -319,6 +319,7 @@ test("Codex reseeds the latest shared history when either bridge session identit
     { id: "bridge-session-b", threadId: "thread-b" }
   ]
   let nextSessionCreationIndex = 0
+  let bridgeSessionAEventsReads = 0
   let bridgeSessionBEventsReads = 0
   installFetchMock(t, async (input, init) => {
     const url = String(input)
@@ -341,14 +342,24 @@ test("Codex reseeds the latest shared history when either bridge session identit
       return jsonResponse({ ok: true })
     }
     if (url === "http://codex.test/sessions/bridge-session-a/events?after=0") {
+      bridgeSessionAEventsReads += 1
+      const eventState = bridgeSessionAEventsReads === 1
+        ? {
+            status: "idle",
+            turnStatus: "completed",
+            nextCursor: 4
+          }
+        : {
+            status: "stopped",
+            turnStatus: "failed",
+            nextCursor: 4
+          }
       return jsonResponse({
         id: "bridge-session-a",
         threadId: "thread-a",
-        status: turnRequests.length === 1 ? "idle" : "stopped",
-        turnStatus: turnRequests.length === 1 ? "completed" : "failed",
+        ...eventState,
         cursor: 0,
-        events: [],
-        nextCursor: 4
+        events: []
       })
     }
     if (url === "http://codex.test/sessions/bridge-session-a/events?after=4") {
@@ -412,6 +423,11 @@ test("Codex reseeds the latest shared history when either bridge session identit
     content: "Second Codex question after bridge restart",
     idempotencyKey: "codex-reseed-2"
   })
+  const secondTurnPrompt = expectedPrompt(
+    repository
+      .listConversation(conversationId)
+      .filter((entry) => entry.id !== secondTurn.responseEntry?.id)
+  )
 
   const thirdTurn = await postCodexConversationMessage({
     repository,
@@ -419,26 +435,19 @@ test("Codex reseeds the latest shared history when either bridge session identit
     content: "Third Codex question after thread restart",
     idempotencyKey: "codex-reseed-3"
   })
+  const thirdTurnPrompt = expectedPrompt(
+    repository
+      .listConversation(conversationId)
+      .filter((entry) => entry.id !== thirdTurn.responseEntry?.id)
+  )
 
   assert.equal(turnRequests.length, 3)
-  assert.equal(
-    turnRequests[1]?.content,
-    expectedPrompt(
-      repository
-        .listConversation(conversationId)
-        .filter((entry) => entry.id !== secondTurn.responseEntry?.id)
-    )
-  )
-  assert.equal(
-    turnRequests[2]?.content,
-    expectedPrompt(
-      repository
-        .listConversation(conversationId)
-        .filter((entry) => entry.id !== thirdTurn.responseEntry?.id)
-    )
-  )
+  assert.equal(turnRequests[1]?.content, secondTurnPrompt)
+  assert.equal(turnRequests[2]?.content, thirdTurnPrompt)
   assert.equal(repository.getCodexSession(conversationId)?.bridgeSessionId, "bridge-session-b")
   assert.equal(repository.getCodexSession(conversationId)?.codexThreadId, "thread-b")
+  assert.equal(bridgeSessionAEventsReads, 1)
+  assert.equal(bridgeSessionBEventsReads, 3)
   assert.equal(turnRequests[1]?.bridgeSessionId, "bridge-session-b")
   assert.equal(turnRequests[2]?.bridgeSessionId, "bridge-session-b")
   assert.match(turnRequests[1]?.content ?? "", /\[user\] shared user 1/)
