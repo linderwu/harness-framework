@@ -62,3 +62,30 @@ Observed result:
 
 - The component preserves the pre-existing user-owned unbound conversation selector/new-conversation work and extends it with managed title display, access-mode status, archived toggle, rename, archive/unarchive, delete confirmation, and helper-backed mutation flows.
 - Full-suite verification required preserving an older source-contract expectation in `task-conversation.tsx` by keeping the original submit gate shape and adding the manager-action guard as a second statement.
+
+## Follow-up Fix
+
+Issue addressed:
+
+- Task 6 left `New conversation` less strictly locked than rename/archive/delete. The button only used `isConversationActionPending`, and the handler only short-circuited `isStartingConversation`.
+
+Fix applied:
+
+- Added a shared runtime helper `isConversationManagerLocked(...)`.
+- Routed the New conversation button and `startNewConversation()` through the same lock used by the other manager actions.
+- Added a focused runtime test covering the running and controlling cases.
+
+Follow-up verification:
+
+```text
+npx tsc -p tsconfig.tests.json
+node --test .tmp-tests/tests/conversation-ui-structure.test.js .tmp-tests/tests/conversation-ui-behavior.test.js
+npm test
+npm run typecheck
+```
+
+Observed result:
+
+- Focused UI tests passed `12` of `12`.
+- `npm test` passed `206` of `206`.
+- `npm run typecheck` passed.

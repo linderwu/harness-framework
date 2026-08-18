@@ -250,3 +250,46 @@ test("conversation deletion replacement flow confirms deletion, clears stale swi
   )
   assert.equal(failureCalls, 1)
 })
+
+test("conversation manager lock state disables new conversation while running or controlling", async () => {
+  const module = await loadTaskConversationModule()
+  const isConversationManagerLocked = (
+    Reflect.get(module, "isConversationManagerLocked")
+    ?? Reflect.get((module as { default?: unknown }).default ?? {}, "isConversationManagerLocked")
+  ) as
+    | ((input: {
+        isLoadingConversation: boolean
+        isStartingConversation: boolean
+        isControlling: boolean
+        isTurnRunning: boolean
+        activeManagerAction?: "rename" | "archive" | "unarchive" | "delete"
+      }) => boolean)
+    | undefined
+
+  assert.equal(typeof isConversationManagerLocked, "function")
+  assert.equal(isConversationManagerLocked!({
+    isLoadingConversation: false,
+    isStartingConversation: false,
+    isControlling: false,
+    isTurnRunning: false
+  }), false)
+  assert.equal(isConversationManagerLocked!({
+    isLoadingConversation: false,
+    isStartingConversation: false,
+    isControlling: true,
+    isTurnRunning: false
+  }), true)
+  assert.equal(isConversationManagerLocked!({
+    isLoadingConversation: false,
+    isStartingConversation: false,
+    isControlling: false,
+    isTurnRunning: true
+  }), true)
+  assert.equal(isConversationManagerLocked!({
+    isLoadingConversation: false,
+    isStartingConversation: false,
+    isControlling: false,
+    isTurnRunning: false,
+    activeManagerAction: "rename"
+  }), true)
+})

@@ -36,6 +36,8 @@ type NewConversationResult = {
   metadata?: ConversationHeaderMetadata
 }
 
+type ConversationManagerAction = "rename" | "archive" | "unarchive" | "delete"
+
 export function TaskConversation(props: {
   run?: WorkflowRun
   initialEntries: ConversationEntry[]
@@ -67,9 +69,7 @@ export function TaskConversation(props: {
   const [includeArchived, setIncludeArchived] = useState(false)
   const [isRenameFormOpen, setIsRenameFormOpen] = useState(false)
   const [renameDraft, setRenameDraft] = useState("")
-  const [activeManagerAction, setActiveManagerAction] = useState<
-    "rename" | "archive" | "unarchive" | "delete" | undefined
-  >()
+  const [activeManagerAction, setActiveManagerAction] = useState<ConversationManagerAction | undefined>()
   const [isDeleteDialogFallbackOpen, setIsDeleteDialogFallbackOpen] = useState(false)
   const requestGeneration = useRef(0)
   const renameInputRef = useRef<HTMLInputElement>(null)
@@ -317,7 +317,13 @@ export function TaskConversation(props: {
   }
 
   async function startNewConversation() {
-    if (isStartingConversation) return
+    if (isConversationManagerLocked({
+      isLoadingConversation,
+      isStartingConversation,
+      isControlling,
+      isTurnRunning: isUnbound && session?.turnStatus === "inProgress",
+      activeManagerAction
+    })) return
 
     invalidateConversationRequests()
     setIsStartingConversation(true)
@@ -500,7 +506,13 @@ export function TaskConversation(props: {
     .slice(-18)
   const liveAssistantText = session?.liveText?.trim()
   const isConversationActionPending = isLoadingConversation || isStartingConversation || !!activeManagerAction
-  const areManagerControlsDisabled = isConversationActionPending || isControlling || isTurnRunning
+  const areManagerControlsDisabled = isConversationManagerLocked({
+    isLoadingConversation,
+    isStartingConversation,
+    isControlling,
+    isTurnRunning,
+    activeManagerAction
+  })
   const isConversationSelectable = !areManagerControlsDisabled && conversationOptions.length > 1
   const permissionStatus = permissionMode ? `${formatPermissionMode(permissionMode)} · ` : ""
 
@@ -597,7 +609,7 @@ export function TaskConversation(props: {
               </button>
             </>
           ) : null}
-          <button aria-label="New conversation" className="compactPanelButton" disabled={isConversationActionPending} onClick={() => void startNewConversation()} type="button">
+          <button aria-label="New conversation" className="compactPanelButton" disabled={areManagerControlsDisabled} onClick={() => void startNewConversation()} type="button">
             {isLoadingConversation ? "Loading..." : isStartingConversation ? "Starting..." : "New conversation"}
           </button>
         </div>
@@ -839,6 +851,20 @@ export function buildConversationSwitchState(conversationId: string) {
     session: undefined,
     statusMessage: undefined
   }
+}
+
+export function isConversationManagerLocked(input: {
+  isLoadingConversation: boolean
+  isStartingConversation: boolean
+  isControlling: boolean
+  isTurnRunning: boolean
+  activeManagerAction?: ConversationManagerAction
+}) {
+  return input.isLoadingConversation
+    || input.isStartingConversation
+    || input.isControlling
+    || input.isTurnRunning
+    || !!input.activeManagerAction
 }
 
 function formatConversationOptionLabel(summary: ConversationSummary) {
