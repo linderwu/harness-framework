@@ -30,6 +30,10 @@ The app protects all routes with Basic authentication by default. `/health` is
 the unauthenticated liveness endpoint for Zeabur. Set `SITE_AUTH_MODE=mutations`
 only when public read-only access is intentional.
 
+Set `JORMUNGAND_AGENT_PERMISSION_MODE=full` to disable agent sandboxing and
+workflow approval pauses for autonomous agent execution. Site Basic
+authentication remains enabled in this mode.
+
 The OpenClaw HTTP bridge uses `OPENCLAW_BRIDGE_TOKEN`; when that value is blank,
 the app can reuse `OPENCLAW_GATEWAY_TOKEN` for compatibility with an existing
 single-secret deployment. Separate tokens remain preferable for new installs.
