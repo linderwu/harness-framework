@@ -276,6 +276,36 @@ describe("conversation route contracts", { concurrency: false }, () => {
     assert.match(response.headers.get("set-cookie") ?? "", /jormungand-conversation-id=/i)
   })
 
+  test("conversation new route returns the same 4xx JSON contract as the conversations create route", async (t) => {
+    const { POST: postConversationNew } = await importRouteWithIsolatedDataDir<{
+      POST: (request: Request) => Promise<Response>
+    }>(t, "../app/api/conversation/new/route")
+    const { POST: postConversations } = await importRouteWithIsolatedDataDir<{
+      POST: (request: Request) => Promise<Response>
+    }>(t, "../app/api/conversations/route")
+
+    const requestBody = JSON.stringify({ title: 123 })
+    const [newResponse, collectionResponse] = await Promise.all([
+      postConversationNew(new Request("http://localhost/api/conversation/new", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: requestBody
+      })),
+      postConversations(new Request("http://localhost/api/conversations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: requestBody
+      }))
+    ])
+
+    const newBody = await newResponse.json() as { error?: string }
+    const collectionBody = await collectionResponse.json() as { error?: string }
+
+    assert.equal(newResponse.status, 400)
+    assert.equal(collectionResponse.status, 400)
+    assert.deepEqual(newBody, collectionBody)
+  })
+
   test("conversations collection route creates managed conversations and filters archived items by default", async (t) => {
     const { GET, POST } = await importRouteWithIsolatedDataDir<{
       GET: (request: Request) => Promise<Response>

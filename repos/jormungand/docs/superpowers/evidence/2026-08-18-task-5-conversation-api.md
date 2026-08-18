@@ -9,6 +9,8 @@ Task 5: add conversation management service and API routes, preserve existing co
 
 Follow-up fix: make `/api/conversation/new` delegate the same create response flow as `POST /api/conversations`, including shared cookie + metadata response semantics.
 
+Follow-up fix 2: preserve the same create-route JSON error contract on `/api/conversation/new`, and preserve known upstream Codex stop errors instead of collapsing them to a generic 502.
+
 ## RED
 
 ### Compile for tests
@@ -83,10 +85,17 @@ Final result after the shared-create-response fix:
 - `20` tests passed
 - `0` failed
 
+Final result after the conversation-error-preservation fix:
+
+- Exit code `0`
+- `22` tests passed
+- `0` failed
+
 Covered Task 5 checks:
 
 - `GET /api/conversation` includes `permissionMode` and current metadata
 - `POST /api/conversation/new` persists metadata and sets cookie
+- `POST /api/conversation/new` returns the same 4xx JSON error contract as `POST /api/conversations`
 - `POST /api/conversations` returns `201`
 - `GET /api/conversations` filters archived by default
 - `GET /api/conversations?includeArchived=true` includes archived entries
@@ -96,6 +105,7 @@ Covered Task 5 checks:
 - service blocks state changes for running conversations
 - service returns `404` for bound/non-managed identities
 - service preserves rows when session stop fails
+- service preserves known upstream Codex stop status/message
 
 ## Full Verification
 
@@ -117,6 +127,12 @@ Final result after the shared-create-response fix:
 
 - Exit code `0`
 - `199` passed
+- `0` failed
+
+Final result after the conversation-error-preservation fix:
+
+- Exit code `0`
+- `201` passed
 - `0` failed
 
 ### Typecheck

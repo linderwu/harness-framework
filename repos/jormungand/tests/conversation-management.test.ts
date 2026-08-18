@@ -5,6 +5,7 @@ import { join } from "node:path"
 import test from "node:test"
 import { setTimeout as delay } from "node:timers/promises"
 import type {} from "../lib/conversation-management"
+import { CodexConversationError } from "../lib/codex-conversation"
 import { legacyConversationId } from "../lib/conversation-identity"
 import { openHiveDatabase } from "../lib/hive-memory/database"
 import { createHiveMemoryRepository } from "../lib/hive-memory/repository"
@@ -496,6 +497,54 @@ test("conversation management service does not delete rows when stopSession fail
       "status" in error &&
       typeof (error as { status?: number }).status === "number" &&
       (error as { status: number }).status >= 500
+  )
+  assert.ok(repository.getConversationMetadata(conversationId))
+  assert.equal(repository.listConversation(conversationId).length, 1)
+  assert.ok(repository.getCodexSession(conversationId))
+})
+
+test("conversation management service preserves known Codex stop errors", async (t) => {
+  const repository = await createRepositoryFixture(t)
+  const module = await loadConversationManagementModule()
+  assert.equal(
+    typeof module.createConversationManagementService,
+    "function",
+    "lib/conversation-management.ts must export createConversationManagementService()."
+  )
+  const service = module.createConversationManagementService!({
+    repository,
+    stopSession: async () => {
+      throw new CodexConversationError("Codex bridge is unavailable.", 503)
+    }
+  })
+  const conversationId = "conversation:99999999-9999-4999-8999-999999999998"
+
+  await repository.createConversation({ id: conversationId, title: "Preserve stop error" })
+  await repository.insertConversation({
+    workflowRunId: conversationId,
+    role: "user",
+    content: "Keep rows for known upstream stop failures too.",
+    importance: "normal",
+    status: "completed",
+    artifactIds: [],
+    memoryIds: [],
+    idempotencyKey: "conversation-management:service-delete-known-error"
+  })
+  await repository.upsertCodexSession({
+    conversationId,
+    bridgeSessionId: "bridge-delete-known-error",
+    codexThreadId: "thread-delete-known-error",
+    status: "idle",
+    turnStatus: "completed"
+  })
+
+  await assert.rejects(
+    service.deleteConversation({ conversationId, confirm: true }),
+    (error: unknown) =>
+      error instanceof Error &&
+      "status" in error &&
+      (error as Error & { status?: number }).status === 503 &&
+      error.message === "Codex bridge is unavailable."
   )
   assert.ok(repository.getConversationMetadata(conversationId))
   assert.equal(repository.listConversation(conversationId).length, 1)

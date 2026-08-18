@@ -1,4 +1,5 @@
 import { createConversationId } from "./conversation-identity"
+import { CodexConversationError } from "./codex-conversation"
 import type { HiveMemoryRepository } from "./hive-memory/repository"
 import type {
   ConversationMetadata,
@@ -93,7 +94,11 @@ export class ConversationManagementService {
     if (this.dependencies.repository.getCodexSession(metadata.conversationId)) {
       try {
         await this.dependencies.stopSession(metadata.conversationId)
-      } catch {
+      } catch (error) {
+        if (error instanceof CodexConversationError) {
+          throw new ConversationManagementError(error.message, error.status)
+        }
+
         throw new ConversationManagementError(
           "Conversation session could not be stopped.",
           502
