@@ -287,7 +287,7 @@ test("Codex only sends the post-cursor shared delta for the same session", async
   assert.doesNotMatch(turnBodies[1], /Codex manager note/)
 })
 
-test("Codex reseeds the latest shared history after the bridge session identity changes", async (t) => {
+test("Codex reseeds the latest shared history when either bridge session identity component changes", async (t) => {
   const { repository } = await repositoryFixture(t)
   restoreEnv(t, "CODEX_BRIDGE_URL")
   process.env.CODEX_BRIDGE_URL = "http://codex.test"
@@ -312,13 +312,20 @@ test("Codex reseeds the latest shared history after the bridge session identity 
     await insertConversationEntry(repository, conversationId, entry)
   }
 
-  const turnBodies: string[] = []
+  const turnRequests: Array<{ bridgeSessionId: string; content: string }> = []
+  const sessionCreations = [
+    { id: "bridge-session-a", threadId: "thread-a" },
+    { id: "bridge-session-b", threadId: "thread-a" },
+    { id: "bridge-session-b", threadId: "thread-b" }
+  ]
+  let nextSessionCreationIndex = 0
+  let bridgeSessionBEventsReads = 0
   installFetchMock(t, async (input, init) => {
     const url = String(input)
     if (url === "http://codex.test/sessions") {
-      const nextIdentity = turnBodies.length === 0
-        ? { id: "bridge-session-a", threadId: "thread-a" }
-        : { id: "bridge-session-b", threadId: "thread-b" }
+      const nextIdentity =
+        sessionCreations[nextSessionCreationIndex] ?? sessionCreations.at(-1)
+      nextSessionCreationIndex += 1
       return jsonResponse({
         ...nextIdentity,
         status: "idle",
@@ -327,18 +334,21 @@ test("Codex reseeds the latest shared history after the bridge session identity 
       })
     }
     if (url === "http://codex.test/sessions/bridge-session-a/turns") {
-      turnBodies.push((JSON.parse(String(init?.body)) as { content: string }).content)
+      turnRequests.push({
+        bridgeSessionId: "bridge-session-a",
+        content: (JSON.parse(String(init?.body)) as { content: string }).content
+      })
       return jsonResponse({ ok: true })
     }
     if (url === "http://codex.test/sessions/bridge-session-a/events?after=0") {
       return jsonResponse({
         id: "bridge-session-a",
         threadId: "thread-a",
-        status: turnBodies.length === 1 ? "idle" : "stopped",
-        turnStatus: turnBodies.length === 1 ? "completed" : "failed",
+        status: turnRequests.length === 1 ? "idle" : "stopped",
+        turnStatus: turnRequests.length === 1 ? "completed" : "failed",
         cursor: 0,
         events: [],
-        nextCursor: turnBodies.length === 1 ? 4 : 4
+        nextCursor: 4
       })
     }
     if (url === "http://codex.test/sessions/bridge-session-a/events?after=4") {
@@ -353,15 +363,34 @@ test("Codex reseeds the latest shared history after the bridge session identity 
       })
     }
     if (url === "http://codex.test/sessions/bridge-session-b/turns") {
-      turnBodies.push((JSON.parse(String(init?.body)) as { content: string }).content)
+      turnRequests.push({
+        bridgeSessionId: "bridge-session-b",
+        content: (JSON.parse(String(init?.body)) as { content: string }).content
+      })
       return jsonResponse({ ok: true })
     }
     if (url === "http://codex.test/sessions/bridge-session-b/events?after=0") {
+      bridgeSessionBEventsReads += 1
+      const eventState = bridgeSessionBEventsReads === 1
+        ? {
+            threadId: "thread-a",
+            status: "idle",
+            turnStatus: "completed"
+          }
+        : bridgeSessionBEventsReads === 2
+          ? {
+              threadId: "thread-a",
+              status: "stopped",
+              turnStatus: "failed"
+            }
+          : {
+              threadId: "thread-b",
+              status: "idle",
+              turnStatus: "completed"
+            }
       return jsonResponse({
         id: "bridge-session-b",
-        threadId: "thread-b",
-        status: "idle",
-        turnStatus: "completed",
+        ...eventState,
         cursor: 0,
         events: [],
         nextCursor: 0
@@ -380,22 +409,117 @@ test("Codex reseeds the latest shared history after the bridge session identity 
   const secondTurn = await postCodexConversationMessage({
     repository,
     conversationId,
-    content: "Second Codex question after restart",
+    content: "Second Codex question after bridge restart",
     idempotencyKey: "codex-reseed-2"
   })
 
-  assert.equal(turnBodies.length, 2)
+  const thirdTurn = await postCodexConversationMessage({
+    repository,
+    conversationId,
+    content: "Third Codex question after thread restart",
+    idempotencyKey: "codex-reseed-3"
+  })
+
+  assert.equal(turnRequests.length, 3)
   assert.equal(
-    turnBodies[1],
+    turnRequests[1]?.content,
     expectedPrompt(
       repository
         .listConversation(conversationId)
         .filter((entry) => entry.id !== secondTurn.responseEntry?.id)
     )
   )
+  assert.equal(
+    turnRequests[2]?.content,
+    expectedPrompt(
+      repository
+        .listConversation(conversationId)
+        .filter((entry) => entry.id !== thirdTurn.responseEntry?.id)
+    )
+  )
   assert.equal(repository.getCodexSession(conversationId)?.bridgeSessionId, "bridge-session-b")
   assert.equal(repository.getCodexSession(conversationId)?.codexThreadId, "thread-b")
-  assert.match(turnBodies[1], /\[user\] shared user 1/)
-  assert.match(turnBodies[1], /\[codex\] First Codex question/)
-  assert.match(turnBodies[1], /\[codex\] Codex is working\.\.\./)
+  assert.equal(turnRequests[1]?.bridgeSessionId, "bridge-session-b")
+  assert.equal(turnRequests[2]?.bridgeSessionId, "bridge-session-b")
+  assert.match(turnRequests[1]?.content ?? "", /\[user\] shared user 1/)
+  assert.match(turnRequests[1]?.content ?? "", /\[codex\] First Codex question/)
+  assert.match(turnRequests[1]?.content ?? "", /\[codex\] Codex is working\.\.\./)
+  assert.match(
+    turnRequests[1]?.content ?? "",
+    /\[codex\] Second Codex question after bridge restart/
+  )
+  assert.match(turnRequests[2]?.content ?? "", /\[user\] shared user 1/)
+  assert.match(
+    turnRequests[2]?.content ?? "",
+    /\[codex\] Second Codex question after bridge restart/
+  )
+  assert.match(turnRequests[2]?.content ?? "", /\[codex\] Third Codex question after thread restart/)
+})
+
+test("Codex keeps the shared-history cursor unchanged when the first turn POST fails", async (t) => {
+  const { repository } = await repositoryFixture(t)
+  restoreEnv(t, "CODEX_BRIDGE_URL")
+  process.env.CODEX_BRIDGE_URL = "http://codex.test"
+
+  const conversationId = "conversation:codex-shared-turn-failure"
+  const turnBodies: string[] = []
+  let turnAttemptCount = 0
+  installFetchMock(t, async (input, init) => {
+    const url = String(input)
+    if (url === "http://codex.test/sessions") {
+      return jsonResponse({
+        id: "bridge-session-failure",
+        threadId: "thread-failure",
+        status: "idle",
+        turnStatus: "completed",
+        cursor: 0
+      })
+    }
+    if (url === "http://codex.test/sessions/bridge-session-failure/turns") {
+      turnAttemptCount += 1
+      turnBodies.push((JSON.parse(String(init?.body)) as { content: string }).content)
+      if (turnAttemptCount === 1) {
+        return jsonResponse({ error: "turn failed" }, 503)
+      }
+      return jsonResponse({ ok: true })
+    }
+    if (url === "http://codex.test/sessions/bridge-session-failure/events?after=0") {
+      return jsonResponse({
+        id: "bridge-session-failure",
+        threadId: "thread-failure",
+        status: "idle",
+        turnStatus: "completed",
+        cursor: 0,
+        events: [],
+        nextCursor: 0
+      })
+    }
+    throw new Error(`Unexpected fetch: ${url}`)
+  })
+
+  await assert.rejects(
+    postCodexConversationMessage({
+      repository,
+      conversationId,
+      content: "First Codex question fails delivery",
+      idempotencyKey: "codex-turn-failure-1"
+    }),
+    /turn failed/
+  )
+
+  const retryTurn = await postCodexConversationMessage({
+    repository,
+    conversationId,
+    content: "Second Codex question retries delivery",
+    idempotencyKey: "codex-turn-failure-2"
+  })
+
+  assert.equal(turnAttemptCount, 2)
+  assert.equal(turnBodies.length, 2)
+  assert.match(turnBodies[1] ?? "", /\[codex\] First Codex question fails delivery/)
+  assert.match(turnBodies[1] ?? "", /\[codex\] Second Codex question retries delivery/)
+  assert.doesNotMatch(turnBodies[1] ?? "", /BEGIN UNTRUSTED SHARED TRANSCRIPT\s*END UNTRUSTED SHARED TRANSCRIPT/)
+  assert.equal(repository.getCodexSession(conversationId)?.bridgeSessionId, "bridge-session-failure")
+  assert.equal(repository.getCodexSession(conversationId)?.codexThreadId, "thread-failure")
+  assert.equal(retryTurn.userEntry.content, "Second Codex question retries delivery")
 })
