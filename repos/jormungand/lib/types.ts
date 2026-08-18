@@ -308,6 +308,18 @@ export interface WorkflowEventSkill {
   knowledgeSources: string[]
   verificationRules: string[]
   runtimeSkillBundles?: string[]
+  superpowerSkill?: {
+    id: string
+    content: string
+    commitSha: string
+  }
+}
+
+export interface WorkflowCustomStage {
+  id: string
+  name: string
+  skillId: string
+  agent: AgentKind
 }
 
 export interface WorkflowEvent {
@@ -469,6 +481,8 @@ export interface WorkflowRun {
   selectedReasoningIntensity?: CodexReasoningIntensity
   stageModes: Record<WorkflowStage, ExecutionMode>
   skillAssignments: Record<string, AgentKind>
+  customStages?: WorkflowCustomStage[]
+  customStageIndex?: number
   skillExecutionProfiles?: Record<string, CodexExecutionProfile>
   approvalPolicies: ApprovalPolicy[]
   eventSkills: WorkflowEventSkill[]

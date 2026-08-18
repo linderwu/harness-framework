@@ -6,18 +6,18 @@ import type {
   WorkflowEventSkill,
   WorkflowRun,
   WorkflowStage
-} from "@/lib/types"
+} from "./types"
 import { resolve } from "node:path"
 import { pathToFileURL } from "node:url"
 import {
   createOpenClawA2AEnvelope,
   extractA2AResponseText,
   resolveOpenClawA2AProtocol
-} from "@/lib/a2a-protocol"
-import { getAgentProfile } from "@/lib/agents"
-import { ensureGitHubRepository } from "@/lib/github-repository"
+} from "./a2a-protocol"
+import { getAgentProfile } from "./agents"
+import { ensureGitHubRepository } from "./github-repository"
 import type { AgentArtifactResult } from "@/lib/workflow"
-import type { ContextPack } from "@/lib/context-builder"
+import type { ContextPack } from "./context-builder"
 
 export interface AgentInvocationInput {
   run: WorkflowRun

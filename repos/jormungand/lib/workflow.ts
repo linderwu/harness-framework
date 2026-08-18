@@ -15,6 +15,7 @@ import type {
   WorkflowEventType,
   WorkflowRun,
   WorkflowStage,
+  WorkflowCustomStage,
   CodexReasoningIntensity,
   ProjectType
 } from "./types"
@@ -622,6 +623,7 @@ export function createWorkflowRun(input: {
   selectedModelId?: string
   selectedReasoningIntensity?: CodexReasoningIntensity
   skillAssignments?: Record<string, AgentKind>
+  customStages?: Array<WorkflowCustomStage & { skillContent: string; commitSha: string }>
   designApprovalActor: ApprovalActorType
   verificationApprovalActor: ApprovalActorType
   managedConfig?: ManagedProjectConfig
@@ -629,7 +631,28 @@ export function createWorkflowRun(input: {
   const now = new Date().toISOString()
   const id = crypto.randomUUID()
   const projectType = input.projectType ?? "development"
-  const eventSkills =
+  const eventSkills = input.customStages?.length
+    ? input.customStages.map((stage) => ({
+        id: `superpowers.${stage.id}`,
+        eventType: "implementation_dispatch" as const,
+        stage: resolveCustomStage(stage.name),
+        name: stage.name,
+        purpose: `Execute the ${stage.skillId} Superpowers skill.`,
+        trigger: "The previous custom workflow stage completed.",
+        allowedActors: [stage.agent],
+        inputs: ["project requirement", "prior workflow artifacts"],
+        outputs: ["stage execution artifact"],
+        constraints: ["Follow the attached Superpowers SKILL.md exactly."],
+        gates: [],
+        knowledgeSources: ["linderwu/jormungand_skill"],
+        verificationRules: ["Return the requested stage output."],
+        superpowerSkill: {
+          id: stage.skillId,
+          content: stage.skillContent,
+          commitSha: stage.commitSha
+        }
+      }))
+    :
     projectType === "agent_task"
       ? createAgentTaskEventSkills()
       : projectType === "research"
@@ -698,6 +721,8 @@ export function createWorkflowRun(input: {
     selectedAgent,
     stageModes,
     skillAssignments,
+    customStages: input.customStages?.map(({ skillContent, commitSha, ...stage }) => stage),
+    customStageIndex: input.customStages?.length ? 0 : undefined,
     approvalPolicies,
     eventSkills,
     events: [],
@@ -734,6 +759,10 @@ export async function advanceWorkflow(
 
   const nextRun = cloneRun(run)
   ensureEventSkillState(nextRun)
+
+  if (nextRun.customStages?.length) {
+    return advanceCustomWorkflow(nextRun, options)
+  }
 
   if (nextRun.projectType === "hive_mission" || nextRun.projectType === "arceus_maintenance") {
     return nextRun
@@ -1268,6 +1297,54 @@ async function advanceResearchWorkflow(
   run.updatedAt = new Date().toISOString()
   updateEventLogStatus(run)
   return run
+}
+
+async function advanceCustomWorkflow(
+  run: WorkflowRun,
+  options: AdvanceWorkflowOptions
+) {
+  const index = run.customStageIndex ?? 0
+  const skill = run.eventSkills[index]
+
+  if (!skill) {
+    run.currentStage = "completed"
+    run.status = "completed"
+    run.updatedAt = new Date().toISOString()
+    updateEventLogStatus(run)
+    return run
+  }
+
+  run.currentStage = skill.stage
+  run.status = "running"
+  const result = await addAgentArtifact(
+    run,
+    skill.id,
+    skill.stage,
+    "log",
+    skill.name,
+    [`Custom stage: ${skill.name}`, `Superpowers skill: ${skill.superpowerSkill?.id ?? "unknown"}`, "Requirement:", run.requirement].join("\n"),
+    options.invokeAgent,
+    options.resolveRuntimeSkillBundles,
+    options.onProgress
+  )
+
+  if (result.status === "failed") return run
+
+  run.customStageIndex = index + 1
+  run.status = "pending"
+  run.updatedAt = new Date().toISOString()
+  updateEventLogStatus(run)
+  return run
+}
+
+function resolveCustomStage(name: string): WorkflowStage {
+  const normalized = name.trim().toLowerCase()
+  if (normalized.includes("intake")) return "intake"
+  if (normalized.includes("plan")) return "plan"
+  if (normalized.includes("design")) return "design"
+  if (normalized.includes("verif") || normalized.includes("test")) return "verification"
+  if (normalized.includes("complete") || normalized.includes("close")) return "completed"
+  return "implementation"
 }
 
 async function publishCompletedAgentTaskRecord(

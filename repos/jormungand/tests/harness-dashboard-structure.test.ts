@@ -174,7 +174,8 @@ test("compose form uses research-specific workflow skills", () => {
   assert.match(dashboard, /const hasApprovalPolicies = form\.projectType === "development"/)
   assert.match(dashboard, /"Agent \/ Skills"/)
   assert.match(dashboard, /\{hasApprovalPolicies \? \(/)
-  assert.match(dashboard, /assignmentStages\.includes\(stage\)/)
+  assert.match(dashboard, /superpowersSkills/)
+  assert.match(dashboard, /stageAssignments: form\.stageAssignments/)
 })
 
 test("dashboard exposes all project modes in a topmost global navigator", () => {

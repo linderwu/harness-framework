@@ -12,6 +12,7 @@ import type {
   WorkflowRun
 } from "@/lib/types"
 import { getDefaultHiveServices } from "@/lib/hive-services"
+import { getSuperpowersCatalog } from "@/lib/superpowers-catalog"
 
 export async function POST(
   request: Request,
@@ -36,9 +37,17 @@ export async function POST(
     selectedModelId?: string
     selectedReasoningIntensity?: CodexReasoningIntensity
     skillAssignments?: Record<string, AgentKind>
+    stageAssignments?: Array<{ id?: string; stageName?: string; skillId?: string; agent?: AgentKind }>
     designApprovalActor?: ApprovalActorType
     verificationApprovalActor?: ApprovalActorType
   }
+
+  const catalog = await getSuperpowersCatalog()
+  const customStages = (body.stageAssignments ?? []).flatMap((stage, index) => {
+    const skill = catalog.skills.find((candidate) => candidate.id === stage.skillId)
+    if (!skill || !stage.stageName?.trim() || !stage.agent) return []
+    return [{ id: stage.id?.trim() || `stage-${index + 1}`, name: stage.stageName.trim(), skillId: skill.id, agent: normalizeAgentKind(stage.agent), skillContent: skill.content, commitSha: skill.commitSha }]
+  })
 
   const run = createWorkflowRun({
     projectId: project.id,
@@ -55,6 +64,7 @@ export async function POST(
       ? body.selectedReasoningIntensity
       : undefined,
     skillAssignments: body.skillAssignments,
+    customStages,
     designApprovalActor: body.designApprovalActor ?? "independent_agent",
     verificationApprovalActor: body.verificationApprovalActor ?? "verification_subagent",
     managedConfig: project.managedConfig

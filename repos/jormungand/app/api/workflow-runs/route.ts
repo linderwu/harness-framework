@@ -5,6 +5,7 @@ import { defaultAgentKind, normalizeAgentKind } from "@/lib/agents"
 import { createRuntimeSkillResolver } from "@/lib/runtime-skills"
 import { advanceWorkflow, createWorkflowRun } from "@/lib/workflow"
 import { createProject } from "@/lib/workspace"
+import { getSuperpowersCatalog } from "@/lib/superpowers-catalog"
 import { listWorkflowRuns, upsertProject, upsertWorkflowRun } from "@/lib/store"
 import type {
   AgentKind,
@@ -37,6 +38,7 @@ export async function POST(request: Request) {
     selectedModelId?: string
     selectedReasoningIntensity?: CodexReasoningIntensity
     skillAssignments?: Record<string, AgentKind>
+    stageAssignments?: Array<{ id?: string; stageName?: string; skillId?: string; agent?: AgentKind }>
     designApprovalActor?: ApprovalActorType
     verificationApprovalActor?: ApprovalActorType
   }
@@ -80,6 +82,20 @@ export async function POST(request: Request) {
     })
   )
 
+  const catalog = await getSuperpowersCatalog()
+  const customStages = (body.stageAssignments ?? []).flatMap((stage, index) => {
+    const skill = catalog.skills.find((candidate) => candidate.id === stage.skillId)
+    if (!skill || !stage.stageName?.trim() || !stage.agent) return []
+    return [{
+      id: stage.id?.trim() || `stage-${index + 1}`,
+      name: stage.stageName.trim(),
+      skillId: skill.id,
+      agent: normalizeAgentKind(stage.agent),
+      skillContent: skill.content,
+      commitSha: skill.commitSha
+    }]
+  })
+
   const run = createWorkflowRun({
     projectId: project.id,
     projectName: body.projectName,
@@ -94,6 +110,7 @@ export async function POST(request: Request) {
       ? body.selectedReasoningIntensity
       : undefined,
     skillAssignments: body.skillAssignments,
+    customStages,
     designApprovalActor: body.designApprovalActor ?? "independent_agent",
     verificationApprovalActor:
       body.verificationApprovalActor ?? "verification_subagent"

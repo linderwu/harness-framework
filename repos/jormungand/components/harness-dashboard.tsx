@@ -20,6 +20,7 @@ import {
   Search,
   Server,
   Square,
+  Plus,
   SlidersHorizontal,
   ShieldCheck,
   Trash2,
@@ -44,6 +45,7 @@ import {
   agentProfiles,
   defaultAgentKind,
   getAgentLabel,
+  normalizeAgentKind,
   type AgentProfile
 } from "@/lib/agents"
 import type {
@@ -78,14 +80,6 @@ import {
   stageLabels
 } from "@/lib/workflow"
 
-const orderedStages: WorkflowStage[] = [
-  "intake",
-  "plan",
-  "design",
-  "implementation",
-  "verification",
-  "completed"
-]
 const codexModelOptions = [
   "ChatGPT OAuth",
   "gpt-5",
@@ -112,9 +106,6 @@ const folderPickerAttributes = {
 } as Record<string, string>
 
 const defaultEventSkills = createDefaultEventSkills()
-const defaultSkillAssignments = Object.fromEntries(
-  defaultEventSkills.map((skill) => [skill.id, defaultAgentKind])
-) as Record<string, AgentKind>
 
 function getAssignableEventSkills(projectType: ProjectType) {
   if (projectType === "agent_task") {
@@ -135,6 +126,7 @@ const maxContextTotalBytes = 5 * 1024 * 1024
 const bridgeHealthPollIntervalMs = 10_000
 const bridgeHealthStaleAfterMs = 30_000
 const bridgeOfflineFailureThreshold = 2
+const workflowSetupStoragePrefix = "jormungand.workflowSetupProfiles.v2"
 type ApprovalDecision = "approved" | "rejected" | "changes_requested"
 type BridgeHealthStatus = "online" | "offline"
 type BridgePanelStatus = BridgeHealthStatus | "checking" | "stale"
@@ -159,6 +151,122 @@ interface AgentHealthResponse {
 const sampleRequirement =
   "Build a Jormungandr dashboard that can select Arceus/OpenClaw agents and control design/verification with approval gates."
 
+interface StageAssignment {
+  id: string
+  stageName: string
+  skillId: string
+  agent: AgentKind
+}
+
+function getWorkflowSetupStorageKey(projectType: ProjectType) {
+  return `${workflowSetupStoragePrefix}:${projectType}`
+}
+
+function normalizeAgentInput(value: string | undefined, fallbackAgent: AgentKind) {
+  return normalizeAgentKind(value ?? fallbackAgent)
+}
+
+function readWorkflowSetupProfile(
+  projectType: ProjectType,
+  fallbackAgent: AgentKind
+) {
+  if (typeof window === "undefined") {
+    return {
+      selectedAgent: fallbackAgent,
+      stageAssignments: []
+    }
+  }
+
+  const key = getWorkflowSetupStorageKey(projectType)
+  const raw = window.localStorage.getItem(key)
+
+  if (!raw) {
+    return {
+      selectedAgent: fallbackAgent,
+      stageAssignments: []
+    }
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as {
+      selectedAgent?: string
+      stageAssignments?: Array<{
+        id?: string
+        stageName?: string
+        skillId?: string
+        agent?: string
+      }>
+    }
+    const selectedAgent = normalizeAgentInput(
+      typeof parsed.selectedAgent === "string" ? parsed.selectedAgent : undefined,
+      fallbackAgent
+    )
+    const stageAssignments = Array.isArray(parsed.stageAssignments)
+      ? parsed.stageAssignments
+          .filter(
+            (entry) =>
+              typeof entry === "object" &&
+              entry !== null &&
+              typeof entry.skillId === "string"
+          )
+          .map((entry) => {
+            const safeEntry = entry as {
+              id?: string
+              stageName?: string
+              skillId: string
+              agent?: string
+            }
+
+            return {
+              id:
+                typeof safeEntry.id === "string" && safeEntry.id.trim().length > 0
+                  ? safeEntry.id
+                  : crypto.randomUUID(),
+              stageName:
+                typeof safeEntry.stageName === "string" ? safeEntry.stageName : "",
+              skillId: safeEntry.skillId,
+              agent: normalizeAgentInput(safeEntry.agent, selectedAgent)
+            }
+          })
+      : []
+
+    return {
+      selectedAgent,
+      stageAssignments
+    }
+  } catch {
+    return {
+      selectedAgent: fallbackAgent,
+      stageAssignments: []
+    }
+  }
+}
+
+function writeWorkflowSetupProfile(
+  projectType: ProjectType,
+  selectedAgent: AgentKind,
+  stageAssignments: StageAssignment[]
+) {
+  if (typeof window === "undefined") {
+    return
+  }
+
+  window.localStorage.setItem(
+    getWorkflowSetupStorageKey(projectType),
+    JSON.stringify({ selectedAgent, stageAssignments })
+  )
+}
+
+function getStageAssignmentsFromRows(
+  projectType: ProjectType,
+  rows: StageAssignment[]
+) {
+  return Object.fromEntries(
+    rows
+      .map((row) => [row.skillId, row.agent])
+  ) as Record<string, AgentKind>
+}
+
 function splitLines(value: string) {
   return value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
 }
@@ -182,29 +290,32 @@ export function HarnessDashboard({
   const [isMonitoringExpanded, setIsMonitoringExpanded] = useState(true)
   const [mobilePanel, setMobilePanel] = useState<MobilePanel>()
   const [mutationError, setMutationError] = useState<string | undefined>()
-  const [conversationEntries, setConversationEntries] = useState<ConversationEntry[]>([])
-  const [conversationVersion, setConversationVersion] = useState(0)
-  const [openComposeSection, setOpenComposeSection] = useState<
-    "requirement" | "automation" | undefined
-  >()
-  const [skillSearch, setSkillSearch] = useState("")
-  const [showOverridesOnly, setShowOverridesOnly] = useState(false)
-  const [bulkStage, setBulkStage] = useState<WorkflowStage | "all">("all")
-  const [bulkAgent, setBulkAgent] = useState<AgentKind>(defaultAgentKind)
-  const [form, setForm] = useState({
-    projectName: "Jormungandr MVP",
-    projectType: "development" as ProjectType,
-    repository: "",
-    requirement: sampleRequirement,
-    successCriteria: "",
-    constraints: "",
-    nonGoals: "",
-    contextFiles: [] as ProjectContextFile[],
-    selectedAgent: defaultAgentKind,
-    skillAssignments: defaultSkillAssignments,
-    designApprovalActor: "independent_agent" as ApprovalActorType,
-    verificationApprovalActor: "verification_subagent" as ApprovalActorType
-  })
+	  const [conversationEntries, setConversationEntries] = useState<ConversationEntry[]>([])
+	  const [conversationVersion, setConversationVersion] = useState(0)
+	  const [openComposeSection, setOpenComposeSection] = useState<
+	    "requirement" | "automation" | undefined
+	  >()
+	  const [form, setForm] = useState(() => {
+	    const savedProfile = readWorkflowSetupProfile(
+	      "development",
+	      defaultAgentKind
+	    )
+
+	    return {
+	      projectName: "Jormungandr MVP",
+	      projectType: "development" as ProjectType,
+	      repository: "",
+	      requirement: sampleRequirement,
+	      successCriteria: "",
+	      constraints: "",
+	      nonGoals: "",
+	      contextFiles: [] as ProjectContextFile[],
+	      selectedAgent: savedProfile.selectedAgent,
+	      stageAssignments: savedProfile.stageAssignments,
+	      designApprovalActor: "independent_agent" as ApprovalActorType,
+	      verificationApprovalActor: "verification_subagent" as ApprovalActorType
+	    }
+	  })
 
   const projectSelectorItems = useMemo(
     () => buildProjectSelectorItems(projects, runs),
@@ -236,19 +347,47 @@ export function HarnessDashboard({
       : undefined,
     [selectedProject, selectedProjectRuns]
   )
-  const isAgentTask = form.projectType === "agent_task"
-  const isArceusMaintenance = form.projectType === "arceus_maintenance"
-  const assignmentSkills = useMemo(
-    () => getAssignableEventSkills(form.projectType),
-    [form.projectType]
-  )
-  const assignmentStages = useMemo(
-    () => Array.from(new Set(assignmentSkills.map((skill) => skill.stage))),
-    [assignmentSkills]
-  )
-  const hasApprovalPolicies = form.projectType === "development"
+	  const [superpowersSkills, setSuperpowersSkills] = useState<typeof defaultEventSkills>([])
+	  useEffect(() => {
+	    let active = true
+	    fetch("/api/superpowers-skills")
+	      .then((response) => response.ok ? response.json() : Promise.reject())
+	      .then((payload: { skills?: Array<{ id: string; name: string }> }) => {
+	        if (!active) return
+	        const template = defaultEventSkills.find((skill) => skill.id === "implementation.dispatch") ?? defaultEventSkills[0]
+	        if (!template) return
+	        setSuperpowersSkills((payload.skills ?? []).map((skill) => ({
+	          ...template,
+	          id: skill.id,
+	          name: skill.name,
+	          purpose: `Execute the ${skill.name} Superpowers skill.`,
+	          runtimeSkillBundles: []
+	        })))
+	      })
+	      .catch(() => undefined)
+	    return () => { active = false }
+	  }, [])
+	  const isAgentTask = form.projectType === "agent_task"
+	  const isArceusMaintenance = form.projectType === "arceus_maintenance"
+	  const assignmentSkills = useMemo(
+	    () => form.projectType === "agent_task" ? [] : superpowersSkills,
+	    [form.projectType, superpowersSkills]
+	  )
+	  const assignmentSkillById = useMemo(
+	    () =>
+	      Object.fromEntries(assignmentSkills.map((skill) => [skill.id, skill])),
+	    [assignmentSkills]
+	  )
+	  const hasApprovalPolicies = form.projectType === "development"
+	  const overrideCount = new Set(
+	    form.stageAssignments.map((entry) => entry.skillId)
+	  ).size
+	  const stageAssignmentsMap = useMemo(
+	    () => getStageAssignmentsFromRows(form.projectType, form.stageAssignments),
+	    [form.projectType, form.stageAssignments]
+	  )
 
-  function getCodexProfileForProject(projectId?: string) {
+	  function getCodexProfileForProject(projectId?: string) {
     const projectRuns = projectId
       ? runs
           .filter((run) => run.projectId === projectId)
@@ -267,36 +406,13 @@ export function HarnessDashboard({
       selectedReasoningIntensity: activeRun.selectedReasoningIntensity
     }
   }
-  const overrideCount = useMemo(
-    () =>
-      assignmentSkills.filter(
-        (skill) =>
-          (form.skillAssignments[skill.id] ?? form.selectedAgent) !==
-          form.selectedAgent
-      ).length,
-    [assignmentSkills, form.selectedAgent, form.skillAssignments]
-  )
-  const visibleAssignmentSkills = useMemo(() => {
-    const query = skillSearch.trim().toLowerCase()
-
-    return assignmentSkills.filter((skill) => {
-      const executor = form.skillAssignments[skill.id] ?? form.selectedAgent
-      const isOverride = executor !== form.selectedAgent
-      const matchesQuery =
-        query.length === 0 ||
-        skill.name.toLowerCase().includes(query) ||
-        eventTypeLabels[skill.eventType].toLowerCase().includes(query) ||
-        stageLabels[skill.stage].toLowerCase().includes(query)
-
-      return matchesQuery && (!showOverridesOnly || isOverride)
-    })
-  }, [
-    assignmentSkills,
-    form.selectedAgent,
-    form.skillAssignments,
-    showOverridesOnly,
-    skillSearch
-  ])
+	  useEffect(() => {
+	    writeWorkflowSetupProfile(
+	      form.projectType,
+	      form.selectedAgent,
+	      form.stageAssignments
+	    )
+	  }, [form.projectType, form.selectedAgent, form.stageAssignments])
 
   async function refreshWorkspace() {
     const [projectsResponse, runsResponse] = await Promise.all([
@@ -403,7 +519,8 @@ export function HarnessDashboard({
         body: JSON.stringify({
           selectedAgent: form.selectedAgent,
           ...getCodexProfileForProject(project.id),
-          skillAssignments: form.skillAssignments,
+          skillAssignments: stageAssignmentsMap,
+          stageAssignments: form.stageAssignments,
           designApprovalActor: form.designApprovalActor,
           verificationApprovalActor: form.verificationApprovalActor
         })
@@ -477,79 +594,68 @@ export function HarnessDashboard({
   function updateSelectedAgent(selectedAgent: AgentKind) {
     setForm((currentForm) => ({
       ...currentForm,
-      selectedAgent,
-      skillAssignments: Object.fromEntries(
-        getAssignableEventSkills(currentForm.projectType).map((skill) => {
-          const currentAgent =
-            currentForm.skillAssignments[skill.id] ??
-            currentForm.selectedAgent
-
-          return [
-            skill.id,
-            currentAgent === currentForm.selectedAgent
-              ? selectedAgent
-              : currentAgent
-          ]
-        })
-      ) as Record<string, AgentKind>
+      selectedAgent
     }))
   }
 
   function selectProjectType(projectType: ProjectType) {
     const template = getProjectTemplate(projectType)
+    const savedProfile = readWorkflowSetupProfile(
+      projectType,
+      form.selectedAgent
+    )
 
     setForm((currentForm) => ({
       ...currentForm,
       projectType,
+      selectedAgent: savedProfile.selectedAgent,
+      stageAssignments: savedProfile.stageAssignments,
       repository: projectType === "agent_task" || projectType === "arceus_maintenance"
         ? ""
         : currentForm.repository,
-      skillAssignments: Object.fromEntries(
-        getAssignableEventSkills(projectType).map((skill) => [
-          skill.id,
-          currentForm.selectedAgent
-        ])
-      ) as Record<string, AgentKind>
     }))
-    setBulkStage("all")
     setMutationError(template.warning)
   }
 
-  function updateSkillAssignment(skillId: string, agent: AgentKind) {
-    setForm({
-      ...form,
-      skillAssignments: {
-        ...form.skillAssignments,
-        [skillId]: agent
-      }
-    })
-  }
+  function addStageAssignment() {
+    const defaultSkill = assignmentSkills[0]
 
-  function applyBulkAssignment() {
+    if (!defaultSkill) {
+      return
+    }
+
     setForm((currentForm) => ({
       ...currentForm,
-      skillAssignments: Object.fromEntries(
-        getAssignableEventSkills(currentForm.projectType).map((skill) => {
-          const currentAgent =
-            currentForm.skillAssignments[skill.id] ??
-            currentForm.selectedAgent
-          const shouldApply = bulkStage === "all" || skill.stage === bulkStage
-
-          return [skill.id, shouldApply ? bulkAgent : currentAgent]
-        })
-      ) as Record<string, AgentKind>
+      stageAssignments: [
+        ...currentForm.stageAssignments,
+        {
+          id: crypto.randomUUID(),
+          stageName: stageLabels[defaultSkill.stage],
+          skillId: defaultSkill.id,
+          agent: currentForm.selectedAgent
+        }
+      ]
     }))
   }
 
-  function resetSkillAssignments() {
+  function updateStageAssignment(
+    rowId: string,
+    patch: Partial<StageAssignment>
+  ) {
     setForm((currentForm) => ({
       ...currentForm,
-      skillAssignments: Object.fromEntries(
-        getAssignableEventSkills(currentForm.projectType).map((skill) => [
-          skill.id,
-          currentForm.selectedAgent
-        ])
-      ) as Record<string, AgentKind>
+      stageAssignments: currentForm.stageAssignments.map((row) =>
+        row.id === rowId
+          ? { ...row, ...patch }
+          : row
+      )
+    }))
+  }
+
+  function removeStageAssignment(rowId: string) {
+    setForm((currentForm) => ({
+      ...currentForm,
+      stageAssignments: currentForm.stageAssignments.filter((row) => row.id !== rowId)
     }))
   }
 
@@ -972,13 +1078,13 @@ export function HarnessDashboard({
                         <div>
                           <h3>Assignment Workbench</h3>
                           <p>
-                            Route each workflow skill to an executor. Skills use
-                            the default unless you override them.
+                            Route your custom workflow stages to executors.
+                            Skills inherit the default executor when not listed below.
                           </p>
                         </div>
                         <div className="assignmentSummary">
                           <strong>{overrideCount}</strong>
-                          <span>overrides</span>
+                          <span>custom stages</span>
                         </div>
                       </div>
 
@@ -996,80 +1102,15 @@ export function HarnessDashboard({
                       </div>
 
                       <div className="assignmentToolbar">
-                        <label className="searchField">
-                          <span>Search Skills</span>
-                          <span className="searchInputWrap">
-                            <Search size={15} />
-                            <input
-                              value={skillSearch}
-                              onChange={(event) =>
-                                setSkillSearch(event.target.value)
-                              }
-                              placeholder="Stage, event, or skill name"
-                            />
-                          </span>
-                        </label>
-
-                        <label>
-                          <span>Bulk Scope</span>
-                          <select
-                            className="plainSelect"
-                            value={bulkStage}
-                            onChange={(event) =>
-                              setBulkStage(
-                                event.target.value as WorkflowStage | "all"
-                              )
-                            }
-                          >
-                            <option value="all">All stages</option>
-                            {orderedStages
-                              .filter((stage) => assignmentStages.includes(stage))
-                              .map((stage) => (
-                                <option key={stage} value={stage}>
-                                  {stageLabels[stage]}
-                                </option>
-                              ))}
-                          </select>
-                        </label>
-
-                        <label>
-                          <span>Bulk Executor</span>
-                          <AgentSelect
-                            value={bulkAgent}
-                            onChange={setBulkAgent}
-                          />
-                        </label>
-
                         <div className="toolbarActions">
                           <button
                             className="iconTextButton applyBulkButton"
-                            onClick={applyBulkAssignment}
+                            disabled={assignmentSkills.length === 0}
+                            onClick={addStageAssignment}
                             type="button"
                           >
-                            <Check size={15} />
-                            Apply
-                          </button>
-                          <button
-                            className={
-                              showOverridesOnly
-                                ? "iconTextButton activeFilter"
-                                : "iconTextButton"
-                            }
-                            onClick={() =>
-                              setShowOverridesOnly((current) => !current)
-                            }
-                            type="button"
-                          >
-                            <SlidersHorizontal size={15} />
-                            Overrides
-                          </button>
-                          <button
-                            className="iconTextButton"
-                            onClick={resetSkillAssignments}
-                            type="button"
-                          >
-                            <RotateCcw size={15} />
-                            Reset
+                            <Plus size={15} />
+                            Add Stage
                           </button>
                         </div>
                       </div>
@@ -1080,50 +1121,80 @@ export function HarnessDashboard({
                           <span>Skill</span>
                           <span>Executor</span>
                           <span>Policy</span>
+                          <span></span>
                         </div>
-                        {visibleAssignmentSkills.length === 0 ? (
+                        {form.stageAssignments.length === 0 ? (
                           <div className="assignmentEmpty">
-                            No matching skills.
+                            No custom stages yet.
                           </div>
                         ) : (
-                          visibleAssignmentSkills.map((skill) => {
-                            const executor =
-                              form.skillAssignments[skill.id] ??
-                              form.selectedAgent
-                            const isOverride = executor !== form.selectedAgent
-
+                          form.stageAssignments.map((row) => {
+                            const skill = assignmentSkillById[row.skillId]
+                            const policyLabel = skill
+                              ? getSkillPolicyLabel(skill.stage)
+                              : "No skill"
                             return (
                               <div
                                 className="assignmentTableRow"
-                                key={skill.id}
+                                key={row.id}
                                 role="row"
                               >
-                                <span className={`stageBadge ${skill.stage}`}>
-                                  {stageLabels[skill.stage]}
-                                </span>
+                                <input
+                                  className="stageNameInput"
+                                  value={row.stageName}
+                                  onChange={(event) =>
+                                    updateStageAssignment(row.id, {
+                                      stageName: event.target.value
+                                    })
+                                  }
+                                />
                                 <div className="skillCell">
-                                  <strong>{skill.name}</strong>
-                                  <small>{eventTypeLabels[skill.eventType]}</small>
+                                  <select
+                                    className="plainSelect"
+                                    value={row.skillId}
+                                    onChange={(event) =>
+                                      updateStageAssignment(row.id, {
+                                        skillId: event.target.value
+                                      })
+                                    }
+                                  >
+                                    {assignmentSkills.map((availableSkill) => (
+                                      <option
+                                        key={availableSkill.id}
+                                        value={availableSkill.id}
+                                      >
+                                        {availableSkill.name}
+                                      </option>
+                                    ))}
+                                  </select>
+                                  {skill ? (
+                                    <small>{eventTypeLabels[skill.eventType]}</small>
+                                  ) : null}
                                 </div>
                                 <div className="executorCell">
                                   <AgentSelect
-                                    value={executor}
+                                    value={row.agent}
                                     menuPlacement="up"
                                     onChange={(agent) =>
-                                      updateSkillAssignment(skill.id, agent)
+                                      updateStageAssignment(row.id, { agent })
                                     }
                                   />
-                                  <small>
-                                    {isOverride
-                                      ? "Custom assignment"
-                                      : `Uses default: ${getAgentLabel(
-                                          form.selectedAgent
-                                        )}`}
-                                  </small>
                                 </div>
-                                <span className={`policyBadge ${skill.stage}`}>
-                                  {getSkillPolicyLabel(skill.stage)}
+                                <span
+                                  className={`policyBadge ${
+                                    skill ? skill.stage : ""
+                                  }`}
+                                >
+                                  {policyLabel}
                                 </span>
+                                <button
+                                  aria-label="Remove stage assignment"
+                                  className="iconButton assignmentRowRemove"
+                                  onClick={() => removeStageAssignment(row.id)}
+                                  type="button"
+                                >
+                                  <Trash2 size={14} />
+                                </button>
                               </div>
                             )
                           })

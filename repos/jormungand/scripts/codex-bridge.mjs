@@ -814,6 +814,16 @@ function buildPrompt(payload, contextDir, runtimeSkillBundleResults = []) {
     "Expected outputs:",
     ...asList(skill.outputs),
     "",
+    skill.superpowerSkill
+      ? [
+          `Superpowers skill: ${skill.superpowerSkill.id}`,
+          `Source commit: ${skill.superpowerSkill.commitSha}`,
+          "BEGIN SUPERPOWERS SKILL.md",
+          skill.superpowerSkill.content,
+          "END SUPERPOWERS SKILL.md",
+          ""
+        ].join("\n")
+      : "",
     "Original requirement:",
     payload.requirement ?? "",
     "",

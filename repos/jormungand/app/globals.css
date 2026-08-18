@@ -92,7 +92,6 @@ button {
   display: grid;
   gap: 14px;
   grid-template-rows: auto minmax(0, 1fr);
-  height: 100vh;
   min-height: 100vh;
   min-height: 100dvh;
   overflow: visible;
@@ -2856,4 +2855,12 @@ pre {
   .policyBadge {
     justify-self: start;
   }
+}
+.stageNameInput {
+  min-width: 0;
+  width: 100%;
+}
+
+.assignmentRowRemove {
+  flex: 0 0 auto;
 }
