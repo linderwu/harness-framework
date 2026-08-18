@@ -667,7 +667,7 @@ export class HiveMemoryRepository {
     return this.getConversationEntry(input.id)
   }
 
-  async createConversation(input: { id: string; title: string }) {
+  async createConversation(input: { id: string; title: string }): Promise<ConversationMetadata> {
     const now = new Date().toISOString()
     const title = normalizeConversationTitle(input.title)
     await this.database.write((connection) => {
@@ -683,14 +683,14 @@ export class HiveMemoryRepository {
     return this.requireConversationMetadata(input.id)
   }
 
-  getConversationMetadata(id: string) {
+  getConversationMetadata(id: string): ConversationMetadata | undefined {
     return this.database.read((connection) => {
       const row = connection.prepare("SELECT * FROM conversations WHERE id = ?").get(id) as ConversationMetadataRow | undefined
       return row ? conversationMetadataFromRow(row) : undefined
     })
   }
 
-  listConversationSummaries(input: { includeArchived?: boolean } = {}) {
+  listConversationSummaries(input: { includeArchived?: boolean } = {}): ConversationSummary[] {
     return this.database.read((connection) =>
       (connection.prepare(`
         SELECT
@@ -733,7 +733,7 @@ export class HiveMemoryRepository {
     )
   }
 
-  async renameConversation(id: string, title: string) {
+  async renameConversation(id: string, title: string): Promise<ConversationMetadata> {
     await this.database.write((connection) => {
       const updatedAt = new Date().toISOString()
       const result = connection.prepare(`
@@ -748,7 +748,7 @@ export class HiveMemoryRepository {
     return this.requireConversationMetadata(id)
   }
 
-  async setConversationState(id: string, state: ConversationState) {
+  async setConversationState(id: string, state: ConversationState): Promise<ConversationMetadata> {
     await this.database.write((connection) => {
       const updatedAt = new Date().toISOString()
       const archivedAt = state === "archived" ? updatedAt : null
@@ -764,12 +764,12 @@ export class HiveMemoryRepository {
     return this.requireConversationMetadata(id)
   }
 
-  isConversationRunning(id: string) {
+  isConversationRunning(id: string): boolean {
     const session = this.getCodexSession(id)
     return session?.status === "running" || session?.turnStatus === "inProgress"
   }
 
-  async deleteConversation(id: string) {
+  async deleteConversation(id: string): Promise<void> {
     this.assertDeletableConversationId(id)
     await this.database.transaction((connection) => {
       connection.prepare("DELETE FROM codex_sessions WHERE conversation_id = ?").run(id)
