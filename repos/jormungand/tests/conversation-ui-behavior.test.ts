@@ -262,9 +262,43 @@ test("conversation deletion clears stale state before replacement-create failure
   ) as
     | (() => Record<string, unknown>)
     | undefined
+  const buildReplacementFailureState = (
+    Reflect.get(module, "buildReplacementFailureState")
+    ?? Reflect.get((module as { default?: unknown }).default ?? {}, "buildReplacementFailureState")
+  ) as
+    | (() => Record<string, unknown>)
+    | undefined
+  const shouldSkipUnboundHydration = (
+    Reflect.get(module, "shouldSkipUnboundHydration")
+    ?? Reflect.get((module as { default?: unknown }).default ?? {}, "shouldSkipUnboundHydration")
+  ) as
+    | ((input: {
+        activeConversationId?: string
+        isConversationIdentityUnavailable?: boolean
+        isReplacingDeletedConversation: boolean
+        isUnbound: boolean
+      }) => boolean)
+    | undefined
+  const isConversationManagerLocked = (
+    Reflect.get(module, "isConversationManagerLocked")
+    ?? Reflect.get((module as { default?: unknown }).default ?? {}, "isConversationManagerLocked")
+  ) as
+    | ((input: {
+        isLoadingConversation: boolean
+        isStartingConversation: boolean
+        isReplacingDeletedConversation: boolean
+        isConversationIdentityUnavailable?: boolean
+        isControlling: boolean
+        isTurnRunning: boolean
+        activeManagerAction?: "rename" | "archive" | "unarchive" | "delete"
+      }) => boolean)
+    | undefined
 
   assert.equal(typeof requestConversationDeletionAndReplacement, "function")
   assert.equal(typeof buildDeletedConversationState, "function")
+  assert.equal(typeof buildReplacementFailureState, "function")
+  assert.equal(typeof shouldSkipUnboundHydration, "function")
+  assert.equal(typeof isConversationManagerLocked, "function")
 
   assert.deepEqual(buildDeletedConversationState!(), {
     content: "",
@@ -278,6 +312,33 @@ test("conversation deletion clears stale state before replacement-create failure
     session: undefined,
     statusMessage: undefined
   })
+  assert.deepEqual(buildReplacementFailureState!(), {
+    content: "",
+    conversationId: undefined,
+    entries: [],
+    error: undefined,
+    events: [],
+    isConversationIdentityUnavailable: true,
+    isLoadingConversation: false,
+    metadata: undefined,
+    replacementInProgress: false,
+    session: undefined,
+    statusMessage: undefined
+  })
+  assert.equal(shouldSkipUnboundHydration!({
+    activeConversationId: undefined,
+    isConversationIdentityUnavailable: true,
+    isReplacingDeletedConversation: false,
+    isUnbound: true
+  }), true)
+  assert.equal(isConversationManagerLocked!({
+    isLoadingConversation: false,
+    isStartingConversation: false,
+    isReplacingDeletedConversation: false,
+    isConversationIdentityUnavailable: true,
+    isControlling: false,
+    isTurnRunning: false
+  }), false)
 
   const calls: Array<{ input: RequestInfo | URL; init?: RequestInit }> = []
   const fetchMock: typeof fetch = async (input, init) => {
@@ -308,6 +369,7 @@ test("replacement hydration guard skips unbound GET while delete replacement is 
   ) as
     | ((input: {
         activeConversationId?: string
+        isConversationIdentityUnavailable?: boolean
         isReplacingDeletedConversation: boolean
         isUnbound: boolean
       }) => boolean)
@@ -329,6 +391,12 @@ test("replacement hydration guard skips unbound GET while delete replacement is 
     isReplacingDeletedConversation: false,
     isUnbound: true
   }), false)
+  assert.equal(shouldSkipUnboundHydration!({
+    activeConversationId: undefined,
+    isConversationIdentityUnavailable: true,
+    isReplacingDeletedConversation: false,
+    isUnbound: true
+  }), true)
 })
 
 test("conversation manager lock state disables new conversation while running or controlling", async () => {
@@ -340,6 +408,8 @@ test("conversation manager lock state disables new conversation while running or
     | ((input: {
         isLoadingConversation: boolean
         isStartingConversation: boolean
+        isReplacingDeletedConversation: boolean
+        isConversationIdentityUnavailable?: boolean
         isControlling: boolean
         isTurnRunning: boolean
         activeManagerAction?: "rename" | "archive" | "unarchive" | "delete"
@@ -350,26 +420,38 @@ test("conversation manager lock state disables new conversation while running or
   assert.equal(isConversationManagerLocked!({
     isLoadingConversation: false,
     isStartingConversation: false,
+    isReplacingDeletedConversation: false,
     isControlling: false,
     isTurnRunning: false
   }), false)
   assert.equal(isConversationManagerLocked!({
     isLoadingConversation: false,
     isStartingConversation: false,
+    isReplacingDeletedConversation: false,
     isControlling: true,
     isTurnRunning: false
   }), true)
   assert.equal(isConversationManagerLocked!({
     isLoadingConversation: false,
     isStartingConversation: false,
+    isReplacingDeletedConversation: false,
     isControlling: false,
     isTurnRunning: true
   }), true)
   assert.equal(isConversationManagerLocked!({
     isLoadingConversation: false,
     isStartingConversation: false,
+    isReplacingDeletedConversation: false,
     isControlling: false,
     isTurnRunning: false,
     activeManagerAction: "rename"
   }), true)
+  assert.equal(isConversationManagerLocked!({
+    isLoadingConversation: false,
+    isStartingConversation: false,
+    isReplacingDeletedConversation: false,
+    isConversationIdentityUnavailable: true,
+    isControlling: false,
+    isTurnRunning: false
+  }), false)
 })

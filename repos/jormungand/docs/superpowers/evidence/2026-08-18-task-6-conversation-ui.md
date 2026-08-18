@@ -149,3 +149,38 @@ Observed result:
 - Focused UI tests passed `14` of `14`.
 - `npm test` passed `208` of `208`.
 - `npm run typecheck` passed.
+
+## Follow-up Fix 4
+
+Issue addressed:
+
+- The first replacement-race fix blocked stale hydration after replacement-create failure, but it also left the same replacement flag in the manager lock path, which kept the whole manager locked and prevented `New conversation` retry.
+
+Fix applied:
+
+- Split transient `isReplacingDeletedConversation` from recovery `isConversationIdentityUnavailable`.
+- Updated `shouldSkipUnboundHydration(...)` so it returns true when there is no active identity and either:
+  - delete replacement is still in progress, or
+  - conversation identity is unavailable after replacement-create failure.
+- Updated `isConversationManagerLocked(...)` so it includes transient replacement state but does not include recovery state.
+- Added `buildReplacementFailureState()` and used it when replacement creation fails:
+  - transient replacement flag clears,
+  - recovery flag stays true,
+  - active identity remains undefined,
+  - stale hydration stays blocked,
+  - `New conversation` retry becomes available.
+
+Follow-up verification:
+
+```text
+npx tsc -p tsconfig.tests.json
+node --test .tmp-tests/tests/conversation-ui-structure.test.js .tmp-tests/tests/conversation-ui-behavior.test.js
+npm test
+npm run typecheck
+```
+
+Observed result:
+
+- Focused UI tests passed `14` of `14`.
+- `npm test` passed `208` of `208`.
+- `npm run typecheck` passed.

@@ -70,6 +70,7 @@ export function TaskConversation(props: {
   const [isRenameFormOpen, setIsRenameFormOpen] = useState(false)
   const [renameDraft, setRenameDraft] = useState("")
   const [activeManagerAction, setActiveManagerAction] = useState<ConversationManagerAction | undefined>()
+  const [isConversationIdentityUnavailable, setIsConversationIdentityUnavailable] = useState(false)
   const [isReplacingDeletedConversation, setIsReplacingDeletedConversation] = useState(false)
   const [isDeleteDialogFallbackOpen, setIsDeleteDialogFallbackOpen] = useState(false)
   const requestGeneration = useRef(0)
@@ -164,6 +165,7 @@ export function TaskConversation(props: {
   useEffect(() => {
     if (shouldSkipUnboundHydration({
       activeConversationId,
+      isConversationIdentityUnavailable,
       isReplacingDeletedConversation,
       isUnbound
     })) return
@@ -196,7 +198,7 @@ export function TaskConversation(props: {
       active = false
       invalidateConversationRequests()
     }
-  }, [activeConversationId, conversationLoadPath, isReplacingDeletedConversation, isUnbound, onEntriesChanged, runId])
+  }, [activeConversationId, conversationLoadPath, isConversationIdentityUnavailable, isReplacingDeletedConversation, isUnbound, onEntriesChanged, runId])
 
   useEffect(() => {
     if (!pending) return
@@ -327,6 +329,7 @@ export function TaskConversation(props: {
     if (isConversationManagerLocked({
       isLoadingConversation,
       isStartingConversation,
+      isConversationIdentityUnavailable,
       isReplacingDeletedConversation,
       isControlling,
       isTurnRunning: isUnbound && session?.turnStatus === "inProgress",
@@ -347,6 +350,7 @@ export function TaskConversation(props: {
       setMetadata(result.metadata)
       setSession(undefined)
       setEvents([])
+      setIsConversationIdentityUnavailable(false)
       setIsLoadingConversation(true)
       setIsReplacingDeletedConversation(false)
       setIsRenameFormOpen(false)
@@ -355,6 +359,10 @@ export function TaskConversation(props: {
       props.onNewConversation?.()
       setStatusMessage(`Started ${result.metadata?.title ?? "a new conversation"}.`)
     } catch (startError) {
+      if (!activeConversationId) {
+        setIsConversationIdentityUnavailable(true)
+        setIsLoadingConversation(false)
+      }
       setError(formatError(startError))
     } finally {
       setIsStartingConversation(false)
@@ -482,6 +490,7 @@ export function TaskConversation(props: {
       closeDeleteDialog()
       invalidateConversationRequests()
       const deletedState = buildDeletedConversationState()
+      setIsConversationIdentityUnavailable(false)
       setIsReplacingDeletedConversation(true)
       setConversationId(deletedState.conversationId)
       setContent(deletedState.content)
@@ -497,13 +506,29 @@ export function TaskConversation(props: {
       setIsRenameFormOpen(false)
       setRenameDraft("")
       onEntriesChanged([])
-      const replacement = await requestNewConversation(fetch)
-      setConversationId(replacement.conversationId)
-      setMetadata(replacement.metadata)
-      setIsReplacingDeletedConversation(false)
-      setRenameDraft(replacement.metadata?.title ?? "")
-      props.onNewConversation?.()
-      setStatusMessage("Conversation deleted.")
+      try {
+        const replacement = await requestNewConversation(fetch)
+        setConversationId(replacement.conversationId)
+        setMetadata(replacement.metadata)
+        setIsConversationIdentityUnavailable(false)
+        setIsReplacingDeletedConversation(false)
+        setRenameDraft(replacement.metadata?.title ?? "")
+        props.onNewConversation?.()
+        setStatusMessage("Conversation deleted.")
+      } catch (replacementError) {
+        const failureState = buildReplacementFailureState()
+        setConversationId(failureState.conversationId)
+        setContent(failureState.content)
+        setEntries(failureState.entries)
+        setEvents(failureState.events)
+        setIsLoadingConversation(failureState.isLoadingConversation)
+        setMetadata(failureState.metadata)
+        setSession(failureState.session)
+        setStatusMessage(failureState.statusMessage)
+        setIsConversationIdentityUnavailable(failureState.isConversationIdentityUnavailable)
+        setIsReplacingDeletedConversation(failureState.replacementInProgress)
+        setError(formatError(replacementError))
+      }
     } catch (deleteError) {
       setError(formatError(deleteError))
       closeDeleteDialog()
@@ -523,6 +548,7 @@ export function TaskConversation(props: {
   const areManagerControlsDisabled = isConversationManagerLocked({
     isLoadingConversation,
     isStartingConversation,
+    isConversationIdentityUnavailable,
     isReplacingDeletedConversation,
     isControlling,
     isTurnRunning,
@@ -875,9 +901,26 @@ export function buildDeletedConversationState() {
   }
 }
 
+export function buildReplacementFailureState() {
+  return {
+    content: "",
+    conversationId: undefined,
+    entries: [],
+    error: undefined,
+    events: [],
+    isConversationIdentityUnavailable: true,
+    isLoadingConversation: false,
+    metadata: undefined,
+    replacementInProgress: false,
+    session: undefined,
+    statusMessage: undefined
+  }
+}
+
 export function isConversationManagerLocked(input: {
   isLoadingConversation: boolean
   isStartingConversation: boolean
+  isConversationIdentityUnavailable?: boolean
   isReplacingDeletedConversation: boolean
   isControlling: boolean
   isTurnRunning: boolean
@@ -893,11 +936,12 @@ export function isConversationManagerLocked(input: {
 
 export function shouldSkipUnboundHydration(input: {
   activeConversationId?: string
+  isConversationIdentityUnavailable?: boolean
   isReplacingDeletedConversation: boolean
   isUnbound: boolean
 }) {
   return input.isUnbound
-    && input.isReplacingDeletedConversation
+    && (input.isReplacingDeletedConversation || !!input.isConversationIdentityUnavailable)
     && !input.activeConversationId
 }
 
