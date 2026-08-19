@@ -11,6 +11,18 @@ const repositoryUrl =
   "https://github.com/linderwu/jormungand_skill.git"
 const repositoryDir = path.join(process.cwd(), ".harness", "superpowers-catalog")
 
+export function getGitAuthEnvironment(repositoryToken?: string): Record<string, string> {
+  const token = repositoryToken?.trim()
+  if (!token) return {}
+
+  const authorization = Buffer.from(`x-access-token:${token}`).toString("base64")
+  return {
+    GIT_CONFIG_COUNT: "1",
+    GIT_CONFIG_KEY_0: "http.extraheader",
+    GIT_CONFIG_VALUE_0: `AUTHORIZATION: Basic ${authorization}`
+  }
+}
+
 export interface SuperpowersSkill {
   id: string
   name: string
@@ -49,13 +61,13 @@ async function refreshCatalog(): Promise<CatalogCache> {
   await mkdir(path.dirname(repositoryDir), { recursive: true })
 
   if (existsSync(path.join(repositoryDir, ".git"))) {
-    await execFileAsync("git", ["-C", repositoryDir, "fetch", "--depth", "1", "origin", "main"])
-    await execFileAsync("git", ["-C", repositoryDir, "reset", "--hard", "FETCH_HEAD"])
+    await runGit(["-C", repositoryDir, "fetch", "--depth", "1", "origin", "main"])
+    await runGit(["-C", repositoryDir, "reset", "--hard", "FETCH_HEAD"])
   } else {
-    await execFileAsync("git", ["clone", "--depth", "1", repositoryUrl, repositoryDir])
+    await runGit(["clone", "--depth", "1", repositoryUrl, repositoryDir])
   }
 
-  const { stdout } = await execFileAsync("git", ["-C", repositoryDir, "rev-parse", "HEAD"])
+  const { stdout } = await runGit(["-C", repositoryDir, "rev-parse", "HEAD"])
   const commitSha = stdout.trim()
   const skillsDir = path.join(repositoryDir, "skills", "superpowers")
   const entries = await readdir(skillsDir, { withFileTypes: true })
@@ -79,4 +91,13 @@ async function refreshCatalog(): Promise<CatalogCache> {
     skills: skills.filter((skill): skill is SuperpowersSkill => Boolean(skill))
   }
   return cache
+}
+
+function runGit(args: string[]) {
+  return execFileAsync("git", args, {
+    env: {
+      ...process.env,
+      ...getGitAuthEnvironment(process.env.JORMUNGAND_SKILL_REPOSITORY_TOKEN)
+    }
+  })
 }

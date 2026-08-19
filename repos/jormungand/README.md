@@ -47,13 +47,19 @@ Hive memory, manager checkpoints, and task conversation entries use SQLite in
 WAL mode. Production must set:
 
 ```text
-JORMUNGAND_DATA_DIR=/app/repos/jormungand/data
+JORMUNGAND_DATA_DIR=/data
 ```
 
 Mount a provider-managed persistent volume at that directory. The Docker
 `VOLUME` declaration documents the mount point but does not itself provide
 durable storage. The JSON workflow state remains in the same configured data
 directory and must be included in volume-level backups.
+
+The Superpowers skill catalog is loaded from the private
+`linderwu/jormungand_skill` repository at runtime. Configure
+`JORMUNGAND_SKILL_REPOSITORY_TOKEN` as a Zeabur secret using a GitHub token with
+read-only access to that repository. The token is passed to Git through an
+authorization header and is never embedded in the repository URL.
 
 Schedule `npm run memory:backup` daily. It creates an online SQLite backup in
 `$JORMUNGAND_DATA_DIR/backups`, checks its integrity, and retains the latest 14
