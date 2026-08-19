@@ -18,8 +18,8 @@ FROM node:22-alpine AS runner
 WORKDIR /app/repos/jormungand
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
-ENV JORMUNGAND_DATA_DIR=/app/repos/jormungand/data
+ENV JORMUNGAND_DATA_DIR=/data
 COPY --from=builder /app/repos/jormungand ./
-VOLUME ["/app/repos/jormungand/data"]
+VOLUME ["/data"]
 EXPOSE 3000
 CMD ["sh", "-c", "npm run start -- --port ${PORT:-3000}"]
