@@ -1,3 +1,17 @@
+export type {
+  A2AEventRecord,
+  A2AEventType,
+  A2AMessageDirection,
+  A2AMessageRecord,
+  A2ATaskRecord,
+  A2ATaskStatus
+} from "../a2a-runtime"
+import type {
+  A2AEventType,
+  A2AMessageDirection,
+  A2ATaskStatus
+} from "../a2a-runtime"
+
 export type MemoryScope = "global" | "project" | "agent" | "task"
 export type MemoryKind = "semantic" | "procedural" | "episodic" | "policy" | "handoff"
 export type MemoryStatus = "candidate" | "active" | "superseded" | "retracted" | "expired"
@@ -171,3 +185,51 @@ export type PromotionOutcome =
   | { status: "merged"; memory: FormalMemory }
   | { status: "conflict"; conflict: MemoryConflict; verificationTaskId: string }
   | { status: "rejected"; candidate: MemoryCandidate; reason: string }
+
+export interface CreateA2ATaskInput {
+  workflowRunId?: string
+  contextId: string
+  remoteTaskId?: string
+  fromAgent: string
+  toAgent: string
+  status: A2ATaskStatus
+  requestMessageId: string
+  idempotencyKey: string
+  errorCode?: string
+  errorMessage?: string
+  completedAt?: string
+}
+
+export interface InsertA2AMessageInput {
+  taskId?: string
+  contextId: string
+  parentMessageId?: string
+  direction: A2AMessageDirection
+  fromAgent: string
+  toAgent: string
+  protocolVersion: string
+  method: string
+  transport: string
+  idempotencyKey?: string
+  requestFrame: unknown
+  responseFrame?: unknown
+  sentAt?: string
+  receivedAt?: string
+}
+
+export interface AppendA2AEventInput {
+  taskId: string
+  messageId?: string
+  eventType: A2AEventType
+  actor: string
+  payload: Record<string, unknown>
+}
+
+export interface UpdateA2ATaskInput {
+  id: string
+  remoteTaskId?: string
+  status?: A2ATaskStatus
+  errorCode?: string
+  errorMessage?: string
+  completedAt?: string
+}

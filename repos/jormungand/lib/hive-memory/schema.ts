@@ -1,7 +1,7 @@
 import type Database from "better-sqlite3"
 import { legacyConversationId } from "../conversation-identity"
 
-export const hiveSchemaVersion = 3
+export const hiveSchemaVersion = 4
 
 const migrationV1 = `
 CREATE TABLE schema_migrations (
@@ -191,6 +191,60 @@ CREATE TABLE conversations (
 CREATE INDEX conversations_state_updated_idx ON conversations(state, updated_at);
 `
 
+const migrationV4 = `
+CREATE TABLE a2a_tasks (
+  id TEXT PRIMARY KEY,
+  workflow_run_id TEXT,
+  context_id TEXT NOT NULL,
+  remote_task_id TEXT,
+  from_agent TEXT NOT NULL,
+  to_agent TEXT NOT NULL,
+  status TEXT NOT NULL,
+  request_message_id TEXT NOT NULL UNIQUE,
+  idempotency_key TEXT NOT NULL UNIQUE,
+  error_code TEXT,
+  error_message TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  completed_at TEXT
+);
+CREATE TABLE a2a_messages (
+  id TEXT PRIMARY KEY,
+  task_id TEXT,
+  context_id TEXT NOT NULL,
+  parent_message_id TEXT,
+  direction TEXT NOT NULL,
+  from_agent TEXT NOT NULL,
+  to_agent TEXT NOT NULL,
+  protocol_version TEXT NOT NULL,
+  method TEXT NOT NULL,
+  transport TEXT NOT NULL,
+  idempotency_key TEXT,
+  request_json TEXT NOT NULL,
+  response_json TEXT,
+  request_sha256 TEXT NOT NULL,
+  response_sha256 TEXT,
+  created_at TEXT NOT NULL,
+  sent_at TEXT,
+  received_at TEXT
+);
+CREATE TABLE a2a_events (
+  id TEXT PRIMARY KEY,
+  task_id TEXT NOT NULL,
+  message_id TEXT,
+  sequence INTEGER NOT NULL,
+  event_type TEXT NOT NULL,
+  actor TEXT NOT NULL,
+  payload_json TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  UNIQUE(task_id, sequence)
+);
+CREATE INDEX a2a_tasks_status_updated_idx ON a2a_tasks(status, updated_at);
+CREATE INDEX a2a_messages_context_created_idx ON a2a_messages(context_id, created_at);
+CREATE INDEX a2a_messages_task_created_idx ON a2a_messages(task_id, created_at);
+CREATE INDEX a2a_events_task_sequence_idx ON a2a_events(task_id, sequence);
+`
+
 export function migrateHiveSchema(database: Database.Database) {
   const hasMigrationTable = database
     .prepare("SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'")
@@ -225,6 +279,14 @@ export function migrateHiveSchema(database: Database.Database) {
       backfillConversationMetadata(database)
       database.prepare("INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)")
         .run(3, new Date().toISOString())
+    })()
+  }
+
+  if (currentVersion < 4) {
+    database.transaction(() => {
+      database.exec(migrationV4)
+      database.prepare("INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)")
+        .run(4, new Date().toISOString())
     })()
   }
 }

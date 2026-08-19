@@ -4,6 +4,7 @@ import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
+import { sha256Json } from "../lib/a2a-runtime"
 import { legacyConversationId } from "../lib/conversation-identity"
 import { openHiveDatabase } from "../lib/hive-memory/database"
 import { createHiveMemoryRepository } from "../lib/hive-memory/repository"
@@ -235,7 +236,7 @@ test("schema v3 backfills conversation metadata from legacy entries and keeps un
     await rm(dataDir, { recursive: true, force: true })
   })
 
-  assert.equal(migratedDatabase.schemaVersion(), 3)
+  assert.equal(migratedDatabase.schemaVersion(), 4)
   const migrated = repository.getConversationMetadata("conversation:44444444-4444-4444-8444-444444444444")
   assert.ok(migrated)
   assert.equal(migrated.title, "This migrated title should be truncated to eighty characters exactly after white")
@@ -286,6 +287,201 @@ test("schema v3 backfills conversation metadata from legacy entries and keeps un
         messageCount: 2,
         latestMessage: "Most recent assistant reply."
       }
+    ]
+  )
+})
+
+test("schema v4 migrates a v3 database and creates durable A2A tables", async (t) => {
+  const dataDir = await mkdtemp(join(tmpdir(), "jormungand-a2a-migration-"))
+  const databasePath = join(dataDir, "hive-memory.sqlite")
+
+  const seed = new Database(databasePath)
+  seed.exec(`
+    CREATE TABLE schema_migrations (
+      version INTEGER PRIMARY KEY,
+      applied_at TEXT NOT NULL
+    );
+  `)
+  seed.prepare("INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(1, "2026-08-18T00:00:00.000Z")
+  seed.prepare("INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(2, "2026-08-18T00:01:00.000Z")
+  seed.prepare("INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(3, "2026-08-18T00:02:00.000Z")
+  seed.close()
+
+  const database = openHiveDatabase({ dataDir })
+  t.after(async () => {
+    database.close()
+    await rm(dataDir, { recursive: true, force: true })
+  })
+
+  assert.equal(database.schemaVersion(), 4)
+  const tables = database.read((connection) =>
+    connection.prepare(`
+      SELECT name
+      FROM sqlite_master
+      WHERE type = 'table' AND name IN ('a2a_tasks', 'a2a_messages', 'a2a_events')
+      ORDER BY name ASC
+    `).all() as Array<{ name: string }>
+  )
+  assert.deepEqual(tables.map((row) => row.name), ["a2a_events", "a2a_messages", "a2a_tasks"])
+})
+
+test("A2A repository persists redacted frames, idempotent tasks, ordered events, and restart-safe state", async (t) => {
+  const dataDir = await mkdtemp(join(tmpdir(), "jormungand-a2a-repository-"))
+  let secondDatabase: ReturnType<typeof openHiveDatabase> | undefined
+  t.after(async () => {
+    secondDatabase?.close()
+    await rm(dataDir, { recursive: true, force: true })
+  })
+
+  const firstDatabase = openHiveDatabase({ dataDir })
+  const firstRepository = createHiveMemoryRepository(firstDatabase)
+
+  const created = await firstRepository.createA2ATask({
+    workflowRunId: "run-a2a-1",
+    contextId: "context-a2a-1",
+    fromAgent: "codex",
+    toAgent: "openclaw.rowlet",
+    status: "submitted",
+    requestMessageId: "request-message-1",
+    idempotencyKey: "a2a-idempotency-1"
+  })
+  assert.equal(created.inserted, true)
+
+  const duplicate = await firstRepository.createA2ATask({
+    workflowRunId: "run-a2a-1",
+    contextId: "context-a2a-1",
+    fromAgent: "codex",
+    toAgent: "openclaw.rowlet",
+    status: "submitted",
+    requestMessageId: "request-message-1",
+    idempotencyKey: "a2a-idempotency-1"
+  })
+  assert.equal(duplicate.inserted, false)
+  assert.equal(duplicate.task.id, created.task.id)
+  assert.equal(
+    firstRepository.getA2ATaskByIdempotencyKey("a2a-idempotency-1")?.id,
+    created.task.id
+  )
+
+  const requestFrame = {
+    method: "message/send",
+    metadata: {
+      authorization: "Bearer secret",
+      nested: {
+        token: "hidden",
+        content: "keep"
+      }
+    }
+  }
+  const responseFrame = {
+    result: {
+      status: "completed",
+      cookie: "nope",
+      artifact: "response body"
+    }
+  }
+
+  const message = await firstRepository.insertA2AMessage({
+    taskId: created.task.id,
+    contextId: "context-a2a-1",
+    direction: "outbound",
+    fromAgent: "codex",
+    toAgent: "openclaw.rowlet",
+    protocolVersion: "0.3.0",
+    method: "message/send",
+    transport: "openclaw-command",
+    idempotencyKey: "message-idempotency-1",
+    requestFrame,
+    responseFrame,
+    sentAt: "2026-08-19T00:00:01.000Z",
+    receivedAt: "2026-08-19T00:00:02.000Z"
+  })
+
+  assert.match(message.requestJson, /REDACTED/)
+  assert.doesNotMatch(message.requestJson, /Bearer secret/)
+  assert.equal(
+    message.requestSha256,
+    sha256Json({
+      method: "message/send",
+      metadata: {
+        authorization: "[REDACTED]",
+        nested: {
+          content: "keep",
+          token: "[REDACTED]"
+        }
+      }
+    })
+  )
+  assert.match(message.responseJson ?? "", /REDACTED/)
+  assert.equal(message.responseSha256, sha256Json({
+    result: {
+      artifact: "response body",
+      cookie: "[REDACTED]",
+      status: "completed"
+    }
+  }))
+
+  const queued = await firstRepository.appendA2AEvent({
+    taskId: created.task.id,
+    messageId: message.id,
+    eventType: "message_queued",
+    actor: "codex",
+    payload: { requestMessageId: "request-message-1" }
+  })
+  const working = await firstRepository.appendA2AEvent({
+    taskId: created.task.id,
+    messageId: message.id,
+    eventType: "task_working",
+    actor: "openclaw.rowlet",
+    payload: { progress: "started" }
+  })
+  const completed = await firstRepository.appendA2AEvent({
+    taskId: created.task.id,
+    messageId: message.id,
+    eventType: "task_completed",
+    actor: "openclaw.rowlet",
+    payload: { artifactCount: 1 }
+  })
+
+  assert.deepEqual(
+    [queued.sequence, working.sequence, completed.sequence],
+    [1, 2, 3]
+  )
+
+  const updatedTask = await firstRepository.updateA2ATask({
+    id: created.task.id,
+    remoteTaskId: "remote-task-1",
+    status: "completed",
+    completedAt: "2026-08-19T00:00:03.000Z"
+  })
+  assert.equal(updatedTask.status, "completed")
+  assert.equal(updatedTask.remoteTaskId, "remote-task-1")
+
+  firstDatabase.close()
+
+  secondDatabase = openHiveDatabase({ dataDir })
+  const secondRepository = createHiveMemoryRepository(secondDatabase)
+
+  const persistedTask = secondRepository.getA2ATask(created.task.id)
+  assert.ok(persistedTask)
+  assert.equal(persistedTask.status, "completed")
+  assert.equal(persistedTask.remoteTaskId, "remote-task-1")
+
+  const persistedMessages = secondRepository.listA2AMessages(created.task.id)
+  assert.equal(persistedMessages.length, 1)
+  assert.match(persistedMessages[0]?.requestJson ?? "", /REDACTED/)
+  assert.doesNotMatch(persistedMessages[0]?.requestJson ?? "", /Bearer secret/)
+
+  const persistedEvents = secondRepository.listA2AEvents(created.task.id)
+  assert.deepEqual(
+    persistedEvents.map((event) => ({
+      sequence: event.sequence,
+      eventType: event.eventType
+    })),
+    [
+      { sequence: 1, eventType: "message_queued" },
+      { sequence: 2, eventType: "task_working" },
+      { sequence: 3, eventType: "task_completed" }
     ]
   )
 })
