@@ -6,13 +6,65 @@ import type {
   WorkflowRun,
   WorkflowStage
 } from "@/lib/types"
+import { sha256Json } from "./a2a-runtime"
 
 export const PUBLIC_A2A_PROTOCOL_VERSION = "0.3.0"
 export const LEGACY_CLAWCODEX_A2A_VERSION = "0.1"
+export const A2A_JSONRPC_VERSION = "2.0"
+export const MAX_A2A_MESSAGE_PARTS = 16
+export const MAX_A2A_TEXT_PART_BYTES = 16_384
+export const MAX_A2A_DATA_PART_BYTES = 65_536
 
 export type OpenClawA2AProtocol =
   | "legacy-clawcodex-v0.1"
   | "public-a2a-v0.3"
+
+export type A2AJsonRpcMethod = "message/send" | "message/stream"
+
+export interface A2ATextPart {
+  kind: "text"
+  text: string
+  metadata?: Record<string, unknown>
+}
+
+export interface A2ADataPart {
+  kind: "data"
+  data: unknown
+  metadata?: Record<string, unknown>
+}
+
+export type A2AMessagePart = A2ATextPart | A2ADataPart
+
+export interface ParsedA2AMessageRequest {
+  jsonrpc: "2.0"
+  id: string | number
+  method: A2AJsonRpcMethod
+  message: {
+    kind: "message"
+    role: "user"
+    messageId: string
+    contextId: string
+    parts: A2AMessagePart[]
+    metadata?: Record<string, unknown>
+  }
+  configuration?: Record<string, unknown>
+  metadata?: Record<string, unknown>
+  fromAgent: string
+  toAgent: string
+  idempotencyKey: string
+  raw: Record<string, unknown>
+}
+
+export class A2AProtocolError extends Error {
+  constructor(
+    message: string,
+    readonly code: number,
+    readonly status: number,
+    readonly data?: Record<string, unknown>
+  ) {
+    super(message)
+  }
+}
 
 interface OpenClawA2AEnvelopeInput {
   run: WorkflowRun
@@ -176,6 +228,97 @@ export function extractA2AResponseText(raw: string) {
   }
 }
 
+export function parseA2AMessageRequest(
+  value: unknown,
+  options: { allowedMethods?: readonly A2AJsonRpcMethod[] } = {}
+) {
+  const request = asRecord(value)
+  const allowedMethods = options.allowedMethods ?? ["message/send"]
+
+  if (!request) {
+    throw new A2AProtocolError("JSON-RPC request must be an object", -32600, 400)
+  }
+  if (request.jsonrpc !== A2A_JSONRPC_VERSION) {
+    throw new A2AProtocolError(
+      `jsonrpc must equal ${A2A_JSONRPC_VERSION}`,
+      -32600,
+      400
+    )
+  }
+
+  const id = request.id
+  if (typeof id !== "string" && typeof id !== "number") {
+    throw new A2AProtocolError("id is required", -32600, 400)
+  }
+
+  const method = getString(request.method) as A2AJsonRpcMethod
+  if (!allowedMethods.includes(method)) {
+    throw new A2AProtocolError(
+      `Unsupported method: ${getString(request.method) || String(request.method ?? "")}`,
+      -32601,
+      404
+    )
+  }
+
+  const params = requireRecord(request.params, "params")
+  const messageRecord = requireRecord(params.message, "params.message")
+
+  if (messageRecord.kind !== "message") {
+    throw new A2AProtocolError("message.kind must equal message", -32602, 400)
+  }
+  if (messageRecord.role !== "user") {
+    throw new A2AProtocolError("message.role must equal user", -32602, 400)
+  }
+
+  const messageId = validateScopedId(getString(messageRecord.messageId), "messageId")
+  const contextId = validateScopedId(getString(messageRecord.contextId), "contextId")
+  const parts = parseA2AMessageParts(messageRecord.parts)
+  const messageMetadata = parseOptionalRecord(messageRecord.metadata, "message.metadata")
+  const configuration = parseOptionalRecord(params.configuration, "params.configuration")
+  const metadata = parseOptionalRecord(params.metadata, "params.metadata")
+  const fromAgent = readNonEmptyString(messageMetadata?.fromAgent) ?? "external.user"
+  const toAgent = readNonEmptyString(messageMetadata?.toAgent ?? messageMetadata?.targetAgent) ?? "jormungand"
+  const explicitIdempotencyKey =
+    readNonEmptyString(messageMetadata?.idempotencyKey) ??
+    readNonEmptyString(metadata?.idempotencyKey)
+
+  return {
+    jsonrpc: A2A_JSONRPC_VERSION,
+    id,
+    method,
+    message: {
+      kind: "message" as const,
+      role: "user" as const,
+      messageId,
+      contextId,
+      parts,
+      metadata: messageMetadata
+    },
+    configuration,
+    metadata,
+    fromAgent,
+    toAgent,
+    idempotencyKey: createA2AIdempotencyKey({
+      contextId,
+      messageId,
+      explicitKey: explicitIdempotencyKey
+    }),
+    raw: request
+  } satisfies ParsedA2AMessageRequest
+}
+
+export function createA2AIdempotencyKey(input: {
+  contextId: string
+  messageId: string
+  explicitKey?: string
+}) {
+  return `a2a:inbound:${sha256Json({
+    contextId: input.contextId,
+    messageId: input.messageId,
+    idempotencyKey: input.explicitKey ?? null
+  })}`
+}
+
 function collectMessageText(value: unknown) {
   const message = asRecord(value)
   return collectPartsText(message?.parts)
@@ -221,6 +364,65 @@ function stringifyDataPart(value: unknown) {
   return value === undefined ? "" : JSON.stringify(value)
 }
 
+function parseA2AMessageParts(value: unknown) {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new A2AProtocolError("message.parts must contain at least one part", -32602, 400)
+  }
+  if (value.length > MAX_A2A_MESSAGE_PARTS) {
+    throw new A2AProtocolError(
+      `message.parts may contain at most ${MAX_A2A_MESSAGE_PARTS} parts`,
+      -32602,
+      400
+    )
+  }
+
+  return value.map((part) => parseA2AMessagePart(part))
+}
+
+function parseA2AMessagePart(value: unknown): A2AMessagePart {
+  const record = requireRecord(value, "message.parts[]")
+  const metadata = parseOptionalRecord(record.metadata, "message.parts[].metadata")
+
+  if (record.kind === "text") {
+    const text = getString(record.text)
+    if (!text) {
+      throw new A2AProtocolError("Text parts require text", -32602, 400)
+    }
+    if (Buffer.byteLength(text, "utf8") > MAX_A2A_TEXT_PART_BYTES) {
+      throw new A2AProtocolError(
+        `Text part exceeds the ${MAX_A2A_TEXT_PART_BYTES} byte limit`,
+        -32602,
+        400
+      )
+    }
+    return { kind: "text", text, metadata }
+  }
+
+  if (record.kind === "data") {
+    if (!("data" in record)) {
+      throw new A2AProtocolError("Data parts require data", -32602, 400)
+    }
+    const serialized = stringifyDataPart(record.data)
+    if (!serialized) {
+      throw new A2AProtocolError("Data parts require data", -32602, 400)
+    }
+    if (Buffer.byteLength(serialized, "utf8") > MAX_A2A_DATA_PART_BYTES) {
+      throw new A2AProtocolError(
+        `Data part exceeds the ${MAX_A2A_DATA_PART_BYTES} byte limit`,
+        -32602,
+        400
+      )
+    }
+    return { kind: "data", data: record.data, metadata }
+  }
+
+  throw new A2AProtocolError(
+    `Unsupported message part kind: ${getString(record.kind) || String(record.kind ?? "")}`,
+    -32602,
+    400
+  )
+}
+
 function asRecord(value: unknown) {
   return value && typeof value === "object"
     ? (value as Record<string, unknown>)
@@ -229,4 +431,39 @@ function asRecord(value: unknown) {
 
 function getString(value: unknown) {
   return typeof value === "string" ? value : ""
+}
+
+function requireRecord(value: unknown, field: string) {
+  const record = asRecord(value)
+  if (!record || Array.isArray(value)) {
+    throw new A2AProtocolError(`${field} must be an object`, -32602, 400)
+  }
+  return record
+}
+
+function parseOptionalRecord(value: unknown, field: string) {
+  if (value === undefined) {
+    return undefined
+  }
+  return requireRecord(value, field)
+}
+
+function validateScopedId(value: string, field: string) {
+  const normalized = value.trim()
+  if (!normalized) {
+    throw new A2AProtocolError(`${field} is required`, -32602, 400)
+  }
+  if (!/^[A-Za-z0-9._:-]{1,200}$/.test(normalized)) {
+    throw new A2AProtocolError(
+      `${field} must use only letters, numbers, dot, underscore, colon, or hyphen`,
+      -32602,
+      400
+    )
+  }
+  return normalized
+}
+
+function readNonEmptyString(value: unknown) {
+  const text = getString(value).trim()
+  return text || undefined
 }
