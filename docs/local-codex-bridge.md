@@ -54,11 +54,29 @@ that match that local lockfile. SSH uses the existing pinned host key in
 key automatically. Only the bridge token is copied to the executor host. Site
 Basic Auth credentials remain on the web service.
 
+## Jormungand A2A v0.3 server
+
+Jormungand itself already exposes the public A2A runtime:
+
+- `GET /.well-known/agent-card.json`
+- `POST /api/a2a` for JSON-RPC `message/send` and `message/stream`
+- `GET /api/a2a/tasks/:id`
+- `POST /api/a2a/tasks/:id` with `{"action":"cancel"}`
+- `GET /api/a2a/audit/:id`
+
+Set `JORMUNGAND_A2A_TOKEN` when you want a dedicated bearer token in addition to
+site Basic Auth. The stored audit response is redacted and hash-backed. The
+public surface is A2A v0.3 only and does not advertise v1 methods or schemas.
+
 ## OpenClaw A2A Command
 
 OpenClaw can also run through an A2A command adapter. Set
 `OPENCLAW_A2A_COMMAND` to a local command that reads a JSON envelope from stdin
 and writes either OpenClaw `--json` output or plain text to stdout.
+
+This adapter is compatibility-only. It exists so the current local OpenClaw
+execution path can consume A2A-shaped envelopes before OpenClaw exposes its own
+native public A2A HTTP server. It does not replace the Jormungand server above.
 
 The command adapter supports two envelope modes:
 
@@ -71,7 +89,8 @@ OPENCLAW_A2A_PROTOCOL=public-a2a-v0.3
 keep working. `public-a2a-v0.3` emits a JSON-RPC 2.0 `message/send` request
 using the Linux Foundation Agent2Agent protocol shape. New integrations should
 target `public-a2a-v0.3`; the legacy envelope is kept only as a compatibility
-transport while OpenClaw does not yet expose a native public A2A server.
+transport while OpenClaw does not yet expose a native public A2A server. This
+documented compatibility mode does not imply A2A v1 support.
 
 The app passes these environment variables to the command:
 
@@ -101,7 +120,8 @@ openclaw agent \
 ```
 
 Use `OPENCLAW_BRIDGE_URL` for an HTTP request/response bridge. Use
-`OPENCLAW_A2A_COMMAND` when you want the persistent session-based A2A transport.
+`OPENCLAW_A2A_COMMAND` only when you need the persistent session-based
+compatibility transport.
 
 When the dashboard stops or cancels a workflow run through A2A command mode, it
 invokes the same command with a standalone `/stop` message by default. The
@@ -110,11 +130,12 @@ the active run for that session. Override the message with
 `OPENCLAW_A2A_CONTROL_MESSAGE` only if the local adapter expects a different
 abort phrase.
 
-The longer-term production direction is a native OpenClaw A2A HTTP endpoint instead of
-the included bridge or stdin command adapter. That endpoint should publish an Agent Card at
-`/.well-known/agent-card.json`, declare JSON-RPC transport, accept
-`message/send`, return `Message` or `Task` results, and later add `tasks/get`
-or streaming when long-running jobs need progress updates.
+The longer-term production direction is a native OpenClaw A2A HTTP endpoint
+instead of the included bridge or stdin command adapter. That endpoint should
+publish an Agent Card at `/.well-known/agent-card.json`, declare the same A2A
+v0.3 JSON-RPC transport, accept `message/send`, return `Message` or `Task`
+results, and later add task reads or streaming when long-running jobs need
+progress updates.
 
 ## Zeabur To Local Codex
 

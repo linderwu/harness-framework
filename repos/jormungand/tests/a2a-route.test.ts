@@ -14,6 +14,7 @@ import type { TestContext } from "node:test"
 import type { AgentArtifactResult } from "../lib/workflow"
 import { openHiveDatabase } from "../lib/hive-memory/database"
 import { createHiveMemoryRepository } from "../lib/hive-memory/repository"
+import { sha256Json } from "../lib/a2a-runtime"
 import { createWorkflowRun } from "../lib/workflow"
 
 type A2ARouteDependencies = {
@@ -103,6 +104,45 @@ async function createRepository(t: TestContext) {
   })
 
   return { repository }
+}
+
+function openRepositoryAt(dataDir: string) {
+  const database = openHiveDatabase({ dataDir })
+  return {
+    database,
+    repository: createHiveMemoryRepository(database)
+  }
+}
+
+async function createRestartableRepository(t: TestContext) {
+  const dataDir = await mkdtemp(join(tmpdir(), "jormungand-a2a-route-"))
+  let current = openRepositoryAt(dataDir)
+  let closed = false
+
+  const closeCurrent = () => {
+    if (closed) {
+      return
+    }
+    current.database.close()
+    closed = true
+  }
+
+  t.after(async () => {
+    closeCurrent()
+    await rm(dataDir, { recursive: true, force: true })
+  })
+
+  return {
+    get repository() {
+      return current.repository
+    },
+    restart() {
+      closeCurrent()
+      current = openRepositoryAt(dataDir)
+      closed = false
+      return current.repository
+    }
+  }
 }
 
 async function ensureCompiledAlias() {
@@ -639,6 +679,199 @@ test("A2A task GET returns normalized task with ordered events and messages, POS
     { params: Promise.resolve({ id: "unknown-task" }) }
   )
   assert.equal(missingResponse.status, 404)
+})
+
+test("A2A task and audit records survive a SQLite reopen and reconstruct the redacted request, response, hashes, and lifecycle", async (t) => {
+  const fixture = await createRestartableRepository(t)
+  const rpcModule = await importA2ARoute()
+  const taskModule = await importA2ATaskRoute()
+  const auditModule = await importA2AAuditRoute()
+  const rpcHandlers = rpcModule.createA2ARouteHandlers?.({
+    repository: fixture.repository,
+    dispatchA2A: async () => ({
+      status: "completed",
+      text: "Completed with token=downstream-token and Authorization: Bearer downstream-bearer",
+      remoteTaskId: "remote-audit-reopen-1",
+      artifacts: [
+        {
+          artifactId: "artifact-audit-reopen-1",
+          name: "report",
+          text: "token=artifact-token",
+          metadata: {
+            authorization: "Bearer artifact-bearer",
+            note: "cookie=session-123"
+          }
+        }
+      ],
+      metadata: {
+        secret: "downstream-secret",
+        nested: {
+          password: "downstream-password",
+          ok: true
+        }
+      }
+    })
+  }) ?? rpcModule
+
+  const request = createSendRequest({
+    id: "rpc-audit-reopen-1",
+    params: {
+      message: {
+        kind: "message",
+        role: "user",
+        messageId: "message-audit-reopen-1",
+        contextId: "context-audit-reopen-1",
+        parts: [
+          {
+            kind: "data",
+            data: {
+              authorization: "Bearer upstream-bearer",
+              detail: "token=upstream-token",
+              nested: {
+                secret: "upstream-secret",
+                keep: "visible"
+              }
+            }
+          }
+        ],
+        metadata: {
+          idempotencyKey: "audit-reopen-idempotency-1",
+          fromAgent: "external.user",
+          toAgent: "codex"
+        }
+      }
+    }
+  })
+
+  const createResponse = await rpcHandlers.POST(
+    new Request("https://jormungand.test/api/a2a", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(request)
+    })
+  )
+  const created = await readJson(createResponse)
+  const taskId = ((created.result as { id?: string })?.id ?? "") as string
+
+  fixture.restart()
+
+  const taskHandlers = taskModule.createA2ATaskRouteHandlers?.({
+    repository: fixture.repository
+  }) ?? taskModule
+  const auditHandlers = auditModule.createA2AAuditRouteHandlers?.({
+    repository: fixture.repository
+  }) ?? auditModule
+
+  const taskResponse = await taskHandlers.GET(
+    new Request(`https://jormungand.test/api/a2a/tasks/${taskId}`),
+    { params: Promise.resolve({ id: taskId }) }
+  )
+  const taskBody = await readJson(taskResponse)
+
+  const auditResponse = await auditHandlers.GET(
+    new Request(`https://jormungand.test/api/a2a/audit/${taskId}`),
+    { params: Promise.resolve({ id: taskId }) }
+  )
+  const auditBody = await readJson(auditResponse)
+
+  const expectedRequestFrame = {
+    jsonrpc: "2.0",
+    id: "rpc-audit-reopen-1",
+    method: "message/send",
+    params: {
+      message: {
+        kind: "message",
+        role: "user",
+        messageId: "message-audit-reopen-1",
+        contextId: "context-audit-reopen-1",
+        parts: [
+          {
+            kind: "data",
+            data: {
+              authorization: "[REDACTED]",
+              detail: "token=[REDACTED]",
+              nested: {
+                secret: "[REDACTED]",
+                keep: "visible"
+              }
+            }
+          }
+        ],
+        metadata: {
+          idempotencyKey: "audit-reopen-idempotency-1",
+          fromAgent: "external.user",
+          toAgent: "codex"
+        }
+      }
+    }
+  }
+  const expectedResponseFrame = {
+    result: {
+      kind: "task",
+      id: taskId,
+      contextId: "context-audit-reopen-1",
+      status: {
+        state: "completed",
+        message: {
+          kind: "message",
+          messageId: "message-audit-reopen-1:response",
+          contextId: "context-audit-reopen-1",
+          role: "agent",
+          parts: [
+            {
+              kind: "text",
+              text: "Completed with token=[REDACTED] and Authorization: Bearer [REDACTED]"
+            }
+          ]
+        }
+      },
+      artifacts: [
+        {
+          artifactId: "artifact-audit-reopen-1",
+          name: "report",
+          parts: [
+            {
+              kind: "text",
+              text: "token=[REDACTED]"
+            }
+          ],
+          metadata: {
+            authorization: "[REDACTED]",
+            note: "cookie=[REDACTED]"
+          }
+        }
+      ],
+      metadata: {
+        remoteTaskId: "remote-audit-reopen-1",
+        secret: "[REDACTED]",
+        nested: {
+          password: "[REDACTED]",
+          ok: true
+        }
+      }
+    }
+  }
+
+  assert.equal(createResponse.status, 200)
+  assert.equal(taskResponse.status, 200)
+  assert.equal(auditResponse.status, 200)
+  assert.equal((taskBody.task as { id?: string }).id, taskId)
+  assert.equal((taskBody.task as { contextId?: string }).contextId, "context-audit-reopen-1")
+  assert.equal((taskBody.task as { status?: { state?: string } }).status?.state, "completed")
+  assert.equal((taskBody.messages as Array<{ requestSha256?: string }>)[0]?.requestSha256, sha256Json(expectedRequestFrame))
+  assert.equal((taskBody.messages as Array<{ responseSha256?: string }>)[0]?.responseSha256, sha256Json(expectedResponseFrame))
+  assert.deepEqual(
+    (taskBody.events as Array<{ eventType: string }>).map((event) => event.eventType),
+    ["message_queued", "message_accepted", "task_working", "task_artifact_updated", "task_completed"]
+  )
+  assert.deepEqual((auditBody.messages as Array<{ request?: unknown }>)[0]?.request, expectedRequestFrame)
+  assert.deepEqual((auditBody.messages as Array<{ response?: unknown }>)[0]?.response, expectedResponseFrame)
+  assert.deepEqual(
+    (auditBody.timeline as Array<{ kind: string; eventType?: string }>).map((entry) =>
+      entry.kind === "event" ? entry.eventType : entry.kind
+    ),
+    ["message", "message_queued", "message_accepted", "task_working", "task_artifact_updated", "task_completed"]
+  )
 })
 
 test("A2A audit route returns redacted frames with request and response hashes", async (t) => {

@@ -41,6 +41,186 @@ The OpenClaw HTTP bridge uses `OPENCLAW_BRIDGE_TOKEN`; when that value is blank,
 the app can reuse `OPENCLAW_GATEWAY_TOKEN` for compatibility with an existing
 single-secret deployment. Separate tokens remain preferable for new installs.
 
+## A2A v0.3 runtime
+
+Jormungand exposes a public Agent2Agent v0.3 surface for discovery, JSON-RPC
+task submission, task reads, cancellation, and local audit reconstruction.
+This implementation is intentionally A2A v0.3 only. It does not advertise A2A
+v1 methods or schemas.
+
+### Authentication
+
+The app still sits behind site Basic authentication by default. The A2A routes
+also support an explicit bearer token:
+
+```text
+JORMUNGAND_A2A_TOKEN=<replace-me>
+```
+
+When `JORMUNGAND_A2A_TOKEN` is set, every A2A route requires
+`Authorization: Bearer <token>`. Query-string tokens are ignored. When the
+variable is unset, the site-auth boundary remains the only required gate.
+
+### Discovery and routes
+
+- `GET /.well-known/agent-card.json`
+  Returns the A2A v0.3 Agent Card with `protocolVersion: "0.3"`, the
+  `jsonrpcEndpoint`, supported target agents, and `message/send` plus
+  `message/stream` capabilities.
+- `POST /api/a2a`
+  Accepts JSON-RPC 2.0 `message/send` and `message/stream`.
+- `GET /api/a2a/tasks/:id`
+  Returns the normalized task projection plus persisted lifecycle events and
+  message hashes for the local task id.
+- `POST /api/a2a/tasks/:id`
+  Accepts cancel requests for the local task id. Use `{"action":"cancel"}`.
+- `GET /api/a2a/audit/:id`
+  Returns the redacted task, stored request/response frames, SHA-256 hashes,
+  and ordered audit timeline for the local task id.
+
+### Task states
+
+Normalized task states are:
+
+```text
+submitted
+working
+input-required
+completed
+failed
+canceled
+unknown
+```
+
+`unknown` is an explicit recovery state, not a successful completion.
+
+### Redaction and audit records
+
+Every inbound A2A request is persisted before dispatch. The SQLite audit trail
+stores:
+
+- the local task record
+- the redacted request frame
+- the redacted response frame
+- SHA-256 hashes of the stored request and response JSON
+- append-only lifecycle events such as `message_queued`, `message_accepted`,
+  `task_working`, `task_artifact_updated`, `task_completed`, `task_failed`,
+  and `task_canceled`
+
+Keys containing `authorization`, `token`, `password`, `secret`, `cookie`, or
+`site_auth` are redacted. Bearer tokens and `token=...`-style secret fragments
+inside strings are also rewritten before storage.
+
+### Compatibility note
+
+`OPENCLAW_A2A_COMMAND` remains a compatibility-only transport for reaching a
+local OpenClaw adapter. It does not replace the public Jormungand A2A server
+and does not change the public surface to v1.
+
+### Example requests
+
+Use placeholder values only:
+
+```bash
+A2A_ORIGIN=https://jormungand.example.com
+A2A_TOKEN=replace-me
+```
+
+Read the Agent Card:
+
+```bash
+curl \
+  -H "Authorization: Bearer $A2A_TOKEN" \
+  "$A2A_ORIGIN/.well-known/agent-card.json"
+```
+
+Submit `message/send`:
+
+```bash
+curl \
+  -H "Authorization: Bearer $A2A_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": "rpc-1",
+    "method": "message/send",
+    "params": {
+      "message": {
+        "kind": "message",
+        "role": "user",
+        "messageId": "message-1",
+        "contextId": "context-1",
+        "parts": [
+          { "kind": "text", "text": "Summarize the current task." }
+        ],
+        "metadata": {
+          "idempotencyKey": "idempotency-1",
+          "fromAgent": "external.user",
+          "toAgent": "codex"
+        }
+      }
+    }
+  }' \
+  "$A2A_ORIGIN/api/a2a"
+```
+
+Submit `message/stream`:
+
+```bash
+curl \
+  -N \
+  -H "Authorization: Bearer $A2A_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": "rpc-stream-1",
+    "method": "message/stream",
+    "params": {
+      "message": {
+        "kind": "message",
+        "role": "user",
+        "messageId": "message-stream-1",
+        "contextId": "context-stream-1",
+        "parts": [
+          { "kind": "text", "text": "Stream the answer." }
+        ],
+        "metadata": {
+          "idempotencyKey": "stream-idempotency-1",
+          "fromAgent": "external.user",
+          "toAgent": "codex"
+        }
+      }
+    }
+  }' \
+  "$A2A_ORIGIN/api/a2a"
+```
+
+Read a task:
+
+```bash
+curl \
+  -H "Authorization: Bearer $A2A_TOKEN" \
+  "$A2A_ORIGIN/api/a2a/tasks/<task-id>"
+```
+
+Cancel a task:
+
+```bash
+curl \
+  -H "Authorization: Bearer $A2A_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"action":"cancel"}' \
+  "$A2A_ORIGIN/api/a2a/tasks/<task-id>"
+```
+
+Read the redacted audit record:
+
+```bash
+curl \
+  -H "Authorization: Bearer $A2A_TOKEN" \
+  "$A2A_ORIGIN/api/a2a/audit/<task-id>"
+```
+
 ## Hive memory operations
 
 Hive memory, manager checkpoints, and task conversation entries use SQLite in
