@@ -16,6 +16,7 @@ RUN npm run build
 FROM node:22-alpine AS runner
 
 WORKDIR /app/repos/jormungand
+RUN apk add --no-cache git
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV JORMUNGAND_DATA_DIR=/data
