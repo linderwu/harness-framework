@@ -15,6 +15,7 @@ import {
 import {
   A2AProtocolError,
   PUBLIC_A2A_PROTOCOL_VERSION,
+  parseA2AMessageRequest,
   type A2AMessagePart,
   type ParsedA2AMessageRequest
 } from "./a2a-protocol"
@@ -45,6 +46,7 @@ export interface A2ARouteDependencies {
 interface A2ASharedContext {
   repository: HiveMemoryRepository
   server: ReturnType<typeof createA2AServer>
+  preflightRequest: (payload: unknown) => Promise<void>
 }
 
 const sharedContexts = new WeakMap<HiveMemoryRepository, A2ASharedContext>()
@@ -102,6 +104,7 @@ export function createA2ARouteHandlers(dependencies: A2ARouteDependencies = {}) 
       const payload = parsed.payload
 
       try {
+        await context.preflightRequest(payload)
         const method = getString((payload as JsonRecord).method)
         if (method === "message/stream") {
           const stream = context.server.sendStream(payload)
@@ -236,6 +239,9 @@ function getOrCreateSharedContext(dependencies: A2ARouteDependencies) {
 
   const context: A2ASharedContext = {
     repository,
+    preflightRequest: async (payload) => {
+      await preflightA2ARequest(payload, getRun)
+    },
     server: createA2AServer({
       repository,
       authorize: ({ request }) => {
@@ -306,6 +312,7 @@ async function deriveDispatchContext(
     : undefined
 
   if (existingRun) {
+    ensureWorkflowRunRunnable(existingRun)
     return {
       run: existingRun,
       executor,
@@ -341,6 +348,16 @@ async function deriveDispatchContext(
   }
 }
 
+async function preflightA2ARequest(
+  payload: unknown,
+  getRun: (id: string) => Promise<WorkflowRun | undefined>
+) {
+  const request = parseA2AMessageRequest(payload, {
+    allowedMethods: ["message/send", "message/stream"]
+  })
+  await deriveDispatchContext(request, getRun)
+}
+
 function createBoundedExistingRunSkill(
   stage: WorkflowStage,
   executor: AgentKind,
@@ -364,6 +381,18 @@ function createBoundedExistingRunSkill(
     gates: ["Return one bounded response."],
     knowledgeSources: ["current workflow context"],
     verificationRules: ["Response body is non-empty."]
+  }
+}
+
+function ensureWorkflowRunRunnable(run: WorkflowRun) {
+  if (
+    run.status === "waiting_for_approval" ||
+    run.status === "stopped" ||
+    run.status === "failed" ||
+    run.status === "cancelled" ||
+    run.status === "completed"
+  ) {
+    throw new A2AProtocolError("Workflow run is not runnable", -32005, 409)
   }
 }
 

@@ -340,6 +340,105 @@ test("A2A JSON-RPC route returns stable JSON-RPC errors for malformed requests",
   })
 })
 
+test("A2A message/stream startup validation errors return JSON-RPC 4xx before committing SSE", async (t) => {
+  const { repository } = await createRepository(t)
+  const module = await importA2ARoute()
+  const handlers = module.createA2ARouteHandlers?.({ repository }) ?? module
+
+  const malformedResponse = await handlers.POST(
+    new Request("https://jormungand.test/api/a2a", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{\"jsonrpc\":"
+    })
+  )
+  const malformedBody = await readJson(malformedResponse)
+  assert.equal(malformedResponse.status, 400)
+  assert.doesNotMatch(malformedResponse.headers.get("content-type") ?? "", /text\/event-stream/i)
+  assert.deepEqual(malformedBody, {
+    jsonrpc: "2.0",
+    error: {
+      code: -32700,
+      message: "Malformed JSON body"
+    },
+    id: null
+  })
+
+  const invalidTargetResponse = await handlers.POST(
+    new Request("https://jormungand.test/api/a2a", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(
+        createSendRequest({
+          id: "rpc-stream-invalid-target",
+          method: "message/stream",
+          params: {
+            message: {
+              kind: "message",
+              role: "user",
+              messageId: "message-stream-invalid-target",
+              contextId: "context-stream-invalid-target",
+              parts: [{ kind: "text", text: "fail fast" }],
+              metadata: {
+                idempotencyKey: "stream-invalid-target-1",
+                fromAgent: "external.user",
+                toAgent: "forbidden-agent"
+              }
+            }
+          }
+        })
+      )
+    })
+  )
+  const invalidTargetBody = await readJson(invalidTargetResponse)
+  assert.equal(invalidTargetResponse.status, 403)
+  assert.doesNotMatch(invalidTargetResponse.headers.get("content-type") ?? "", /text\/event-stream/i)
+  assert.deepEqual(invalidTargetBody, {
+    jsonrpc: "2.0",
+    error: {
+      code: -32003,
+      message: "Target agent is not allowed"
+    },
+    id: "rpc-stream-invalid-target"
+  })
+
+  const missingIdempotencyResponse = await handlers.POST(
+    new Request("https://jormungand.test/api/a2a", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: "rpc-stream-missing-idempotency",
+        method: "message/stream",
+        params: {
+          message: {
+            kind: "message",
+            role: "user",
+            messageId: "message-stream-missing-idempotency",
+            contextId: "context-stream-missing-idempotency",
+            parts: [{ kind: "text", text: "missing key" }],
+            metadata: {
+              fromAgent: "external.user",
+              toAgent: "codex"
+            }
+          }
+        }
+      })
+    })
+  )
+  const missingIdempotencyBody = await readJson(missingIdempotencyResponse)
+  assert.equal(missingIdempotencyResponse.status, 400)
+  assert.doesNotMatch(missingIdempotencyResponse.headers.get("content-type") ?? "", /text\/event-stream/i)
+  assert.deepEqual(missingIdempotencyBody, {
+    jsonrpc: "2.0",
+    error: {
+      code: -32602,
+      message: "idempotencyKey is required"
+    },
+    id: "rpc-stream-missing-idempotency"
+  })
+})
+
 test("A2A message/stream returns text/event-stream and emits ordered lifecycle, artifact, and terminal frames", async (t) => {
   const { repository } = await createRepository(t)
   const module = await importA2ARoute()
@@ -394,6 +493,73 @@ test("A2A message/stream returns text/event-stream and emits ordered lifecycle, 
   assert.match(body, /event: task_completed/)
   assert.ok(body.indexOf("message_queued") < body.indexOf("task_completed"))
   assert.doesNotMatch(body, /downstream-secret|abc123/)
+})
+
+test("A2A bound existing workflowRunId rejects waiting_for_approval before invokeAgent", async (t) => {
+  const { repository } = await createRepository(t)
+  const run = {
+    ...createExistingRun(),
+    status: "waiting_for_approval" as const
+  }
+  let invokeCalls = 0
+  const module = await importA2ARoute()
+  const handlers = module.createA2ARouteHandlers?.({
+    repository,
+    getRun: async (id) => (id === run.id ? run : undefined),
+    invokeAgent: async () => {
+      invokeCalls += 1
+      return {
+        status: "completed",
+        source: "simulated",
+        body: "should not run"
+      }
+    }
+  }) ?? module
+
+  const response = await handlers.POST(
+    new Request("https://jormungand.test/api/a2a", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(
+        createSendRequest({
+          id: "rpc-waiting-approval-1",
+          params: {
+            message: {
+              kind: "message",
+              role: "user",
+              messageId: "message-waiting-approval-1",
+              contextId: "context-waiting-approval-1",
+              parts: [
+                {
+                  kind: "data",
+                  data: createTaskContext({
+                    workflowRunId: run.id
+                  })
+                }
+              ],
+              metadata: {
+                idempotencyKey: "waiting-approval-idempotency-1",
+                fromAgent: "external.user",
+                toAgent: "openclaw:gengar"
+              }
+            }
+          }
+        })
+      )
+    })
+  )
+  const body = await readJson(response)
+
+  assert.equal(response.status, 409)
+  assert.deepEqual(body, {
+    jsonrpc: "2.0",
+    error: {
+      code: -32005,
+      message: "Workflow run is not runnable"
+    },
+    id: "rpc-waiting-approval-1"
+  })
+  assert.equal(invokeCalls, 0)
 })
 
 test("A2A task GET returns normalized task with ordered events and messages, POST cancel persists canceled state, and unknown ids return 404", async (t) => {
