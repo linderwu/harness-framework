@@ -154,7 +154,28 @@ test("Hive services persist worker handoffs before the wake and expose them in t
   const repository = createHiveMemoryRepository(database)
   let run = createManagedRun()
   const managerContexts: ContextPack[] = []
+  const wakeInsertionSnapshots: Array<{
+    handoff: ReturnType<typeof repository.listConversation>[number] | undefined
+    artifact: WorkflowRun["artifacts"][number] | undefined
+  }> = []
   let managerInvocations = 0
+
+  const enqueueManagerWake = repository.enqueueManagerWake.bind(repository)
+  repository.enqueueManagerWake = async (input) => {
+    const inserted = await enqueueManagerWake(input)
+    if (input.workflowRunId === run.id && input.reason === "worker_completed") {
+      const handoff = repository.listConversation(run.id).find((entry) =>
+        entry.taskId && entry.agentId === "openclaw.rowlet" && entry.recipientAgent === "codex"
+      )
+      wakeInsertionSnapshots.push({
+        handoff,
+        artifact: handoff?.artifactIds[0]
+          ? run.artifacts.find((artifact) => artifact.id === handoff.artifactIds[0])
+          : undefined
+      })
+    }
+    return inserted
+  }
 
   const proposal = (taskId: string): ManagerProposal => managerInvocations === 0
     ? {
@@ -218,6 +239,13 @@ test("Hive services persist worker handoffs before the wake and expose them in t
     idempotencyKey: "wake-dispatch"
   })
   await services.scheduler.runNext(run.id)
+
+  assert.equal(wakeInsertionSnapshots.length, 1)
+  const wakeInsertion = wakeInsertionSnapshots[0]
+  assert.ok(wakeInsertion?.handoff)
+  assert.ok(wakeInsertion?.artifact)
+  assert.equal(wakeInsertion?.artifact?.id, wakeInsertion?.handoff?.artifactIds[0])
+  assert.equal(wakeInsertion?.artifact?.body, "Worker evidence line 1\nWorker evidence line 2")
 
   const entriesAfterDispatch = repository.listConversation(run.id)
   const handoff = entriesAfterDispatch.find((entry) => entry.taskId === task.id && entry.agentId === "openclaw.rowlet")
