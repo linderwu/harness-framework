@@ -343,9 +343,11 @@ test("schema v4 migrates a v3 database and creates durable A2A tables", async (t
 
 test("A2A repository persists redacted frames, idempotent tasks, ordered events, and restart-safe state", async (t) => {
   const dataDir = await mkdtemp(join(tmpdir(), "jormungand-a2a-repository-"))
-  let secondDatabase: ReturnType<typeof openHiveDatabase> | undefined
+  const reopened = {
+    database: undefined as ReturnType<typeof openHiveDatabase> | undefined
+  }
   t.after(async () => {
-    secondDatabase?.close()
+    reopened.database?.close()
     await rm(dataDir, { recursive: true, force: true })
   })
 
@@ -476,8 +478,8 @@ test("A2A repository persists redacted frames, idempotent tasks, ordered events,
 
   firstDatabase.close()
 
-  secondDatabase = openHiveDatabase({ dataDir })
-  const secondRepository = createHiveMemoryRepository(secondDatabase)
+  reopened.database = openHiveDatabase({ dataDir })
+  const secondRepository = createHiveMemoryRepository(reopened.database)
 
   const persistedTask = secondRepository.getA2ATask(created.task.id)
   assert.ok(persistedTask)
