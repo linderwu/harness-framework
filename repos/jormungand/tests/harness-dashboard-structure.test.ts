@@ -173,9 +173,14 @@ test("compose form uses research-specific workflow skills", () => {
   assert.match(dashboard, /skill\.id !== "intake\.requirement" && skill\.id !== "closeout\.archive"/)
   assert.match(dashboard, /const hasApprovalPolicies = form\.projectType === "development"/)
   assert.match(dashboard, /"Agent \/ Skills"/)
-  assert.match(dashboard, /\{hasApprovalPolicies \? \(/)
   assert.match(dashboard, /superpowersSkills/)
   assert.match(dashboard, /stageAssignments: form\.stageAssignments/)
+})
+
+test("compose form does not expose configurable approval actor fields", () => {
+  assert.doesNotMatch(dashboard, /Design Approval Policy/)
+  assert.doesNotMatch(dashboard, /Verification Approval Policy/)
+  assert.doesNotMatch(dashboard, /function ActorSelect/)
 })
 
 test("dashboard exposes all project modes in a topmost global navigator", () => {

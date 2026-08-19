@@ -49,7 +49,6 @@ import {
 } from "@/lib/agents"
 import type {
   AgentKind,
-  ApprovalActorType,
   ApprovalGate,
   CodexReasoningIntensity,
   HarnessState,
@@ -308,11 +307,9 @@ export function HarnessDashboard({
 	      successCriteria: "",
 	      constraints: "",
 	      nonGoals: "",
-	      contextFiles: [] as ProjectContextFile[],
-	      selectedAgent: savedProfile.selectedAgent,
-	      stageAssignments: savedProfile.stageAssignments,
-	      designApprovalActor: "independent_agent" as ApprovalActorType,
-	      verificationApprovalActor: "verification_subagent" as ApprovalActorType
+      contextFiles: [] as ProjectContextFile[],
+      selectedAgent: savedProfile.selectedAgent,
+      stageAssignments: savedProfile.stageAssignments
 	    }
 	  })
 
@@ -519,9 +516,7 @@ export function HarnessDashboard({
           selectedAgent: form.selectedAgent,
           ...getCodexProfileForProject(project.id),
           skillAssignments: stageAssignmentsMap,
-          stageAssignments: form.stageAssignments,
-          designApprovalActor: form.designApprovalActor,
-          verificationApprovalActor: form.verificationApprovalActor
+          stageAssignments: form.stageAssignments
         })
       })
       const run = await readRunMutationResponse(response)
@@ -1199,29 +1194,6 @@ export function HarnessDashboard({
                         )}
                       </div>
 
-                      {hasApprovalPolicies ? (
-                      <div className="policyGrid assignmentPolicyGrid">
-                        <fieldset>
-                          <legend>Design Approval Policy</legend>
-                          <ActorSelect
-                            value={form.designApprovalActor}
-                            onChange={(designApprovalActor) =>
-                              setForm({ ...form, designApprovalActor })
-                            }
-                          />
-                        </fieldset>
-
-                        <fieldset>
-                          <legend>Verification Approval Policy</legend>
-                          <ActorSelect
-                            value={form.verificationApprovalActor}
-                            onChange={(verificationApprovalActor) =>
-                              setForm({ ...form, verificationApprovalActor })
-                            }
-                          />
-                        </fieldset>
-                      </div>
-                      ) : null}
                     </section>
                     )}
                   </div>
@@ -2642,51 +2614,6 @@ function AgentIcon({ agent }: { agent: AgentProfile }) {
   }
 
   return null
-}
-
-function ActorSelect({
-  value,
-  onChange
-}: {
-  value: ApprovalActorType
-  onChange: (value: ApprovalActorType) => void
-}) {
-  return (
-    <SegmentedControl
-      value={value}
-      options={[
-        ["human", "Human"],
-        ["verification_subagent", "Verify"],
-        ["independent_agent", "Independent"]
-      ]}
-      onChange={(nextValue) => onChange(nextValue as ApprovalActorType)}
-    />
-  )
-}
-
-function SegmentedControl({
-  value,
-  options,
-  onChange
-}: {
-  value: string
-  options: Array<[string, string]>
-  onChange: (value: string) => void
-}) {
-  return (
-    <div className="segmented">
-      {options.map(([optionValue, label]) => (
-        <button
-          type="button"
-          className={value === optionValue ? "selected" : ""}
-          key={optionValue}
-          onClick={() => onChange(optionValue)}
-        >
-          {label}
-        </button>
-      ))}
-    </div>
-  )
 }
 
 function SkillMeta({ title, values }: { title: string; values: string[] }) {

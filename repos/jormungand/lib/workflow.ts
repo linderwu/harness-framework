@@ -626,8 +626,9 @@ export function createWorkflowRun(input: {
   selectedReasoningIntensity?: CodexReasoningIntensity
   skillAssignments?: Record<string, AgentKind>
   customStages?: Array<WorkflowCustomStage & { skillContent: string; commitSha: string }>
-  designApprovalActor: ApprovalActorType
-  verificationApprovalActor: ApprovalActorType
+  /** Retained for compatibility with older callers; approval ownership is fixed to the human operator. */
+  designApprovalActor?: ApprovalActorType
+  verificationApprovalActor?: ApprovalActorType
   managedConfig?: ManagedProjectConfig
 }): WorkflowRun {
   const now = new Date().toISOString()
@@ -690,19 +691,13 @@ export function createWorkflowRun(input: {
     },
     {
       stage: "design",
-      actorType: input.designApprovalActor,
-      agent:
-        input.designApprovalActor === "human" ? undefined : selectedAgent,
-      requireIndependence: input.designApprovalActor === "independent_agent"
+      actorType: "human",
+      requireIndependence: false
     },
     {
       stage: "verification",
-      actorType: input.verificationApprovalActor,
-      agent:
-        input.verificationApprovalActor === "human"
-          ? undefined
-          : selectedAgent,
-      requireIndependence: input.verificationApprovalActor === "independent_agent"
+      actorType: "human",
+      requireIndependence: false
     }
   ]
 

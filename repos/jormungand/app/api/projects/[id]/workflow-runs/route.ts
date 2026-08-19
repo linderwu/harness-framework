@@ -8,7 +8,6 @@ import { getProject, upsertWorkflowRun } from "@/lib/store"
 import { advanceWorkflow, createWorkflowRun } from "@/lib/workflow"
 import type {
   AgentKind,
-  ApprovalActorType,
   CodexReasoningIntensity,
   WorkflowRun
 } from "@/lib/types"
@@ -40,8 +39,6 @@ export async function POST(
     selectedReasoningIntensity?: CodexReasoningIntensity
     skillAssignments?: Record<string, AgentKind>
     stageAssignments?: Array<{ id?: string; stageName?: string; skillId?: string; agent?: AgentKind }>
-    designApprovalActor?: ApprovalActorType
-    verificationApprovalActor?: ApprovalActorType
   }
 
   const catalog = await getSuperpowersCatalog()
@@ -67,8 +64,6 @@ export async function POST(
       : undefined,
     skillAssignments: body.skillAssignments,
     customStages,
-    designApprovalActor: body.designApprovalActor ?? "independent_agent",
-    verificationApprovalActor: body.verificationApprovalActor ?? "verification_subagent",
     managedConfig: project.managedConfig
   })
 

@@ -1046,11 +1046,6 @@ textarea:focus {
   text-align: center;
 }
 
-.assignmentPolicyGrid {
-  border-top: 1px solid #e3eaf2;
-  padding-top: 16px;
-}
-
 .segmented {
   background: var(--panel-alt);
   border: 1px solid var(--panel-border);
@@ -1413,12 +1408,6 @@ textarea:focus {
 
 .composeSheetBody textarea {
   min-height: 320px;
-}
-
-.policyGrid {
-  display: grid;
-  gap: 18px;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .runList,
@@ -2513,8 +2502,7 @@ pre {
   .layoutGrid,
   .splitGrid,
   .detailLaunchGrid,
-  .skillChain,
-  .policyGrid {
+  .skillChain {
     grid-template-columns: 1fr;
   }
 

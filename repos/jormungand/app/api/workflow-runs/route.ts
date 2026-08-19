@@ -11,7 +11,6 @@ import { listWorkflowRuns, upsertProject, upsertWorkflowRun } from "@/lib/store"
 import type {
   AgentKind,
   CodexReasoningIntensity,
-  ApprovalActorType,
   ProjectContextFile
 } from "@/lib/types"
 
@@ -41,8 +40,6 @@ export async function POST(request: Request) {
     selectedReasoningIntensity?: CodexReasoningIntensity
     skillAssignments?: Record<string, AgentKind>
     stageAssignments?: Array<{ id?: string; stageName?: string; skillId?: string; agent?: AgentKind }>
-    designApprovalActor?: ApprovalActorType
-    verificationApprovalActor?: ApprovalActorType
   }
 
   if (!body.projectName || !body.requirement) {
@@ -112,10 +109,7 @@ export async function POST(request: Request) {
       ? body.selectedReasoningIntensity
       : undefined,
     skillAssignments: body.skillAssignments,
-    customStages,
-    designApprovalActor: body.designApprovalActor ?? "independent_agent",
-    verificationApprovalActor:
-      body.verificationApprovalActor ?? "verification_subagent"
+    customStages
   })
 
   const intakeRun = await advanceWorkflow(run, {

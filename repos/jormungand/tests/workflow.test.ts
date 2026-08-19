@@ -94,14 +94,27 @@ function getPendingGate(run: WorkflowRun, stage: ApprovalGate["stage"]) {
   return gate
 }
 
-test("non-human design approval remains pending until an explicit decision", async () => {
+test("design and verification approval policies are fixed to human", () => {
+  const run = createRun()
+
+  assert.deepEqual(
+    run.approvalPolicies.map((policy) => [policy.stage, policy.actorType]),
+    [
+      ["plan", "human"],
+      ["design", "human"],
+      ["verification", "human"]
+    ]
+  )
+})
+
+test("human design approval remains pending until an explicit decision", async () => {
   const run = await advanceToDesignGate(createRun())
 
   const designGate = getPendingGate(run, "design")
 
   assert.equal(run.currentStage, "design")
   assert.equal(run.status, "waiting_for_approval")
-  assert.equal(designGate.actorType, "independent_agent")
+  assert.equal(designGate.actorType, "human")
   assert.equal(designGate.status, "pending")
   assert.equal(designGate.decidedAt, undefined)
 })
@@ -164,14 +177,14 @@ test("plan changes requested creates a revised plan before reopening its gate", 
   assert.ok(revisedPlanGate.revisionId)
 })
 
-test("non-human verification approval remains pending until an explicit decision", async () => {
+test("human verification approval remains pending until an explicit decision", async () => {
   const run = await advanceToVerificationGate(createRun())
 
   const verificationGate = getPendingGate(run, "verification")
 
   assert.equal(run.currentStage, "verification")
   assert.equal(run.status, "waiting_for_approval")
-  assert.equal(verificationGate.actorType, "verification_subagent")
+  assert.equal(verificationGate.actorType, "human")
   assert.equal(verificationGate.status, "pending")
   assert.equal(verificationGate.decidedAt, undefined)
 })
