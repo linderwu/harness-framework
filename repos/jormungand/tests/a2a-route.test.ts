@@ -178,8 +178,8 @@ function createExistingRun() {
 }
 
 test("Agent Card route declares protocolVersion 0.3, JSON-RPC endpoint, auth requirements, and supported target agents", async () => {
-  const module = await importAgentCardRoute()
-  const handlers = module.createAgentCardRouteHandlers?.() ?? module
+  const routeModule = await importAgentCardRoute()
+  const handlers = routeModule.createAgentCardRouteHandlers?.() ?? routeModule
   const response = await handlers.GET(
     new Request("https://jormungand.test/.well-known/agent-card.json")
   )
@@ -259,8 +259,8 @@ test("A2A JSON-RPC send route binds a valid workflowRunId and executor from the 
   const { repository } = await createRepository(t)
   const run = createExistingRun()
   const captured: Array<Record<string, unknown>> = []
-  const module = await importA2ARoute()
-  const handlers = module.createA2ARouteHandlers?.({
+  const rpcRouteModule = await importA2ARoute()
+  const handlers = rpcRouteModule.createA2ARouteHandlers?.({
     repository,
     getRun: async (id) => (id === run.id ? run : undefined),
     invokeAgent: async (input) => {
@@ -271,7 +271,7 @@ test("A2A JSON-RPC send route binds a valid workflowRunId and executor from the 
         body: "Injected dispatch finished."
       }
     }
-  }) ?? module
+  }) ?? rpcRouteModule
 
   const request = createSendRequest({
     params: {
@@ -317,8 +317,8 @@ test("A2A JSON-RPC send route binds a valid workflowRunId and executor from the 
 
 test("A2A JSON-RPC route returns stable JSON-RPC errors for malformed requests", async (t) => {
   const { repository } = await createRepository(t)
-  const module = await importA2ARoute()
-  const handlers = module.createA2ARouteHandlers?.({ repository }) ?? module
+  const rpcRouteModule = await importA2ARoute()
+  const handlers = rpcRouteModule.createA2ARouteHandlers?.({ repository }) ?? rpcRouteModule
 
   const response = await handlers.POST(
     new Request("https://jormungand.test/api/a2a", {
@@ -342,8 +342,8 @@ test("A2A JSON-RPC route returns stable JSON-RPC errors for malformed requests",
 
 test("A2A message/stream startup validation errors return JSON-RPC 4xx before committing SSE", async (t) => {
   const { repository } = await createRepository(t)
-  const module = await importA2ARoute()
-  const handlers = module.createA2ARouteHandlers?.({ repository }) ?? module
+  const rpcRouteModule = await importA2ARoute()
+  const handlers = rpcRouteModule.createA2ARouteHandlers?.({ repository }) ?? rpcRouteModule
 
   const malformedResponse = await handlers.POST(
     new Request("https://jormungand.test/api/a2a", {
@@ -441,8 +441,8 @@ test("A2A message/stream startup validation errors return JSON-RPC 4xx before co
 
 test("A2A message/stream returns text/event-stream and emits ordered lifecycle, artifact, and terminal frames", async (t) => {
   const { repository } = await createRepository(t)
-  const module = await importA2ARoute()
-  const handlers = module.createA2ARouteHandlers?.({
+  const rpcRouteModule = await importA2ARoute()
+  const handlers = rpcRouteModule.createA2ARouteHandlers?.({
     repository,
     dispatchA2A: async () => ({
       status: "completed",
@@ -454,7 +454,7 @@ test("A2A message/stream returns text/event-stream and emits ordered lifecycle, 
         }
       ]
     })
-  }) ?? module
+  }) ?? rpcRouteModule
 
   const response = await handlers.POST(
     new Request("https://jormungand.test/api/a2a", {
@@ -502,8 +502,8 @@ test("A2A bound existing workflowRunId rejects waiting_for_approval before invok
     status: "waiting_for_approval" as const
   }
   let invokeCalls = 0
-  const module = await importA2ARoute()
-  const handlers = module.createA2ARouteHandlers?.({
+  const rpcRouteModule = await importA2ARoute()
+  const handlers = rpcRouteModule.createA2ARouteHandlers?.({
     repository,
     getRun: async (id) => (id === run.id ? run : undefined),
     invokeAgent: async () => {
@@ -514,7 +514,7 @@ test("A2A bound existing workflowRunId rejects waiting_for_approval before invok
         body: "should not run"
       }
     }
-  }) ?? module
+  }) ?? rpcRouteModule
 
   const response = await handlers.POST(
     new Request("https://jormungand.test/api/a2a", {

@@ -25,7 +25,6 @@ import { redactA2AFrame } from "./a2a-runtime"
 import { getWorkflowRun } from "./store"
 import type {
   AgentKind,
-  Artifact,
   WorkflowEventSkill,
   WorkflowRun,
   WorkflowStage
