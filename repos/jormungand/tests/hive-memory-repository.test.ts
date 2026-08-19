@@ -6,6 +6,7 @@ import { join } from "node:path"
 import test from "node:test"
 import { sha256Json } from "../lib/a2a-runtime"
 import { legacyConversationId } from "../lib/conversation-identity"
+import type { HiveDatabase } from "../lib/hive-memory/database"
 import { openHiveDatabase } from "../lib/hive-memory/database"
 import { createHiveMemoryRepository } from "../lib/hive-memory/repository"
 
@@ -447,6 +448,7 @@ test("A2A repository persists redacted frames, idempotent tasks, ordered events,
     [queued.sequence, working.sequence, completed.sequence],
     [1, 2, 3]
   )
+  assert.deepEqual(queued.payload, { requestMessageId: "request-message-1" })
 
   const updatedTask = await firstRepository.updateA2ATask({
     id: created.task.id,
@@ -476,12 +478,134 @@ test("A2A repository persists redacted frames, idempotent tasks, ordered events,
   assert.deepEqual(
     persistedEvents.map((event) => ({
       sequence: event.sequence,
-      eventType: event.eventType
+      eventType: event.eventType,
+      payload: event.payload
     })),
     [
-      { sequence: 1, eventType: "message_queued" },
-      { sequence: 2, eventType: "task_working" },
-      { sequence: 3, eventType: "task_completed" }
+      {
+        sequence: 1,
+        eventType: "message_queued",
+        payload: { requestMessageId: "request-message-1" }
+      },
+      {
+        sequence: 2,
+        eventType: "task_working",
+        payload: { progress: "started" }
+      },
+      {
+        sequence: 3,
+        eventType: "task_completed",
+        payload: { artifactCount: 1 }
+      }
     ]
   )
+})
+
+test("A2A events redact secret-bearing payload keys before persistence and listing", async (t) => {
+  const dataDir = await mkdtemp(join(tmpdir(), "jormungand-a2a-event-redaction-"))
+  const database = openHiveDatabase({ dataDir })
+  t.after(async () => {
+    database.close()
+    await rm(dataDir, { recursive: true, force: true })
+  })
+  const repository = createHiveMemoryRepository(database)
+
+  const { task } = await repository.createA2ATask({
+    contextId: "context-redaction-1",
+    fromAgent: "codex",
+    toAgent: "openclaw.rowlet",
+    status: "submitted",
+    requestMessageId: "request-redaction-1",
+    idempotencyKey: "task-redaction-1"
+  })
+
+  const event = await repository.appendA2AEvent({
+    taskId: task.id,
+    eventType: "task_working",
+    actor: "codex",
+    payload: {
+      authorization: "Bearer secret",
+      nested: {
+        token: "hidden",
+        password: "super-secret",
+        cookieJar: "crumbs",
+        keep: "visible"
+      }
+    }
+  })
+
+  assert.deepEqual(event.payload, {
+    authorization: "[REDACTED]",
+    nested: {
+      token: "[REDACTED]",
+      password: "[REDACTED]",
+      cookieJar: "[REDACTED]",
+      keep: "visible"
+    }
+  })
+
+  const listed = repository.listA2AEvents(task.id)
+  assert.deepEqual(listed[0]?.payload, {
+    authorization: "[REDACTED]",
+    nested: {
+      token: "[REDACTED]",
+      password: "[REDACTED]",
+      cookieJar: "[REDACTED]",
+      keep: "visible"
+    }
+  })
+})
+
+test("updateA2ATask returns its own projection even when another update is queued before readback", async (t) => {
+  const dataDir = await mkdtemp(join(tmpdir(), "jormungand-a2a-task-atomicity-"))
+  const baseDatabase = openHiveDatabase({ dataDir })
+  t.after(async () => {
+    baseDatabase.close()
+    await rm(dataDir, { recursive: true, force: true })
+  })
+
+  let injected = false
+  let taskIdForInjectedUpdate = ""
+  const wrappedDatabase: HiveDatabase = {
+    ...baseDatabase,
+    read<T>(operation: Parameters<HiveDatabase["read"]>[0]) {
+      return baseDatabase.read((connection) => {
+        if (!injected && taskIdForInjectedUpdate) {
+          injected = true
+          connection.prepare(`
+            UPDATE a2a_tasks
+            SET status = 'failed', remote_task_id = 'remote-task-race', updated_at = ?
+            WHERE id = ?
+          `).run("2026-08-19T00:00:02.000Z", taskIdForInjectedUpdate)
+        }
+        return operation(connection) as T
+      })
+    }
+  }
+
+  const repository = createHiveMemoryRepository(wrappedDatabase)
+  const { task } = await repository.createA2ATask({
+    contextId: "context-atomicity-1",
+    fromAgent: "codex",
+    toAgent: "openclaw.rowlet",
+    status: "submitted",
+    requestMessageId: "request-atomicity-1",
+    idempotencyKey: "task-atomicity-1"
+  })
+  taskIdForInjectedUpdate = task.id
+
+  const updated = await repository.updateA2ATask({
+    id: task.id,
+    status: "completed",
+    remoteTaskId: "remote-task-original",
+    completedAt: "2026-08-19T00:00:01.000Z"
+  })
+
+  assert.equal(updated.status, "completed")
+  assert.equal(updated.remoteTaskId, "remote-task-original")
+  assert.equal(updated.completedAt, "2026-08-19T00:00:01.000Z")
+
+  const persisted = repository.getA2ATask(task.id)
+  assert.equal(persisted?.status, "failed")
+  assert.equal(persisted?.remoteTaskId, "remote-task-race")
 })

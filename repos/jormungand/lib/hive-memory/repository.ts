@@ -571,6 +571,7 @@ export class HiveMemoryRepository {
 
   async appendA2AEvent(input: AppendA2AEventInput) {
     return this.database.transaction((connection) => {
+      const payload = redactA2AFrame(input.payload)
       const sequence = ((connection.prepare(`
         SELECT COALESCE(MAX(sequence), 0) AS sequence
         FROM a2a_events
@@ -583,7 +584,7 @@ export class HiveMemoryRepository {
         sequence,
         eventType: input.eventType,
         actor: input.actor,
-        payload: input.payload,
+        payload,
         createdAt: new Date().toISOString()
       }
 
@@ -607,7 +608,7 @@ export class HiveMemoryRepository {
   }
 
   async updateA2ATask(input: UpdateA2ATaskInput) {
-    await this.database.write((connection) => {
+    return this.database.transaction((connection) => {
       connection.prepare(`
         UPDATE a2a_tasks SET
           remote_task_id = COALESCE(?, remote_task_id),
@@ -626,13 +627,14 @@ export class HiveMemoryRepository {
         input.completedAt ?? null,
         input.id
       )
+      const row = connection.prepare(`
+        SELECT * FROM a2a_tasks WHERE id = ?
+      `).get(input.id) as A2ATaskRow | undefined
+      if (!row) {
+        throw new Error(`A2A task ${input.id} not found.`)
+      }
+      return a2aTaskFromRow(row)
     })
-
-    const task = this.getA2ATask(input.id)
-    if (!task) {
-      throw new Error(`A2A task ${input.id} not found.`)
-    }
-    return task
   }
 
   getA2ATask(id: string) {
