@@ -343,15 +343,27 @@ test("schema v4 migrates a v3 database and creates durable A2A tables", async (t
 
 test("A2A repository persists redacted frames, idempotent tasks, ordered events, and restart-safe state", async (t) => {
   const dataDir = await mkdtemp(join(tmpdir(), "jormungand-a2a-repository-"))
+  const firstDatabase = openHiveDatabase({ dataDir })
   const reopened = {
     database: undefined as ReturnType<typeof openHiveDatabase> | undefined
   }
-  t.after(async () => {
+  let firstDatabaseClosed = false
+  const closeFirstDatabase = () => {
+    if (firstDatabaseClosed) {
+      return
+    }
+    firstDatabase.close()
+    firstDatabaseClosed = true
+  }
+  const closeReopenedDatabase = () => {
     reopened.database?.close()
+    reopened.database = undefined
+  }
+  t.after(async () => {
+    closeReopenedDatabase()
+    closeFirstDatabase()
     await rm(dataDir, { recursive: true, force: true })
   })
-
-  const firstDatabase = openHiveDatabase({ dataDir })
   const firstRepository = createHiveMemoryRepository(firstDatabase)
 
   const created = await firstRepository.createA2ATask({
@@ -476,7 +488,7 @@ test("A2A repository persists redacted frames, idempotent tasks, ordered events,
   assert.equal(updatedTask.status, "completed")
   assert.equal(updatedTask.remoteTaskId, "remote-task-1")
 
-  firstDatabase.close()
+  closeFirstDatabase()
 
   reopened.database = openHiveDatabase({ dataDir })
   const secondRepository = createHiveMemoryRepository(reopened.database)
@@ -516,6 +528,8 @@ test("A2A repository persists redacted frames, idempotent tasks, ordered events,
       }
     ]
   )
+
+  closeReopenedDatabase()
 })
 
 test("A2A events redact secret-bearing payload keys before persistence and listing", async (t) => {

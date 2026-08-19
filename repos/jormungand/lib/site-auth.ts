@@ -1,4 +1,6 @@
 const unsafeHttpMethods = new Set(["POST", "PUT", "PATCH", "DELETE"])
+const publicA2AAgentCardPath = "/.well-known/agent-card.json"
+const a2aApiBasePath = "/api/a2a"
 
 export type SiteAuthMode = "all" | "mutations" | "off"
 
@@ -31,4 +33,19 @@ export function shouldRequireSiteAuthentication(
   }
 
   return unsafeHttpMethods.has(method.toUpperCase())
+}
+
+export function shouldBypassSiteAuthentication(
+  pathname: string,
+  a2aTokenValue?: string
+) {
+  if (pathname === publicA2AAgentCardPath) {
+    return true
+  }
+
+  if (!a2aTokenValue?.trim()) {
+    return false
+  }
+
+  return pathname === a2aApiBasePath || pathname.startsWith(`${a2aApiBasePath}/`)
 }

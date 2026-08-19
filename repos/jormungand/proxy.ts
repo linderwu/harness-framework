@@ -1,11 +1,23 @@
 import { timingSafeEqual } from "crypto"
 import type { NextRequest } from "next/server"
 import { NextResponse } from "next/server"
-import { shouldRequireSiteAuthentication } from "./lib/site-auth"
+import {
+  shouldBypassSiteAuthentication,
+  shouldRequireSiteAuthentication
+} from "./lib/site-auth"
 
 const authRealm = "Jormungandr"
 
 export function proxy(request: NextRequest) {
+  if (
+    shouldBypassSiteAuthentication(
+      request.nextUrl.pathname,
+      process.env.JORMUNGAND_A2A_TOKEN
+    )
+  ) {
+    return NextResponse.next()
+  }
+
   if (
     !shouldRequireSiteAuthentication(
       request.method,

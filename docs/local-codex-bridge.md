@@ -64,9 +64,12 @@ Jormungand itself already exposes the public A2A runtime:
 - `POST /api/a2a/tasks/:id` with `{"action":"cancel"}`
 - `GET /api/a2a/audit/:id`
 
-Set `JORMUNGAND_A2A_TOKEN` when you want a dedicated bearer token in addition to
-site Basic Auth. The stored audit response is redacted and hash-backed. The
-public surface is A2A v0.3 only and does not advertise v1 methods or schemas.
+`/.well-known/agent-card.json` is public discovery metadata. Set
+`JORMUNGAND_A2A_TOKEN` when you want the API/task/audit routes to require
+`Authorization: Bearer <token>`. When the token is unset, those routes fall
+back to the existing site Basic Auth boundary. The stored audit response is
+redacted and hash-backed. The public surface is A2A v0.3 only and does not
+advertise v1 methods or schemas.
 
 ## OpenClaw A2A Command
 

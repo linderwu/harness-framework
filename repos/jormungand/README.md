@@ -50,16 +50,26 @@ v1 methods or schemas.
 
 ### Authentication
 
-The app still sits behind site Basic authentication by default. The A2A routes
-also support an explicit bearer token:
+The Agent Card is public discovery metadata and does not require site Basic
+Auth or a bearer token:
+
+```text
+GET /.well-known/agent-card.json
+```
+
+The JSON-RPC and task/audit routes support an explicit bearer token:
 
 ```text
 JORMUNGAND_A2A_TOKEN=<replace-me>
 ```
 
-When `JORMUNGAND_A2A_TOKEN` is set, every A2A route requires
-`Authorization: Bearer <token>`. Query-string tokens are ignored. When the
-variable is unset, the site-auth boundary remains the only required gate.
+When `JORMUNGAND_A2A_TOKEN` is set, `POST /api/a2a`,
+`GET|POST /api/a2a/tasks/:id`, and `GET /api/a2a/audit/:id` require
+`Authorization: Bearer <token>`. Query-string tokens are ignored.
+
+When `JORMUNGAND_A2A_TOKEN` is unset, those same API routes fall back to the
+existing site Basic Auth boundary. Basic Auth and Bearer are not
+simultaneously required on the same `Authorization` header.
 
 ### Discovery and routes
 
@@ -129,9 +139,7 @@ A2A_TOKEN=replace-me
 Read the Agent Card:
 
 ```bash
-curl \
-  -H "Authorization: Bearer $A2A_TOKEN" \
-  "$A2A_ORIGIN/.well-known/agent-card.json"
+curl "$A2A_ORIGIN/.well-known/agent-card.json"
 ```
 
 Submit `message/send`:
