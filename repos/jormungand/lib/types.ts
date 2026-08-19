@@ -451,6 +451,7 @@ export interface AgentRun {
   agent: AgentKind
   status: WorkflowStatus
   source?: AgentRunSource
+  a2aTaskId?: string
   externalRunId?: string
   idempotencyKey?: string
   statusMessage?: string

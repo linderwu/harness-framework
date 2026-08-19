@@ -152,6 +152,7 @@ export interface ConversationEntry {
   taskId?: string
   role: ConversationRole
   agentId?: import("../types").AgentKind
+  recipientAgent?: import("../types").AgentKind
   content: string
   importance: ConversationImportance
   status: ConversationStatus

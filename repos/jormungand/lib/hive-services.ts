@@ -11,37 +11,64 @@ import {
   createContextBuilder,
   createPermissionModeText
 } from "./context-builder"
-import { openHiveDatabase } from "./hive-memory/database"
+import { openHiveDatabase, type HiveDatabase } from "./hive-memory/database"
 import type { ConversationEntry } from "./hive-memory/types"
-import { createHiveMemoryRepository } from "./hive-memory/repository"
+import {
+  createHiveMemoryRepository,
+  type HiveMemoryRepository
+} from "./hive-memory/repository"
 import { createManagerScheduler } from "./manager-scheduler"
 import { getWorkflowRun, listProjects, listWorkflowRuns, upsertWorkflowRun } from "./store"
-import type { AgentKind } from "./types"
+import type { AgentArtifactResult } from "./workflow"
+import type { AgentKind, WorkflowRun } from "./types"
 import { createWorkflowRun } from "./workflow"
 
-let services: ReturnType<typeof createServices> | undefined
+type HiveServicesStore = {
+  getRun: (id: string) => Promise<WorkflowRun | undefined>
+  saveRun: (run: WorkflowRun) => Promise<WorkflowRun>
+  listProjects: typeof listProjects
+  listWorkflowRuns: typeof listWorkflowRuns
+}
+
+type HiveServicesOptions = Partial<HiveServicesStore> & {
+  database?: HiveDatabase
+  repository?: HiveMemoryRepository
+  permissionMode?: ReturnType<typeof getAgentPermissionMode>
+  invokeAgent?: (
+    input: AgentInvocationInput
+  ) => Promise<AgentArtifactResult>
+  invokeManager?: typeof invokeConfiguredHiveManager
+}
+
+let services: ReturnType<typeof createHiveServices> | undefined
 
 export function getDefaultHiveServices() {
-  services ??= createServices()
+  services ??= createHiveServices()
   return services
 }
 
-function createServices() {
-  const permissionMode = getAgentPermissionMode()
+export function createHiveServices(options: HiveServicesOptions = {}) {
+  const permissionMode = options.permissionMode ?? getAgentPermissionMode()
   const permissionText = createPermissionModeText(permissionMode)
-  const database = openHiveDatabase()
-  const repository = createHiveMemoryRepository(database)
+  const database = options.database ?? openHiveDatabase()
+  const repository = options.repository ?? createHiveMemoryRepository(database)
   const contextBuilder = createContextBuilder(repository)
   const openClawUnboundConversationSync = new ConversationHistorySync()
+  const getRun = options.getRun ?? getWorkflowRun
+  const saveRun = options.saveRun ?? ((run) => upsertWorkflowRun(run, { expectedVersion: run.version }))
+  const listProjectsFn = options.listProjects ?? listProjects
+  const listWorkflowRunsFn = options.listWorkflowRuns ?? listWorkflowRuns
+  const invokeAgent = options.invokeAgent ?? invokeConfiguredAgent
+  const invokeManager = options.invokeManager ?? invokeConfiguredHiveManager
   const scheduler = createManagerScheduler({
     repository,
-    getRun: getWorkflowRun,
-    saveRun: async (run) => upsertWorkflowRun(run, { expectedVersion: run.version }),
-    invokeManager: invokeConfiguredHiveManager,
+    getRun,
+    saveRun,
+    invokeManager,
     allowedAgents: () => agentProfiles.map((profile) => profile.id),
     permissionMode,
     dispatchWorker: async ({ run, task, agentId }) => {
-      const result = await invokeConfiguredAgent({
+      const result = await invokeAgent({
         run,
         executor: agentId,
         stage: run.currentStage,
@@ -64,12 +91,42 @@ function createServices() {
           verificationRules: task.successCriteria
         }
       })
+      const latest = await getRun(run.id)
+      if (!latest) {
+        throw new Error("Workflow run disappeared while persisting worker output.")
+      }
+      const artifact = {
+        id: crypto.randomUUID(),
+        workflowRunId: latest.id,
+        stage: latest.currentStage,
+        type: "log" as const,
+        title: `${agentId} worker handoff`,
+        body: result.body,
+        createdAt: new Date().toISOString()
+      }
+      await saveRun({
+        ...latest,
+        artifacts: [...latest.artifacts, artifact]
+      })
+      await repository.insertConversation({
+        workflowRunId: latest.id,
+        taskId: task.id,
+        role: "agent",
+        agentId,
+        recipientAgent: "codex",
+        content: result.body,
+        importance: result.status === "failed" ? "critical" : "important",
+        status: result.status,
+        artifactIds: [artifact.id],
+        memoryIds: [],
+        idempotencyKey: `worker-handoff:${task.id}:attempt:${task.attemptCount}`
+      })
       return { status: result.status, body: result.body }
     }
   })
   const conversation = createConversationService({
     repository,
-    getRun: getWorkflowRun,
+    getRun,
     buildContext: async ({ run, targetAgent, entries, content }) => {
       const shareableEntries = entries.filter(isShareableConversationEntry).slice(-20)
       const sharedConversationHistory = buildSharedConversationHistory(shareableEntries)
@@ -91,7 +148,7 @@ function createServices() {
       })
     },
     invokeAgent: async ({ run, targetAgent, content, contextPack, managerRouting }) => {
-      const result = await invokeConfiguredAgent({
+      const result = await invokeAgent({
         run,
         executor: targetAgent,
         stage: run.currentStage,
@@ -118,14 +175,14 @@ function createServices() {
       return { status: result.status, body: result.body }
     },
     persistRawArtifact: async ({ run, targetAgent, body }) => {
-      const latest = await getWorkflowRun(run.id)
+      const latest = await getRun(run.id)
       if (!latest) throw new Error("Workflow run disappeared while persisting conversation output.")
       const artifact = {
         id: crypto.randomUUID(), workflowRunId: latest.id, stage: latest.currentStage,
         type: "log" as const, title: `${targetAgent} conversation output`, body,
         createdAt: new Date().toISOString()
       }
-      await upsertWorkflowRun({ ...latest, artifacts: [...latest.artifacts, artifact] }, { expectedVersion: latest.version })
+      await saveRun({ ...latest, artifacts: [...latest.artifacts, artifact] })
       return artifact.id
     },
     enqueueManagerWake: (input) => scheduler.enqueue(input),
@@ -141,7 +198,7 @@ function createServices() {
       })
 
       if (targetAgent === "codex") {
-        const [projects, runs] = await Promise.all([listProjects(), listWorkflowRuns()])
+        const [projects, runs] = await Promise.all([listProjectsFn(), listWorkflowRunsFn()])
         const candidateLines = projects.map((project) => {
           const projectRuns = runs.filter((run) => run.projectId === project.id)
           return `- ${project.name}: projectId=${project.id}; workflowRuns=${projectRuns.map((run) => `${run.id} (${run.status})`).join(", ") || "none"}`
@@ -159,7 +216,7 @@ function createServices() {
           ...entries.slice(-12).map((entry) => `${entry.role}: ${entry.content}`),
           `Latest operator message: ${content}`
         ].join("\n")
-        const result = await invokeConfiguredAgent({
+        const result = await invokeAgent({
           run: syntheticRun,
           executor: "codex",
           stage: "intake",
@@ -196,7 +253,7 @@ function createServices() {
         targetAgent,
         content,
         entries,
-        invokeAgent: invokeConfiguredAgent
+        invokeAgent
       })
     }
   })

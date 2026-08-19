@@ -237,7 +237,7 @@ test("schema v3 backfills conversation metadata from legacy entries and keeps un
     await rm(dataDir, { recursive: true, force: true })
   })
 
-  assert.equal(migratedDatabase.schemaVersion(), 4)
+  assert.equal(migratedDatabase.schemaVersion(), 5)
   const migrated = repository.getConversationMetadata("conversation:44444444-4444-4444-8444-444444444444")
   assert.ok(migrated)
   assert.equal(migrated.title, "This migrated title should be truncated to eighty characters exactly after white")
@@ -302,6 +302,21 @@ test("schema v4 migrates a v3 database and creates durable A2A tables", async (t
       version INTEGER PRIMARY KEY,
       applied_at TEXT NOT NULL
     );
+    CREATE TABLE conversation_entries (
+      id TEXT PRIMARY KEY,
+      workflow_run_id TEXT NOT NULL,
+      task_id TEXT,
+      role TEXT NOT NULL,
+      agent_id TEXT,
+      content TEXT NOT NULL,
+      importance TEXT NOT NULL,
+      status TEXT NOT NULL,
+      reply_to_id TEXT,
+      artifact_ids_json TEXT NOT NULL,
+      memory_ids_json TEXT NOT NULL,
+      idempotency_key TEXT NOT NULL UNIQUE,
+      created_at TEXT NOT NULL
+    );
   `)
   seed.prepare("INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(1, "2026-08-18T00:00:00.000Z")
   seed.prepare("INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(2, "2026-08-18T00:01:00.000Z")
@@ -314,7 +329,7 @@ test("schema v4 migrates a v3 database and creates durable A2A tables", async (t
     await rm(dataDir, { recursive: true, force: true })
   })
 
-  assert.equal(database.schemaVersion(), 4)
+  assert.equal(database.schemaVersion(), 5)
   const tables = database.read((connection) =>
     connection.prepare(`
       SELECT name

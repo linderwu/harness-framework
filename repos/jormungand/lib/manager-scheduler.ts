@@ -87,7 +87,12 @@ export class ManagerScheduler {
 
     await this.dependencies.repository.markManagerWake(wake.id, "processing")
     const tasks = this.dependencies.repository.listManagerTasks(workflowRunId)
-    const contextPack = buildManagerContextPack(run, tasks, wake.reason)
+    const contextPack = buildManagerContextPack(
+      run,
+      tasks,
+      wake.reason,
+      this.dependencies.repository
+    )
     const callsUsed = run.managed!.budget.callsUsed + 1
     run = await this.dependencies.saveRun({
       ...run,
@@ -152,11 +157,12 @@ export class ManagerScheduler {
     const missionCompleted = currentTasks.length > 0 &&
       taskCounts.pending === 0 && taskCounts.running === 0 &&
       taskCounts.failed === 0 && proposal.next_wake_condition === "mission_completed"
+    const latestRun = await this.dependencies.getRun(workflowRunId) ?? run
     await this.dependencies.saveRun({
-      ...run,
+      ...latestRun,
       status: application.waitingForApproval ? "waiting_for_approval" : missionCompleted ? "completed" : "pending",
       managed: {
-        ...run.managed!,
+        ...latestRun.managed!,
         state: application.waitingForApproval ? "waiting_for_approval" : missionCompleted ? "completed" : "idle",
         checkpointId: saved.id,
         taskCounts,
@@ -266,19 +272,44 @@ export function createManagerScheduler(dependencies: ManagerSchedulerDependencie
   return new ManagerScheduler(dependencies)
 }
 
-function buildManagerContextPack(run: WorkflowRun, tasks: ManagerTask[], wakeReason: string): ContextPack {
+function buildManagerContextPack(
+  run: WorkflowRun,
+  tasks: ManagerTask[],
+  wakeReason: string,
+  repository: HiveMemoryRepository
+): ContextPack {
+  const recentHandoffs = repository
+    .listConversation(run.id)
+    .filter((entry) => entry.role === "agent" && entry.recipientAgent === "codex" && entry.taskId)
+    .slice(-6)
+  const artifactIds = unique(recentHandoffs.flatMap((entry) => entry.artifactIds))
+  const artifactIndex = new Map(run.artifacts.map((artifact) => [artifact.id, artifact]))
+  const handoffLines = recentHandoffs.flatMap((entry) => [
+    `- ${entry.taskId} from ${entry.agentId ?? "unknown"} [${entry.status}]: ${entry.content}`,
+    ...entry.artifactIds.map((artifactId) => {
+      const artifact = artifactIndex.get(artifactId)
+      return artifact
+        ? `  artifact ${artifactId} (${artifact.title})`
+        : `  artifact ${artifactId}`
+    })
+  ])
   const text = [
     `Goal: ${run.requirement}`,
     `Wake reason: ${wakeReason}`,
     `Status: ${run.status}`,
     `Budget: ${JSON.stringify(run.managed?.budget)}`,
     "Task graph:",
-    ...tasks.map((task) => `- ${task.id}: ${task.title} [${task.status}] agent=${task.assignedAgent ?? "unassigned"} strategy=${task.strategy} attempts=${task.attemptCount}`)
+    ...tasks.map((task) => `- ${task.id}: ${task.title} [${task.status}] agent=${task.assignedAgent ?? "unassigned"} strategy=${task.strategy} attempts=${task.attemptCount}`),
+    "Recent worker handoffs:",
+    ...(handoffLines.length ? handoffLines : ["- none"])
   ].join("\n")
   return {
     id: crypto.randomUUID(), kind: "manager", text,
     sections: [{ name: "Manager state", budget: 2000, estimatedTokens: estimateTokens(text) }],
-    memoryIds: [], conversationEntryIds: [], artifactIds: [], conflicts: [],
+    memoryIds: [],
+    conversationEntryIds: recentHandoffs.map((entry) => entry.id),
+    artifactIds,
+    conflicts: [],
     estimatedTokens: estimateTokens(text), createdAt: new Date().toISOString()
   }
 }
@@ -294,4 +325,8 @@ function countTasks(tasks: ManagerTask[]) {
   const counts = { pending: 0, running: 0, completed: 0, failed: 0, stopped: 0 }
   for (const task of tasks) counts[task.status] += 1
   return counts
+}
+
+function unique(values: string[]) {
+  return Array.from(new Set(values))
 }

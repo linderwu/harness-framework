@@ -76,6 +76,7 @@ export interface AgentArtifactResult {
   status: "completed" | "failed"
   source: AgentRunSource
   body: string
+  a2aTaskId?: string
   repository?: string
   externalRunId?: string
   idempotencyKey?: string
@@ -1984,6 +1985,7 @@ async function addAgentArtifact(
     agent: executor,
     status: finalResult.status,
     source: finalResult.source,
+    a2aTaskId: finalResult.a2aTaskId,
     externalRunId: finalResult.externalRunId,
     idempotencyKey: finalResult.idempotencyKey,
     statusMessage: finalResult.statusMessage,

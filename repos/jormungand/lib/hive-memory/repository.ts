@@ -78,6 +78,7 @@ type ConversationRow = {
   task_id: string | null
   role: ConversationEntry["role"]
   agent_id: ConversationEntry["agentId"] | null
+  recipient_agent: ConversationEntry["recipientAgent"] | null
   content: string
   importance: ConversationEntry["importance"]
   status: ConversationEntry["status"]
@@ -569,6 +570,39 @@ export class HiveMemoryRepository {
     return message
   }
 
+  async updateA2AMessageResponse(input: {
+    id: string
+    responseFrame: unknown
+    receivedAt?: string
+  }) {
+    const responseFrame = redactA2AFrame(input.responseFrame)
+    const responseJson = canonicalizeJson(responseFrame)
+    const responseSha256 = sha256Json(responseFrame)
+    await this.database.write((connection) => {
+      connection.prepare(`
+        UPDATE a2a_messages SET
+          response_json = ?,
+          response_sha256 = ?,
+          received_at = COALESCE(?, received_at)
+        WHERE id = ?
+      `).run(
+        responseJson,
+        responseSha256,
+        input.receivedAt ?? null,
+        input.id
+      )
+    })
+    return this.database.read((connection) => {
+      const row = connection.prepare(`
+        SELECT * FROM a2a_messages WHERE id = ?
+      `).get(input.id) as A2AMessageRow | undefined
+      if (!row) {
+        throw new Error(`A2A message ${input.id} not found.`)
+      }
+      return a2aMessageFromRow(row)
+    })
+  }
+
   async appendA2AEvent(input: AppendA2AEventInput) {
     return this.database.transaction((connection) => {
       const payload = redactA2AFrame(input.payload)
@@ -851,13 +885,14 @@ export class HiveMemoryRepository {
       this.ensureConversationMetadata(connection, input.workflowRunId, deriveConversationTitle(input.role, input.content), entry.createdAt)
       const result = connection.prepare(`
         INSERT OR IGNORE INTO conversation_entries(
-          id, workflow_run_id, task_id, role, agent_id, content, importance,
+          id, workflow_run_id, task_id, role, agent_id, recipient_agent, content, importance,
           status, reply_to_id, artifact_ids_json, memory_ids_json,
           idempotency_key, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         entry.id, entry.workflowRunId, entry.taskId ?? null, entry.role,
-        entry.agentId ?? null, entry.content, entry.importance, entry.status,
+        entry.agentId ?? null, entry.recipientAgent ?? null,
+        entry.content, entry.importance, entry.status,
         entry.replyToId ?? null, JSON.stringify(entry.artifactIds),
         JSON.stringify(entry.memoryIds), entry.idempotencyKey, entry.createdAt
       )
@@ -1527,6 +1562,7 @@ function conversationFromRow(row: ConversationRow): ConversationEntry {
     taskId: row.task_id ?? undefined,
     role: row.role,
     agentId: row.agent_id ?? undefined,
+    recipientAgent: row.recipient_agent ?? undefined,
     content: row.content,
     importance: row.importance,
     status: row.status,
