@@ -375,6 +375,85 @@ test("manager context bounds worker output and marks it as untrusted evidence", 
   assert.doesNotMatch(context.text, /X{1000}/)
 })
 
+test("replaying a partially persisted worker attempt reuses its artifact and handoff row", async (t) => {
+  await ensureCompiledAlias()
+  const dataDir = await mkdtemp(join(tmpdir(), "jormungand-worker-artifact-idempotency-"))
+  const database = openHiveDatabase({ dataDir })
+  const repository = createHiveMemoryRepository(database)
+  let run = createManagedRun()
+  t.after(async () => {
+    database.close()
+    await rm(dataDir, { recursive: true, force: true })
+  })
+
+  const insertConversation = repository.insertConversation.bind(repository)
+  let failAfterInsert = true
+  repository.insertConversation = async (input) => {
+    const result = await insertConversation(input)
+    if (failAfterInsert) {
+      failAfterInsert = false
+      throw new Error("partial conversation persistence")
+    }
+    return result
+  }
+
+  const { createHiveServices } = await import("../lib/hive-services") as typeof import("../lib/hive-services")
+  const services = createHiveServices({
+    database,
+    repository,
+    getRun: async (id: string) => id === run.id ? run : undefined,
+    saveRun: async (next: WorkflowRun) => {
+      run = { ...next, version: run.version + 1 }
+      return run
+    },
+    invokeManager: async () => JSON.stringify(noopManagerProposal()),
+    invokeAgent: async () => ({
+      status: "completed" as const,
+      source: "simulated" as const,
+      body: "same attempt evidence"
+    }),
+    listProjects: async () => [],
+    listWorkflowRuns: async () => []
+  })
+  const createdTask = await repository.createManagerTask({
+    workflowRunId: run.id,
+    title: "Replay one worker attempt",
+    instruction: "Persist this worker result once.",
+    successCriteria: ["The handoff is durable."],
+    strategy: "artifact-idempotency"
+  })
+  const task = {
+    ...createdTask,
+    status: "running" as const,
+    assignedAgent: "openclaw.rowlet",
+    attemptCount: 1
+  }
+
+  await assert.rejects(() => services.dispatchWorker({
+    run,
+    task,
+    agentId: "openclaw.rowlet",
+    idempotencyKey: `task:${task.id}:attempt:${task.attemptCount}`
+  }), /partial conversation persistence/)
+  const firstArtifactId = run.artifacts[0]?.id
+  assert.ok(firstArtifactId)
+  assert.match(firstArtifactId, /^[A-Za-z0-9._-]+$/)
+  assert.equal(firstArtifactId, `worker-handoff-${task.id}-attempt-${task.attemptCount}`)
+
+  await services.dispatchWorker({
+    run,
+    task,
+    agentId: "openclaw.rowlet",
+    idempotencyKey: `task:${task.id}:attempt:${task.attemptCount}`
+  })
+
+  const handoffs = repository.listConversation(run.id).filter((entry) => entry.taskId === task.id)
+  assert.equal(run.artifacts.length, 1)
+  assert.equal(run.artifacts[0]?.id, firstArtifactId)
+  assert.equal(handoffs.length, 1)
+  assert.deepEqual(handoffs[0]?.artifactIds, [firstArtifactId])
+})
+
 async function exerciseWorkerPersistenceFailure(
   t: TestContext,
   failure: "saveRun" | "insertConversation"

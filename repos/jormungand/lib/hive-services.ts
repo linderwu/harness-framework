@@ -17,7 +17,7 @@ import {
   createHiveMemoryRepository,
   type HiveMemoryRepository
 } from "./hive-memory/repository"
-import { createManagerScheduler } from "./manager-scheduler"
+import { createManagerScheduler, type ManagerSchedulerDependencies } from "./manager-scheduler"
 import { getWorkflowRun, listProjects, listWorkflowRuns, upsertWorkflowRun } from "./store"
 import type { AgentArtifactResult } from "./workflow"
 import type { AgentKind, WorkflowRun } from "./types"
@@ -60,6 +60,65 @@ export function createHiveServices(options: HiveServicesOptions = {}) {
   const listWorkflowRunsFn = options.listWorkflowRuns ?? listWorkflowRuns
   const invokeAgent = options.invokeAgent ?? invokeConfiguredAgent
   const invokeManager = options.invokeManager ?? invokeConfiguredHiveManager
+  const dispatchWorker: NonNullable<ManagerSchedulerDependencies["dispatchWorker"]> = async ({ run, task, agentId }) => {
+    const result = await invokeAgent({
+      run,
+      executor: agentId,
+      stage: run.currentStage,
+      artifactType: "log",
+      title: task.title,
+      fallbackBody: task.instruction,
+      skill: {
+        id: "hive_worker.task",
+        eventType: "implementation_dispatch",
+        stage: run.currentStage,
+        name: task.title,
+        purpose: task.instruction,
+        trigger: "The Codex hive manager dispatched this task.",
+        allowedActors: [agentId],
+        inputs: ["bounded task context"],
+        outputs: task.successCriteria,
+        constraints: ["Remain within the assigned task and permission scope."],
+        gates: ["Return evidence to the manager."],
+        knowledgeSources: ["task context pack"],
+        verificationRules: task.successCriteria
+      }
+    })
+    const latest = await getRun(run.id)
+    if (!latest) {
+      throw new Error("Workflow run disappeared while persisting worker output.")
+    }
+    const artifactId = workerHandoffArtifactId(task.id, task.attemptCount)
+    const artifact = latest.artifacts.find((candidate) => candidate.id === artifactId) ?? {
+      id: artifactId,
+      workflowRunId: latest.id,
+      stage: latest.currentStage,
+      type: "log" as const,
+      title: `${agentId} worker handoff`,
+      body: result.body,
+      createdAt: new Date().toISOString()
+    }
+    if (!latest.artifacts.some((candidate) => candidate.id === artifactId)) {
+      await saveRun({
+        ...latest,
+        artifacts: [...latest.artifacts, artifact]
+      })
+    }
+    await repository.insertConversation({
+      workflowRunId: latest.id,
+      taskId: task.id,
+      role: "agent",
+      agentId,
+      recipientAgent: "codex",
+      content: result.body,
+      importance: result.status === "failed" ? "critical" : "important",
+      status: result.status,
+      artifactIds: [artifact.id],
+      memoryIds: [],
+      idempotencyKey: `worker-handoff:${task.id}:attempt:${task.attemptCount}`
+    })
+    return { status: result.status, body: result.body }
+  }
   const scheduler = createManagerScheduler({
     repository,
     getRun,
@@ -67,62 +126,7 @@ export function createHiveServices(options: HiveServicesOptions = {}) {
     invokeManager,
     allowedAgents: () => agentProfiles.map((profile) => profile.id),
     permissionMode,
-    dispatchWorker: async ({ run, task, agentId }) => {
-      const result = await invokeAgent({
-        run,
-        executor: agentId,
-        stage: run.currentStage,
-        artifactType: "log",
-        title: task.title,
-        fallbackBody: task.instruction,
-        skill: {
-          id: "hive_worker.task",
-          eventType: "implementation_dispatch",
-          stage: run.currentStage,
-          name: task.title,
-          purpose: task.instruction,
-          trigger: "The Codex hive manager dispatched this task.",
-          allowedActors: [agentId],
-          inputs: ["bounded task context"],
-          outputs: task.successCriteria,
-          constraints: ["Remain within the assigned task and permission scope."],
-          gates: ["Return evidence to the manager."],
-          knowledgeSources: ["task context pack"],
-          verificationRules: task.successCriteria
-        }
-      })
-      const latest = await getRun(run.id)
-      if (!latest) {
-        throw new Error("Workflow run disappeared while persisting worker output.")
-      }
-      const artifact = {
-        id: crypto.randomUUID(),
-        workflowRunId: latest.id,
-        stage: latest.currentStage,
-        type: "log" as const,
-        title: `${agentId} worker handoff`,
-        body: result.body,
-        createdAt: new Date().toISOString()
-      }
-      await saveRun({
-        ...latest,
-        artifacts: [...latest.artifacts, artifact]
-      })
-      await repository.insertConversation({
-        workflowRunId: latest.id,
-        taskId: task.id,
-        role: "agent",
-        agentId,
-        recipientAgent: "codex",
-        content: result.body,
-        importance: result.status === "failed" ? "critical" : "important",
-        status: result.status,
-        artifactIds: [artifact.id],
-        memoryIds: [],
-        idempotencyKey: `worker-handoff:${task.id}:attempt:${task.attemptCount}`
-      })
-      return { status: result.status, body: result.body }
-    }
+    dispatchWorker
   })
   const conversation = createConversationService({
     repository,
@@ -257,7 +261,12 @@ export function createHiveServices(options: HiveServicesOptions = {}) {
       })
     }
   })
-  return { database, repository, scheduler, conversation }
+  return { database, repository, scheduler, conversation, dispatchWorker }
+}
+
+function workerHandoffArtifactId(taskId: string, attemptCount: number) {
+  const safeTaskId = taskId.replace(/[^A-Za-z0-9._-]/g, "-") || "task"
+  return `worker-handoff-${safeTaskId}-attempt-${attemptCount}`
 }
 
 export async function routeOpenClawUnboundConversation(input: {
