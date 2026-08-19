@@ -495,6 +495,61 @@ test("A2A server concurrent duplicate sends share one fully initialized task and
   assert.equal(dispatchCount, 1)
 })
 
+test("A2A server authorizes every concurrent duplicate send before joining shared dispatch", async (t) => {
+  const { repository } = await createServer(t)
+  const releaseDispatch = createDeferred<void>()
+  let authorizeCount = 0
+  let dispatchCount = 0
+  const server = createA2AServer({
+    repository,
+    authorize: async () => {
+      authorizeCount += 1
+    },
+    dispatch: async () => {
+      dispatchCount += 1
+      await releaseDispatch.promise
+      return {
+        status: "completed",
+        text: "authorized duplicate"
+      }
+    }
+  })
+
+  const request = createSendRequest({
+    params: {
+      message: {
+        kind: "message",
+        role: "user",
+        messageId: "message-authorize-dup-1",
+        contextId: "context-authorize-dup-1",
+        parts: [{ kind: "text", text: "hi" }],
+        metadata: {
+          idempotencyKey: "authorize-duplicate-idempotency-1",
+          fromAgent: "external.user",
+          toAgent: "jormungand"
+        }
+      }
+    }
+  })
+
+  const firstPromise = server.send(request)
+  const secondPromise = server.send({ ...request, id: "rpc-authorize-dup-2" })
+
+  await new Promise((resolve) => setImmediate(resolve))
+
+  assert.equal(authorizeCount, 2)
+  assert.equal(dispatchCount, 1)
+
+  releaseDispatch.resolve()
+  const [first, second] = await Promise.all([firstPromise, secondPromise])
+
+  assert.equal(first.id, second.id)
+  assert.equal(first.status.state, "completed")
+  assert.equal(second.status.state, "completed")
+  assert.equal(authorizeCount, 2)
+  assert.equal(dispatchCount, 1)
+})
+
 test("A2A server cancelTask records a canceled lifecycle state and invokes the cancel callback", async (t) => {
   const { repository } = await createServer(t)
   let canceled = 0
@@ -624,6 +679,87 @@ test("A2A server sendStream emits queued and working frames before delayed dispa
     remaining.map((frame) => frame.event),
     ["task_artifact_updated", "task_completed"]
   )
+})
+
+test("A2A server concurrent duplicate sendStream callers both receive ordered non-empty lifecycle frames", async (t) => {
+  const { repository } = await createServer(t)
+  const releaseDispatch = createDeferred<void>()
+  const server = createA2AServer({
+    repository,
+    dispatch: async () => {
+      await releaseDispatch.promise
+      return {
+        status: "completed",
+        text: "duplicate streams finished",
+        artifacts: [
+          {
+            artifactId: "artifact-duplicate-stream-1",
+            text: "done"
+          }
+        ]
+      }
+    }
+  })
+
+  const request = createSendRequest({
+    id: "rpc-duplicate-stream-1",
+    method: "message/stream",
+    params: {
+      message: {
+        kind: "message",
+        role: "user",
+        messageId: "message-duplicate-stream-1",
+        contextId: "context-duplicate-stream-1",
+        parts: [{ kind: "text", text: "stream twice" }],
+        metadata: {
+          idempotencyKey: "duplicate-stream-idempotency-1",
+          fromAgent: "external.user",
+          toAgent: "jormungand"
+        }
+      }
+    }
+  })
+
+  const firstIterator = server.sendStream(request)
+  const secondIterator = server.sendStream({ ...request, id: "rpc-duplicate-stream-2" })
+
+  const firstQueued = await firstIterator.next()
+  assert.equal(firstQueued.value?.event, "message_queued")
+
+  releaseDispatch.resolve()
+
+  const firstFrames = [firstQueued.value!]
+  for await (const frame of firstIterator) {
+    firstFrames.push(frame)
+  }
+
+  const secondFrames = []
+  for await (const frame of secondIterator) {
+    secondFrames.push(frame)
+  }
+
+  assert.deepEqual(
+    firstFrames.map((frame) => frame.event),
+    [
+      "message_queued",
+      "message_accepted",
+      "task_working",
+      "task_artifact_updated",
+      "task_completed"
+    ]
+  )
+  assert.deepEqual(
+    secondFrames.map((frame) => frame.event),
+    [
+      "message_queued",
+      "message_accepted",
+      "task_working",
+      "task_artifact_updated",
+      "task_completed"
+    ]
+  )
+  assert.equal(secondFrames.at(-1)?.data.status.state, "completed")
+  assert.ok(repository.getA2ATaskByIdempotencyKey("duplicate-stream-idempotency-1"))
 })
 
 test("A2A server stores only redacted request and response frames", async (t) => {

@@ -84,9 +84,16 @@ interface A2AServerDependencies {
 
 type A2AFrameListener = (frame: A2AStreamFrame) => void
 
+interface InFlightA2ARequest {
+  taskPromise: Promise<A2ATask>
+  frames: A2AStreamFrame[]
+  listeners: Set<A2AFrameListener>
+  completed: boolean
+}
+
 class A2AServer {
   private readonly cancelHandlers = new Map<string, () => Promise<void> | void>()
-  private readonly inFlightTasks = new Map<string, Promise<A2ATask>>()
+  private readonly inFlightTasks = new Map<string, InFlightA2ARequest>()
 
   constructor(private readonly dependencies: A2AServerDependencies) {}
 
@@ -151,6 +158,8 @@ class A2AServer {
     let wake: (() => void) | undefined
     let completed = false
     let streamError: unknown
+    let taskId: string | undefined
+    let emittedAny = false
     const flush = () => {
       const resolver = wake
       wake = undefined
@@ -161,11 +170,13 @@ class A2AServer {
       request,
       ["message/send", "message/stream"],
       (frame) => {
+        emittedAny = true
         queuedFrames.push(frame)
         flush()
       }
     )
-      .then(() => {
+      .then((task) => {
+        taskId = task.id
         completed = true
         flush()
       })
@@ -190,6 +201,12 @@ class A2AServer {
         throw streamError
       }
     }
+
+    if (!emittedAny && taskId) {
+      for await (const frame of this.stream(taskId)) {
+        yield frame
+      }
+    }
   }
 
   private startSend(
@@ -198,23 +215,59 @@ class A2AServer {
     emitFrame?: A2AFrameListener
   ) {
     const request = parseA2AMessageRequest(rawRequest, { allowedMethods })
-    const existingInFlight = this.inFlightTasks.get(request.idempotencyKey)
-    if (existingInFlight) {
-      return existingInFlight
+    const joinInFlight = (inFlight: InFlightA2ARequest) => {
+      if (emitFrame) {
+        for (const frame of inFlight.frames) {
+          emitFrame(frame)
+        }
+        if (!inFlight.completed) {
+          inFlight.listeners.add(emitFrame)
+          void inFlight.taskPromise.finally(() => {
+            inFlight.listeners.delete(emitFrame)
+          })
+        }
+      }
+      return inFlight.taskPromise
     }
 
-    const sendPromise = (async () => {
+    return (async () => {
       await this.dependencies.authorize?.({ request })
-      return this.handleSend(request, rawRequest, emitFrame)
-    })()
 
-    this.inFlightTasks.set(request.idempotencyKey, sendPromise)
-
-    return sendPromise.finally(() => {
-      if (this.inFlightTasks.get(request.idempotencyKey) === sendPromise) {
-        this.inFlightTasks.delete(request.idempotencyKey)
+      const existingInFlight = this.inFlightTasks.get(request.idempotencyKey)
+      if (existingInFlight) {
+        return joinInFlight(existingInFlight)
       }
-    })
+
+      const inFlight: InFlightA2ARequest = {
+        taskPromise: Promise.resolve(undefined as never),
+        frames: [],
+        listeners: new Set<A2AFrameListener>(),
+        completed: false
+      }
+
+      if (emitFrame) {
+        inFlight.listeners.add(emitFrame)
+      }
+
+      const publishFrame = (frame: A2AStreamFrame) => {
+        inFlight.frames.push(frame)
+        for (const listener of inFlight.listeners) {
+          listener(frame)
+        }
+      }
+
+      const sendPromise = this.handleSend(request, rawRequest, publishFrame)
+      inFlight.taskPromise = sendPromise
+      this.inFlightTasks.set(request.idempotencyKey, inFlight)
+
+      return sendPromise.finally(() => {
+        inFlight.completed = true
+        inFlight.listeners.clear()
+        if (this.inFlightTasks.get(request.idempotencyKey) === inFlight) {
+          this.inFlightTasks.delete(request.idempotencyKey)
+        }
+      })
+    })()
   }
 
   private async handleSend(
