@@ -107,6 +107,30 @@ type ConversationSummaryRow = {
   latestMessage: string | null
 }
 
+interface CreateInboundA2ARequestInput {
+  workflowRunId?: string
+  contextId: string
+  fromAgent: string
+  toAgent: string
+  requestMessageId: string
+  idempotencyKey: string
+  protocolVersion: string
+  method: string
+  transport: string
+  requestFrame: unknown
+  actor: string
+  queuedEventPayload: Record<string, unknown>
+}
+
+type CreateInboundA2ARequestResult =
+  | { task: A2ATaskRecord; inserted: false }
+  | {
+      task: A2ATaskRecord
+      message: A2AMessageRecord
+      queuedEvent: A2AEventRecord
+      inserted: true
+    }
+
 type A2ATaskRow = {
   id: string
   workflow_run_id: string | null
@@ -507,6 +531,127 @@ export class HiveMemoryRepository {
       )
 
       return { task, inserted: true }
+    })
+  }
+
+  async createInboundA2ARequest(
+    input: CreateInboundA2ARequestInput
+  ): Promise<CreateInboundA2ARequestResult> {
+    const createdAt = new Date().toISOString()
+    const requestFrame = redactA2AFrame(input.requestFrame)
+    const task: A2ATaskRecord = {
+      id: crypto.randomUUID(),
+      workflowRunId: input.workflowRunId,
+      contextId: input.contextId,
+      fromAgent: input.fromAgent,
+      toAgent: input.toAgent,
+      status: "submitted",
+      requestMessageId: input.requestMessageId,
+      idempotencyKey: input.idempotencyKey,
+      createdAt,
+      updatedAt: createdAt
+    }
+    const message: A2AMessageRecord = {
+      id: crypto.randomUUID(),
+      taskId: task.id,
+      contextId: task.contextId,
+      direction: "inbound",
+      fromAgent: task.fromAgent,
+      toAgent: task.toAgent,
+      protocolVersion: input.protocolVersion,
+      method: input.method,
+      transport: input.transport,
+      idempotencyKey: task.idempotencyKey,
+      requestJson: canonicalizeJson(requestFrame),
+      requestSha256: sha256Json(requestFrame),
+      createdAt
+    }
+    const queuedEvent: A2AEventRecord = {
+      id: crypto.randomUUID(),
+      taskId: task.id,
+      messageId: message.id,
+      sequence: 1,
+      eventType: "message_queued",
+      actor: input.actor,
+      payload: redactA2AFrame(input.queuedEventPayload),
+      createdAt
+    }
+
+    return this.database.transaction((connection) => {
+      const existing = connection.prepare(`
+        SELECT * FROM a2a_tasks WHERE idempotency_key = ?
+      `).get(input.idempotencyKey) as A2ATaskRow | undefined
+      if (existing) {
+        return { task: a2aTaskFromRow(existing), inserted: false }
+      }
+
+      connection.prepare(`
+        INSERT INTO a2a_tasks(
+          id, workflow_run_id, context_id, remote_task_id, from_agent, to_agent,
+          status, request_message_id, idempotency_key, error_code, error_message,
+          created_at, updated_at, completed_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        task.id,
+        task.workflowRunId ?? null,
+        task.contextId,
+        null,
+        task.fromAgent,
+        task.toAgent,
+        task.status,
+        task.requestMessageId,
+        task.idempotencyKey,
+        null,
+        null,
+        task.createdAt,
+        task.updatedAt,
+        null
+      )
+
+      connection.prepare(`
+        INSERT INTO a2a_messages(
+          id, task_id, context_id, parent_message_id, direction, from_agent,
+          to_agent, protocol_version, method, transport, idempotency_key,
+          request_json, response_json, request_sha256, response_sha256,
+          created_at, sent_at, received_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        message.id,
+        message.taskId ?? null,
+        message.contextId,
+        null,
+        message.direction,
+        message.fromAgent,
+        message.toAgent,
+        message.protocolVersion,
+        message.method,
+        message.transport,
+        message.idempotencyKey ?? null,
+        message.requestJson,
+        null,
+        message.requestSha256,
+        null,
+        message.createdAt,
+        null,
+        null
+      )
+
+      connection.prepare(`
+        INSERT INTO a2a_events(
+          id, task_id, message_id, sequence, event_type, actor, payload_json, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        queuedEvent.id,
+        queuedEvent.taskId,
+        queuedEvent.messageId ?? null,
+        queuedEvent.sequence,
+        queuedEvent.eventType,
+        queuedEvent.actor,
+        JSON.stringify(queuedEvent.payload),
+        queuedEvent.createdAt
+      )
+
+      return { task, message, queuedEvent, inserted: true }
     })
   }
 

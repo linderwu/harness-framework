@@ -6,7 +6,6 @@ import type {
   WorkflowRun,
   WorkflowStage
 } from "@/lib/types"
-import { sha256Json } from "./a2a-runtime"
 
 export const PUBLIC_A2A_PROTOCOL_VERSION = "0.3.0"
 export const LEGACY_CLAWCODEX_A2A_VERSION = "0.1"
@@ -277,7 +276,14 @@ export function parseA2AMessageRequest(
   const configuration = parseOptionalRecord(params.configuration, "params.configuration")
   const metadata = parseOptionalRecord(params.metadata, "params.metadata")
   const fromAgent = readNonEmptyString(messageMetadata?.fromAgent) ?? "external.user"
-  const toAgent = readNonEmptyString(messageMetadata?.toAgent ?? messageMetadata?.targetAgent) ?? "jormungand"
+  const toAgent = readNonEmptyString(messageMetadata?.toAgent ?? messageMetadata?.targetAgent)
+  if (!toAgent) {
+    throw new A2AProtocolError(
+      "message.metadata.toAgent or message.metadata.targetAgent is required",
+      -32602,
+      400
+    )
+  }
   const explicitIdempotencyKey =
     readNonEmptyString(messageMetadata?.idempotencyKey) ??
     readNonEmptyString(metadata?.idempotencyKey)
@@ -298,25 +304,9 @@ export function parseA2AMessageRequest(
     metadata,
     fromAgent,
     toAgent,
-    idempotencyKey: createA2AIdempotencyKey({
-      contextId,
-      messageId,
-      explicitKey: explicitIdempotencyKey
-    }),
+    idempotencyKey: validateScopedId(explicitIdempotencyKey ?? "", "idempotencyKey"),
     raw: request
   } satisfies ParsedA2AMessageRequest
-}
-
-export function createA2AIdempotencyKey(input: {
-  contextId: string
-  messageId: string
-  explicitKey?: string
-}) {
-  return `a2a:inbound:${sha256Json({
-    contextId: input.contextId,
-    messageId: input.messageId,
-    idempotencyKey: input.explicitKey ?? null
-  })}`
 }
 
 function collectMessageText(value: unknown) {

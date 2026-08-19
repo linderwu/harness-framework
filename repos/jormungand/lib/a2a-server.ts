@@ -82,13 +82,16 @@ interface A2AServerDependencies {
   authorize?: (input: { request: ParsedA2AMessageRequest }) => Promise<void> | void
 }
 
+type A2AFrameListener = (frame: A2AStreamFrame) => void
+
 class A2AServer {
   private readonly cancelHandlers = new Map<string, () => Promise<void> | void>()
+  private readonly inFlightTasks = new Map<string, Promise<A2ATask>>()
 
   constructor(private readonly dependencies: A2AServerDependencies) {}
 
   async send(request: unknown) {
-    return this.handleSend(request, ["message/send"])
+    return this.startSend(request, ["message/send"])
   }
 
   async getTask(taskId: string) {
@@ -144,19 +147,81 @@ class A2AServer {
   }
 
   async *sendStream(request: unknown): AsyncGenerator<A2AStreamFrame> {
-    const task = await this.handleSend(request, ["message/send", "message/stream"])
-    for await (const frame of this.stream(task.id)) {
-      yield frame
+    const queuedFrames: A2AStreamFrame[] = []
+    let wake: (() => void) | undefined
+    let completed = false
+    let streamError: unknown
+    const flush = () => {
+      const resolver = wake
+      wake = undefined
+      resolver?.()
+    }
+
+    void this.startSend(
+      request,
+      ["message/send", "message/stream"],
+      (frame) => {
+        queuedFrames.push(frame)
+        flush()
+      }
+    )
+      .then(() => {
+        completed = true
+        flush()
+      })
+      .catch((error) => {
+        streamError = error
+        completed = true
+        flush()
+      })
+
+    while (!completed || queuedFrames.length > 0) {
+      if (queuedFrames.length === 0) {
+        await new Promise<void>((resolve) => {
+          wake = resolve
+        })
+      }
+
+      while (queuedFrames.length > 0) {
+        yield queuedFrames.shift()!
+      }
+
+      if (streamError) {
+        throw streamError
+      }
     }
   }
 
-  private async handleSend(
+  private startSend(
     rawRequest: unknown,
-    allowedMethods: readonly A2AJsonRpcMethod[]
+    allowedMethods: readonly A2AJsonRpcMethod[],
+    emitFrame?: A2AFrameListener
   ) {
     const request = parseA2AMessageRequest(rawRequest, { allowedMethods })
-    await this.dependencies.authorize?.({ request })
+    const existingInFlight = this.inFlightTasks.get(request.idempotencyKey)
+    if (existingInFlight) {
+      return existingInFlight
+    }
 
+    const sendPromise = (async () => {
+      await this.dependencies.authorize?.({ request })
+      return this.handleSend(request, rawRequest, emitFrame)
+    })()
+
+    this.inFlightTasks.set(request.idempotencyKey, sendPromise)
+
+    return sendPromise.finally(() => {
+      if (this.inFlightTasks.get(request.idempotencyKey) === sendPromise) {
+        this.inFlightTasks.delete(request.idempotencyKey)
+      }
+    })
+  }
+
+  private async handleSend(
+    request: ParsedA2AMessageRequest,
+    rawRequest: unknown,
+    emitFrame?: A2AFrameListener
+  ) {
     const existing = this.dependencies.repository.getA2ATaskByIdempotencyKey(
       request.idempotencyKey
     )
@@ -164,44 +229,31 @@ class A2AServer {
       return this.buildTask(existing.id)
     }
 
-    const created = await this.dependencies.repository.createA2ATask({
+    const created = await this.dependencies.repository.createInboundA2ARequest({
       contextId: request.message.contextId,
       fromAgent: request.fromAgent,
       toAgent: request.toAgent,
-      status: "submitted",
       requestMessageId: request.message.messageId,
-      idempotencyKey: request.idempotencyKey
+      idempotencyKey: request.idempotencyKey,
+      protocolVersion: PUBLIC_A2A_PROTOCOL_VERSION,
+      method: request.method,
+      transport: "jsonrpc",
+      requestFrame: rawRequest,
+      actor: "a2a_server",
+      queuedEventPayload: {
+        idempotencyKey: request.idempotencyKey,
+        messageId: request.message.messageId
+      }
     })
     if (!created.inserted) {
       return this.buildTask(created.task.id)
     }
 
-    const persistedMessage = await this.dependencies.repository.insertA2AMessage({
-      taskId: created.task.id,
-      contextId: created.task.contextId,
-      direction: "inbound",
-      fromAgent: created.task.fromAgent,
-      toAgent: created.task.toAgent,
-      protocolVersion: PUBLIC_A2A_PROTOCOL_VERSION,
-      method: request.method,
-      transport: "jsonrpc",
-      idempotencyKey: request.idempotencyKey,
-      requestFrame: rawRequest
-    })
+    emitFrame?.(this.toStreamFrame(created.queuedEvent, created.task.contextId, "submitted"))
 
-    await this.dependencies.repository.appendA2AEvent({
+    const acceptedEvent = await this.dependencies.repository.appendA2AEvent({
       taskId: created.task.id,
-      messageId: persistedMessage.id,
-      eventType: "message_queued",
-      actor: "a2a_server",
-      payload: {
-        idempotencyKey: request.idempotencyKey,
-        messageId: request.message.messageId
-      }
-    })
-    await this.dependencies.repository.appendA2AEvent({
-      taskId: created.task.id,
-      messageId: persistedMessage.id,
+      messageId: created.message.id,
       eventType: "message_accepted",
       actor: "a2a_server",
       payload: {
@@ -209,22 +261,26 @@ class A2AServer {
         method: request.method
       }
     })
+    emitFrame?.(this.toStreamFrame(acceptedEvent, created.task.contextId, "working"))
     await this.dependencies.repository.updateA2ATask({
       id: created.task.id,
       status: "working"
     })
-    await this.dependencies.repository.appendA2AEvent({
+    const workingEvent = await this.dependencies.repository.appendA2AEvent({
       taskId: created.task.id,
-      messageId: persistedMessage.id,
+      messageId: created.message.id,
       eventType: "task_working",
       actor: request.toAgent,
       payload: { status: "working" }
     })
+    emitFrame?.(this.toStreamFrame(workingEvent, created.task.contextId, "working"))
+
+    const dispatchTask = this.requireTask(created.task.id)
 
     try {
       const dispatchResult = await this.dependencies.dispatch({
         request,
-        task: this.requireTask(created.task.id)
+        task: dispatchTask
       })
       if (dispatchResult.cancel) {
         this.cancelHandlers.set(created.task.id, dispatchResult.cancel)
@@ -237,7 +293,7 @@ class A2AServer {
       const completedAt = terminal ? new Date().toISOString() : undefined
 
       await this.dependencies.repository.updateA2AMessageResponse({
-        id: persistedMessage.id,
+        id: created.message.id,
         responseFrame: {
           result: createTaskPayload({
             task: created.task,
@@ -251,29 +307,38 @@ class A2AServer {
       })
 
       for (const artifact of artifacts) {
-        await this.dependencies.repository.appendA2AEvent({
+        const artifactEvent = await this.dependencies.repository.appendA2AEvent({
           taskId: created.task.id,
-          messageId: persistedMessage.id,
+          messageId: created.message.id,
           eventType: "task_artifact_updated",
           actor: request.toAgent,
           payload: { artifact }
         })
+        emitFrame?.(this.toStreamFrame(artifactEvent, created.task.contextId, "working"))
       }
 
       if (status === "input-required") {
-        await this.dependencies.repository.updateA2ATask({
+        const updatedTask = await this.dependencies.repository.updateA2ATask({
           id: created.task.id,
           status
         })
-        await this.dependencies.repository.appendA2AEvent({
+        const inputRequiredEvent = await this.dependencies.repository.appendA2AEvent({
           taskId: created.task.id,
-          messageId: persistedMessage.id,
+          messageId: created.message.id,
           eventType: "task_input_required",
           actor: request.toAgent,
           payload: { status }
         })
+        emitFrame?.(
+          this.toStreamFrame(
+            inputRequiredEvent,
+            created.task.contextId,
+            updatedTask.status,
+            this.getResponseMessage(created.task.id)
+          )
+        )
       } else {
-        await this.dependencies.repository.updateA2ATask({
+        const updatedTask = await this.dependencies.repository.updateA2ATask({
           id: created.task.id,
           remoteTaskId: dispatchResult.remoteTaskId,
           status,
@@ -282,9 +347,9 @@ class A2AServer {
         })
 
         if (terminal) {
-          await this.dependencies.repository.appendA2AEvent({
+          const terminalEvent = await this.dependencies.repository.appendA2AEvent({
             taskId: created.task.id,
-            messageId: persistedMessage.id,
+            messageId: created.message.id,
             eventType: eventTypeForStatus(status),
             actor: request.toAgent,
             payload: {
@@ -292,6 +357,14 @@ class A2AServer {
               artifactCount: artifacts.length
             }
           })
+          emitFrame?.(
+            this.toStreamFrame(
+              terminalEvent,
+              created.task.contextId,
+              updatedTask.status,
+              this.getResponseMessage(created.task.id)
+            )
+          )
         }
       }
 
@@ -299,7 +372,7 @@ class A2AServer {
     } catch (error) {
       const message = error instanceof Error ? error.message : "Dispatch failed"
       await this.dependencies.repository.updateA2AMessageResponse({
-        id: persistedMessage.id,
+        id: created.message.id,
         responseFrame: {
           error: {
             message
@@ -313,13 +386,21 @@ class A2AServer {
         errorMessage: message,
         completedAt: new Date().toISOString()
       })
-      await this.dependencies.repository.appendA2AEvent({
+      const failedEvent = await this.dependencies.repository.appendA2AEvent({
         taskId: created.task.id,
-        messageId: persistedMessage.id,
+        messageId: created.message.id,
         eventType: "task_failed",
         actor: "a2a_server",
         payload: { message }
       })
+      emitFrame?.(
+        this.toStreamFrame(
+          failedEvent,
+          created.task.contextId,
+          "failed",
+          this.getResponseMessage(created.task.id)
+        )
+      )
       throw error
     }
   }
@@ -367,6 +448,27 @@ class A2AServer {
       throw new A2AProtocolError(`Task ${taskId} was not found`, -32004, 404)
     }
     return task
+  }
+
+  private toStreamFrame(
+    event: A2AEventRecord,
+    contextId: string,
+    state: A2ATaskStatus,
+    message?: A2AMessage
+  ): A2AStreamFrame {
+    return {
+      event: event.eventType,
+      data: {
+        sequence: event.sequence,
+        taskId: event.taskId,
+        contextId,
+        status: {
+          state,
+          message: isTerminalState(state) ? message : undefined
+        },
+        artifact: parseArtifact(event.payload.artifact)
+      }
+    }
   }
 }
 

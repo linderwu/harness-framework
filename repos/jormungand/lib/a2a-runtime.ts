@@ -75,6 +75,9 @@ export interface A2AEventRecord {
 
 const redactedKeyPattern =
   /authorization|token|password|secret|cookie|site_auth/i
+const bearerTokenPattern = /\bBearer\s+[A-Za-z0-9._~+/=-]+\b/gi
+const keyValueSecretPattern =
+  /\b(token|password|secret|cookie|site_auth)\b(\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi
 
 const taskStatusMap = new Map<string, A2ATaskStatus>([
   ["submitted", "submitted"],
@@ -91,6 +94,9 @@ const taskStatusMap = new Map<string, A2ATaskStatus>([
 export function redactA2AFrame<T>(value: T): T {
   if (Array.isArray(value)) {
     return value.map((item) => redactA2AFrame(item)) as T
+  }
+  if (typeof value === "string") {
+    return redactSensitiveString(value) as T
   }
   if (!value || typeof value !== "object") {
     return value
@@ -135,4 +141,13 @@ function sortJsonValue(value: unknown): unknown {
       .sort(([left], [right]) => left.localeCompare(right))
       .map(([key, child]) => [key, sortJsonValue(child)])
   )
+}
+
+function redactSensitiveString(value: string) {
+  return value
+    .replace(bearerTokenPattern, "Bearer [REDACTED]")
+    .replace(
+      keyValueSecretPattern,
+      (_match, key: string, separator: string) => `${key}${separator}[REDACTED]`
+    )
 }

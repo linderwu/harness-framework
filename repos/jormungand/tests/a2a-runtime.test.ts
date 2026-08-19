@@ -37,6 +37,36 @@ test("A2A frame redaction redacts secret-bearing keys recursively without mutati
   assert.equal(original.site_auth_header, "cookie-ish")
 })
 
+test("A2A frame redaction redacts embedded bearer and key-value secrets inside ordinary strings", () => {
+  const original = {
+    note: "Authorization: Bearer upstream-secret",
+    transcript: "cookie=sessionid123 token=abc123 keep this context.",
+    nested: {
+      summary: "password=hunter2 and secret: super-secret",
+      normal: "Discuss token rotation conceptually without sharing any credential."
+    }
+  }
+
+  const redacted = redactA2AFrame(original) as typeof original
+
+  assert.equal(redacted.note, "Authorization: Bearer [REDACTED]")
+  assert.equal(
+    redacted.transcript,
+    "cookie=[REDACTED] token=[REDACTED] keep this context."
+  )
+  assert.equal(
+    redacted.nested.summary,
+    "password=[REDACTED] and secret: [REDACTED]"
+  )
+  assert.equal(
+    redacted.nested.normal,
+    "Discuss token rotation conceptually without sharing any credential."
+  )
+  assert.equal(original.note, "Authorization: Bearer upstream-secret")
+  assert.equal(original.transcript, "cookie=sessionid123 token=abc123 keep this context.")
+  assert.equal(original.nested.summary, "password=hunter2 and secret: super-secret")
+})
+
 test("A2A frame hashing uses canonical JSON order", () => {
   assert.equal(
     canonicalizeJson({ b: 2, a: 1, nested: { z: 1, a: [3, { d: 4, c: 5 }] } }),
