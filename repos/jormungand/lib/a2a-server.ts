@@ -339,6 +339,10 @@ class A2AServer {
         this.cancelHandlers.set(created.task.id, dispatchResult.cancel)
       }
 
+      if (this.requireTask(created.task.id).status === "canceled") {
+        return this.buildTask(created.task.id)
+      }
+
       const status = normalizeA2ATaskStatus(dispatchResult.status)
       const artifacts = normalizeArtifacts(dispatchResult.artifacts)
       const responseMessage = createResponseMessage(created.task, dispatchResult.text)
@@ -368,6 +372,10 @@ class A2AServer {
           payload: { artifact }
         })
         emitFrame?.(this.toStreamFrame(artifactEvent, created.task.contextId, "working"))
+      }
+
+      if (this.requireTask(created.task.id).status === "canceled") {
+        return this.buildTask(created.task.id)
       }
 
       if (status === "input-required") {
@@ -423,6 +431,10 @@ class A2AServer {
 
       return this.buildTask(created.task.id)
     } catch (error) {
+      if (this.requireTask(created.task.id).status === "canceled") {
+        return this.buildTask(created.task.id)
+      }
+
       const message = error instanceof Error ? error.message : "Dispatch failed"
       await this.dependencies.repository.updateA2AMessageResponse({
         id: created.message.id,

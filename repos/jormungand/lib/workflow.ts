@@ -719,7 +719,11 @@ export function createWorkflowRun(input: {
     selectedAgent,
     stageModes,
     skillAssignments,
-    customStages: input.customStages?.map(({ skillContent, commitSha, ...stage }) => stage),
+    customStages: input.customStages?.map((stage) => {
+      return Object.fromEntries(
+        Object.entries(stage).filter(([key]) => key !== "skillContent" && key !== "commitSha")
+      ) as Omit<typeof stage, "skillContent" | "commitSha">
+    }),
     customStageIndex: input.customStages?.length ? 0 : undefined,
     approvalPolicies,
     eventSkills,

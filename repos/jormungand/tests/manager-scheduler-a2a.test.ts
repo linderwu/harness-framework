@@ -541,7 +541,9 @@ async function exerciseWorkerPersistenceFailure(
     const handoffs = repository.listConversation(run.id).filter((entry) => entry.taskId === task.id)
     assert.equal(handoffs.length, 1)
     const existing = handoffs[0]
-    const { id: _id, createdAt: _createdAt, ...sameAttempt } = existing
+    const sameAttempt = Object.fromEntries(
+      Object.entries(existing).filter(([key]) => key !== "id" && key !== "createdAt")
+    ) as Omit<typeof existing, "id" | "createdAt">
     const duplicate = await repository.insertConversation(sameAttempt)
     assert.equal(duplicate.inserted, false)
     assert.equal(repository.listConversation(run.id).filter((entry) => entry.taskId === task.id).length, 1)

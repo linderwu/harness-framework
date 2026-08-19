@@ -578,6 +578,54 @@ test("A2A server cancelTask records a canceled lifecycle state and invokes the c
   )
 })
 
+test("A2A server preserves cancellation when delayed dispatch resolves", async (t) => {
+  const { repository } = await createServer(t)
+  const dispatchStarted = createDeferred<A2AServerDispatchInput>()
+  const releaseDispatch = createDeferred<void>()
+  const server = createA2AServer({
+    repository,
+    dispatch: async (input: A2AServerDispatchInput) => {
+      dispatchStarted.resolve(input)
+      await releaseDispatch.promise
+      return {
+        status: "completed",
+        text: "This result must not complete the canceled task."
+      }
+    }
+  })
+
+  const sendPromise = server.send(createSendRequest({
+    id: "rpc-cancel-race",
+    params: {
+      message: {
+        kind: "message",
+        role: "user",
+        messageId: "message-cancel-race",
+        contextId: "context-cancel-race",
+        parts: [{ kind: "text", text: "cancel this" }],
+        metadata: {
+          idempotencyKey: "cancel-race-idempotency-1",
+          fromAgent: "external.user",
+          toAgent: "jormungand"
+        }
+      }
+    }
+  }))
+
+  const dispatchInput = await dispatchStarted.promise
+  const canceledTask = await server.cancelTask(dispatchInput.task.id)
+  releaseDispatch.resolve()
+  const result = await sendPromise
+
+  assert.equal(canceledTask.status.state, "canceled")
+  assert.equal(result.status.state, "canceled")
+  assert.equal(repository.getA2ATask(dispatchInput.task.id)?.status, "canceled")
+  assert.deepEqual(
+    repository.listA2AEvents(dispatchInput.task.id).map((event) => event.eventType),
+    ["message_queued", "message_accepted", "task_working", "task_canceled"]
+  )
+})
+
 test("A2A server sendStream yields ordered lifecycle and artifact frames through the terminal state", async (t) => {
   const { repository } = await createServer(t)
   const server = createA2AServer({
