@@ -112,6 +112,13 @@ test("workflow mutation errors surface failed-run diagnostics", () => {
   assert.match(route, /\{ error: message, latestRun: failedRun \}/)
 })
 
+test("workflow creation clients retain queued job ids instead of assuming immediate runs", () => {
+  assert.match(dashboard, /response\.status === 202/)
+  assert.match(dashboard, /jobId/)
+  assert.match(dashboard, /queued/)
+  assert.match(dashboard, /setSelectedRunId\(undefined\)/)
+})
+
 test("bridge status panel polls quotas and forwards only codex quota to the Arceus row", () => {
   const panel = functionBody("BridgeStatusPanel")
   const card = functionBody("BridgeStatusCard")
@@ -255,6 +262,10 @@ test("task conversation is durable, targeted, and polls only while pending", () 
   assert.match(conversationSource, /\/conversation/)
   assert.match(conversationSource, /artifactIds/)
   assert.match(conversationSource, /memoryIds/)
+  assert.match(conversationSource, /response\.status === 202/)
+  assert.match(conversationSource, /jobId/)
+  assert.match(conversationSource, /queued/)
+  assert.match(conversationSource, /setStatusMessage\(/)
 })
 
 test("conversation composer sends on Enter but preserves Shift+Enter and IME composition", () => {

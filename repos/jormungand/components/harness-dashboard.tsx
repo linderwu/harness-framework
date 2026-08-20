@@ -269,6 +269,17 @@ function splitLines(value: string) {
   return value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
 }
 
+type WorkflowRunQueuedResult = {
+  status: "queued"
+  jobId: string
+}
+
+function isQueuedWorkflowRunResult(
+  result: WorkflowRun | WorkflowRunQueuedResult
+): result is WorkflowRunQueuedResult {
+  return "jobId" in result
+}
+
 export function HarnessDashboard({
   initialState,
   initialHiveHealth
@@ -288,6 +299,7 @@ export function HarnessDashboard({
   const [isMonitoringExpanded, setIsMonitoringExpanded] = useState(true)
   const [mobilePanel, setMobilePanel] = useState<MobilePanel>()
   const [mutationError, setMutationError] = useState<string | undefined>()
+  const [mutationNotice, setMutationNotice] = useState<string | undefined>()
 	  const [conversationEntries, setConversationEntries] = useState<ConversationEntry[]>([])
 	  const [conversationVersion, setConversationVersion] = useState(0)
 	  const [openComposeSection, setOpenComposeSection] = useState<
@@ -445,6 +457,7 @@ export function HarnessDashboard({
     event.preventDefault()
     setIsMutating(true)
     setMutationError(undefined)
+    setMutationNotice(undefined)
 
     try {
       const response = await fetch("/api/projects", {
@@ -460,7 +473,7 @@ export function HarnessDashboard({
           nonGoals: splitLines(form.nonGoals),
           contextFiles: form.contextFiles
         })
-      })
+          })
       const project = await readProjectMutationResponse(response)
       const codexProfile = getCodexProfileForProject(project.id)
       const run = isAgentTask
@@ -478,7 +491,12 @@ export function HarnessDashboard({
 
       await refreshWorkspace()
       setSelectedProjectId(project.id)
-      setSelectedRunId(run?.id)
+      if (run && isQueuedWorkflowRunResult(run)) {
+        setSelectedRunId(undefined)
+        setMutationNotice(`Workflow run creation queued. Job ID: ${run.jobId}.`)
+      } else {
+        setSelectedRunId(run?.id)
+      }
     } catch (error) {
       setMutationError(error instanceof Error ? error.message : String(error))
     } finally {
@@ -507,6 +525,7 @@ export function HarnessDashboard({
   async function startProjectRun(project: Project) {
     setIsMutating(true)
     setMutationError(undefined)
+    setMutationNotice(undefined)
 
     try {
       const response = await fetch(`/api/projects/${project.id}/workflow-runs`, {
@@ -522,7 +541,12 @@ export function HarnessDashboard({
       const run = await readRunMutationResponse(response)
       await refreshWorkspace()
       setSelectedProjectId(project.id)
-      setSelectedRunId(run.id)
+      if (isQueuedWorkflowRunResult(run)) {
+        setSelectedRunId(undefined)
+        setMutationNotice(`Workflow run queued. Job ID: ${run.jobId}.`)
+      } else {
+        setSelectedRunId(run.id)
+      }
     } catch (error) {
       setMutationError(error instanceof Error ? error.message : String(error))
     } finally {
@@ -532,23 +556,37 @@ export function HarnessDashboard({
 
   async function advanceRun(runId: string) {
     setIsMutating(true)
+    setMutationError(undefined)
+    setMutationNotice(undefined)
     const response = await fetch(`/api/workflow-runs/${runId}/advance`, {
       method: "POST"
     })
     const run = await readRunMutationResponse(response)
     await refreshWorkspace()
-    setSelectedRunId(run.id)
+    if (isQueuedWorkflowRunResult(run)) {
+      setSelectedRunId(runId)
+      setMutationNotice(`Workflow run update queued. Job ID: ${run.jobId}.`)
+    } else {
+      setSelectedRunId(run.id)
+    }
     setIsMutating(false)
   }
 
   async function stopRun(runId: string) {
     setIsMutating(true)
+    setMutationError(undefined)
+    setMutationNotice(undefined)
     const response = await fetch(`/api/workflow-runs/${runId}/stop`, {
       method: "POST"
     })
     const run = await readRunMutationResponse(response)
     await refreshWorkspace()
-    setSelectedRunId(run.id)
+    if (isQueuedWorkflowRunResult(run)) {
+      setSelectedRunId(runId)
+      setMutationNotice(`Workflow run update queued. Job ID: ${run.jobId}.`)
+    } else {
+      setSelectedRunId(run.id)
+    }
     setIsMutating(false)
   }
 
@@ -562,10 +600,19 @@ export function HarnessDashboard({
     }
 
     setIsMutating(true)
-    await fetch(`/api/workflow-runs/${run.id}/cancel`, {
+    setMutationError(undefined)
+    setMutationNotice(undefined)
+    const response = await fetch(`/api/workflow-runs/${run.id}/cancel`, {
       method: "POST"
     })
+    const nextRun = await readRunMutationResponse(response)
     await refreshWorkspace()
+    if (isQueuedWorkflowRunResult(nextRun)) {
+      setSelectedRunId(run.id)
+      setMutationNotice(`Workflow run cancellation queued. Job ID: ${nextRun.jobId}.`)
+    } else {
+      setSelectedRunId(nextRun.id)
+    }
     setIsMutating(false)
   }
 
@@ -581,7 +628,12 @@ export function HarnessDashboard({
     })
     const run = await readRunMutationResponse(response)
     await refreshWorkspace()
-    setSelectedRunId(run.id)
+    if (isQueuedWorkflowRunResult(run)) {
+      setSelectedRunId(selectedRun?.id)
+      setMutationNotice(`Approval gate decision queued. Job ID: ${run.jobId}.`)
+    } else {
+      setSelectedRunId(run.id)
+    }
     setIsMutating(false)
   }
 
@@ -694,7 +746,20 @@ export function HarnessDashboard({
   async function readRunMutationResponse(response: Response) {
     const data = (await response.json()) as
       | WorkflowRun
+      | WorkflowRunQueuedResult
       | { error?: string; latestRun?: WorkflowRun }
+
+    if (response.status === 202) {
+      const queuedData = data as { error?: string; jobId?: string }
+      if (!queuedData.jobId) {
+        throw new Error(queuedData.error || "Workflow mutation failed")
+      }
+
+      return {
+        status: "queued",
+        jobId: queuedData.jobId
+      } satisfies WorkflowRunQueuedResult
+    }
 
     if (response.ok) {
       return data as WorkflowRun
@@ -853,11 +918,11 @@ export function HarnessDashboard({
           </button>
 
           <div className="runActionRow">
-            <button
-              className="primaryButton createRunButton"
-              disabled={isMutating || (isArceusMaintenance && splitLines(form.successCriteria).length === 0)}
-            >
-              <Play size={17} />
+          <button
+            className="primaryButton createRunButton"
+            disabled={isMutating || (isArceusMaintenance && splitLines(form.successCriteria).length === 0)}
+          >
+            <Play size={17} />
               {isAgentTask ? "Run Task" : "Create Project"}
             </button>
             <button
@@ -893,6 +958,11 @@ export function HarnessDashboard({
           {mutationError ? (
             <p className="formError" role="alert">
               {mutationError}
+            </p>
+          ) : null}
+          {mutationNotice ? (
+            <p role="status">
+              {mutationNotice}
             </p>
           ) : null}
 
