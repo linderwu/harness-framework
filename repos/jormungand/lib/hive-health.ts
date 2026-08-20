@@ -1,6 +1,6 @@
 import { readFile, readdir, stat } from "node:fs/promises"
 import { isAbsolute, relative, resolve } from "node:path"
-import { getConfiguredDataDir, getWorkflowStatePath } from "./data-paths"
+import { getConfiguredDataDir, getWorkflowStatePath, type DataPathEnv } from "./data-paths"
 import type { HiveDatabase } from "./hive-memory/database"
 
 export interface HiveMemoryHealthSummary {
@@ -15,11 +15,14 @@ export interface HiveMemoryHealthSummary {
   lastBackupAt?: string
 }
 
-export async function getHiveMemoryHealth(database: HiveDatabase): Promise<HiveMemoryHealthSummary> {
+export async function getHiveMemoryHealth(
+  database: HiveDatabase,
+  env: DataPathEnv = process.env
+): Promise<HiveMemoryHealthSummary> {
   const health = database.health()
-  const dataDir = resolve(getConfiguredDataDir())
+  const dataDir = resolve(getConfiguredDataDir(env))
   const databasePath = resolve(health.path)
-  const workflowStatePath = resolve(getWorkflowStatePath())
+  const workflowStatePath = resolve(getWorkflowStatePath(env))
   const pathFromDataDir = relative(dataDir, databasePath)
   const pathWithinConfiguredDataDir = pathFromDataDir !== "" && !pathFromDataDir.startsWith("..") && !isAbsolute(pathFromDataDir)
   const workflowStatePathFromDataDir = relative(dataDir, workflowStatePath)

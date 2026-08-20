@@ -29,18 +29,17 @@ const readyState = {
 
 async function withStore<T>(
   workspaceRoot: string,
-  operation: (store: typeof import("../lib/store")) => Promise<T>
+  configuredRoot: string,
+  operation: (
+    store: typeof import("../lib/store"),
+    options: { dataDir: string; legacyDataDir: string }
+  ) => Promise<T>
 ) {
-  const previousCwd = process.cwd()
-  process.chdir(workspaceRoot)
-  delete require.cache[require.resolve("../lib/store")]
-
-  try {
-    const store = (await import("../lib/store")) as typeof import("../lib/store")
-    return await operation(store)
-  } finally {
-    process.chdir(previousCwd)
-  }
+  const store = (await import("../lib/store")) as typeof import("../lib/store")
+  return await operation(store, {
+    dataDir: configuredRoot,
+    legacyDataDir: join(workspaceRoot, "data")
+  })
 }
 
 test("legacy workflow state is copied into the configured root on first read", async (t) => {
@@ -52,24 +51,13 @@ test("legacy workflow state is copied into the configured root on first read", a
   await mkdir(join(workspaceRoot, "data"), { recursive: true })
   await writeFile(legacyStatePath, JSON.stringify(legacyState, null, 2))
 
-  const previousDataDir = process.env.JORMUNGAND_DATA_DIR
-  process.env.JORMUNGAND_DATA_DIR = configuredRoot
-  t.after(() => {
-    if (previousDataDir === undefined) {
-      delete process.env.JORMUNGAND_DATA_DIR
-      return
-    }
-
-    process.env.JORMUNGAND_DATA_DIR = previousDataDir
-  })
-
   t.after(async () => {
     await rm(workspaceRoot, { recursive: true, force: true })
     await rm(configuredRoot, { recursive: true, force: true })
   })
 
-  await withStore(workspaceRoot, async ({ readState }) => {
-    const state = await readState()
+  await withStore(workspaceRoot, configuredRoot, async ({ readState }, options) => {
+    const state = await readState(options)
 
     assert.equal(state.warnings?.[0]?.message, "legacy state")
     const copiedState = JSON.parse(await readFile(configuredStatePath, "utf8")) as typeof legacyState
@@ -87,24 +75,13 @@ test("newer configured workflow state is not overwritten by the legacy source", 
   await writeFile(legacyStatePath, JSON.stringify(legacyState, null, 2))
   await writeFile(configuredStatePath, JSON.stringify(configuredState, null, 2))
 
-  const previousDataDir = process.env.JORMUNGAND_DATA_DIR
-  process.env.JORMUNGAND_DATA_DIR = configuredRoot
-  t.after(() => {
-    if (previousDataDir === undefined) {
-      delete process.env.JORMUNGAND_DATA_DIR
-      return
-    }
-
-    process.env.JORMUNGAND_DATA_DIR = previousDataDir
-  })
-
   t.after(async () => {
     await rm(workspaceRoot, { recursive: true, force: true })
     await rm(configuredRoot, { recursive: true, force: true })
   })
 
-  await withStore(workspaceRoot, async ({ readState }) => {
-    const state = await readState()
+  await withStore(workspaceRoot, configuredRoot, async ({ readState }, options) => {
+    const state = await readState(options)
 
     assert.equal(state.warnings?.[0]?.message, "configured state")
     const storedConfiguredState = JSON.parse(
@@ -119,23 +96,12 @@ test("health reports workflow state and hive paths inside the configured root", 
   const database = openHiveDatabase({ dataDir })
   await writeReadyWorkflowState(dataDir, readyState)
 
-  const previousDataDir = process.env.JORMUNGAND_DATA_DIR
-  process.env.JORMUNGAND_DATA_DIR = dataDir
-  t.after(() => {
-    if (previousDataDir === undefined) {
-      delete process.env.JORMUNGAND_DATA_DIR
-      return
-    }
-
-    process.env.JORMUNGAND_DATA_DIR = previousDataDir
-  })
-
   t.after(async () => {
     database.close()
     await rm(dataDir, { recursive: true, force: true })
   })
 
-  const health = await getHiveMemoryHealth(database)
+  const health = await getHiveMemoryHealth(database, { JORMUNGAND_DATA_DIR: dataDir })
 
   assert.equal(health.databasePath, join(dataDir, "hive-memory.sqlite"))
   assert.equal(health.workflowStatePath, join(dataDir, "harness-state.json"))
@@ -148,23 +114,12 @@ test("health reports invalid workflow state without throwing", async (t) => {
   const database = openHiveDatabase({ dataDir })
   await writeFile(join(dataDir, "harness-state.json"), "{not valid json")
 
-  const previousDataDir = process.env.JORMUNGAND_DATA_DIR
-  process.env.JORMUNGAND_DATA_DIR = dataDir
-  t.after(() => {
-    if (previousDataDir === undefined) {
-      delete process.env.JORMUNGAND_DATA_DIR
-      return
-    }
-
-    process.env.JORMUNGAND_DATA_DIR = previousDataDir
-  })
-
   t.after(async () => {
     database.close()
     await rm(dataDir, { recursive: true, force: true })
   })
 
-  const health = await getHiveMemoryHealth(database)
+  const health = await getHiveMemoryHealth(database, { JORMUNGAND_DATA_DIR: dataDir })
 
   assert.equal(health.workflowStatePath, join(dataDir, "harness-state.json"))
   assert.equal(health.workflowStatePathWithinConfiguredDataDir, true)
@@ -176,23 +131,12 @@ test("health reports missing workflow state without throwing", async (t) => {
   const dataDir = await mkdtemp(join(tmpdir(), "jormungand-health-"))
   const database = openHiveDatabase({ dataDir })
 
-  const previousDataDir = process.env.JORMUNGAND_DATA_DIR
-  process.env.JORMUNGAND_DATA_DIR = dataDir
-  t.after(() => {
-    if (previousDataDir === undefined) {
-      delete process.env.JORMUNGAND_DATA_DIR
-      return
-    }
-
-    process.env.JORMUNGAND_DATA_DIR = previousDataDir
-  })
-
   t.after(async () => {
     database.close()
     await rm(dataDir, { recursive: true, force: true })
   })
 
-  const health = await getHiveMemoryHealth(database)
+  const health = await getHiveMemoryHealth(database, { JORMUNGAND_DATA_DIR: dataDir })
 
   assert.equal(health.workflowStatePath, join(dataDir, "harness-state.json"))
   assert.equal(health.workflowStatePathWithinConfiguredDataDir, true)
@@ -204,17 +148,6 @@ test("backup and verify preserve paired sqlite and workflow state artifacts", as
   const dataDir = await mkdtemp(join(tmpdir(), "jormungand-backup-"))
   const database = openHiveDatabase({ dataDir })
   await writeReadyWorkflowState(dataDir, readyState)
-
-  const previousDataDir = process.env.JORMUNGAND_DATA_DIR
-  process.env.JORMUNGAND_DATA_DIR = dataDir
-  t.after(() => {
-    if (previousDataDir === undefined) {
-      delete process.env.JORMUNGAND_DATA_DIR
-      return
-    }
-
-    process.env.JORMUNGAND_DATA_DIR = previousDataDir
-  })
 
   t.after(async () => {
     database.close()
@@ -244,7 +177,7 @@ test("backup and verify preserve paired sqlite and workflow state artifacts", as
   assert.equal(verifyResult.status, 0, verifyResult.stderr)
   assert.match(verifyResult.stdout, /restore_verification=PASS/)
 
-  const health = await getHiveMemoryHealth(database)
+  const health = await getHiveMemoryHealth(database, { JORMUNGAND_DATA_DIR: dataDir })
 
   assert.equal(health.workflowStateStatus, "ready")
 })

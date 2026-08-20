@@ -70,8 +70,8 @@
     <text class="node-desc" x="916" y="318">skill bundles.</text>
     <rect class="node storage" x="600" y="350" width="220" height="110" rx="8" fill="#f5e6ff" />
     <text class="node-title" x="616" y="378">Workspace Store</text>
-    <text class="node-desc" x="616" y="402">Local JSON-backed project and</text>
-    <text class="node-desc" x="616" y="418">workflow state.</text>
+    <text class="node-desc" x="616" y="402">Configured data-dir persistence</text>
+    <text class="node-desc" x="616" y="418">for SQLite and workflow JSON.</text>
     <rect class="node external" x="1190" y="30" width="220" height="110" rx="8" fill="#ffe3d8" />
     <text class="node-title" x="1206" y="58">Codex Bridge</text>
     <text class="node-desc" x="1206" y="82">External execution bridge.</text>

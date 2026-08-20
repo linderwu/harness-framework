@@ -41,7 +41,7 @@
     <text class="node-desc" x="376" y="152">Serves UI and route handlers.</text>
     <rect class="node storage" x="680" y="100" width="220" height="110" rx="8" fill="#f5e6ff" />
     <text class="node-title" x="696" y="128">Local State File</text>
-    <text class="node-desc" x="696" y="152">repos/jormungand/data/harness-state.json.</text>
+    <text class="node-desc" x="696" y="152">`JORMUNGAND_DATA_DIR`/harness-state.json.</text>
     <rect class="node external" x="1000" y="40" width="220" height="110" rx="8" fill="#ffe3d8" />
     <text class="node-title" x="1016" y="68">Local Codex Bridge</text>
     <text class="node-desc" x="1016" y="92">Optional CODEX_BRIDGE_URL process.</text>
