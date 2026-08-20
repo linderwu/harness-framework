@@ -71,6 +71,12 @@ When `JORMUNGAND_A2A_TOKEN` is unset, those same API routes fall back to the
 existing site Basic Auth boundary. Basic Auth and Bearer are not
 simultaneously required on the same `Authorization` header.
 
+Site Basic Auth counts every failed protected request per source IP, including
+missing or malformed `Authorization` headers. After five consecutive failures,
+that IP remains locked until the service restarts. A successful authentication
+clears the IP's failure count. There is no manual unlock endpoint, and each
+process keeps its own in-memory lockout state in multi-instance deployments.
+
 ### Discovery and routes
 
 - `GET /.well-known/agent-card.json`

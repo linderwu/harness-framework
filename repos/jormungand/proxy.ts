@@ -5,6 +5,7 @@ import {
   shouldBypassSiteAuthentication,
   shouldRequireSiteAuthentication
 } from "./lib/site-auth"
+import { siteAuthAttemptTracker } from "./lib/site-auth-attempts"
 
 const authRealm = "Jormungandr"
 
@@ -36,16 +37,40 @@ export function proxy(request: NextRequest) {
     })
   }
 
+  const clientIp = getClientIp(request)
+
+  if (siteAuthAttemptTracker.isLocked(clientIp)) {
+    return authenticationRequired()
+  }
+
   if (hasValidBasicAuth(request, username, password)) {
+    siteAuthAttemptTracker.recordSuccess(clientIp)
     return NextResponse.next()
   }
 
+  siteAuthAttemptTracker.recordFailure(clientIp)
+  return authenticationRequired()
+}
+
+function authenticationRequired() {
   return new NextResponse("Authentication required.", {
     headers: {
       "WWW-Authenticate": `Basic realm="${authRealm}", charset="UTF-8"`
     },
     status: 401
   })
+}
+
+function getClientIp(request: NextRequest) {
+  const forwardedIp = request.headers
+    .get("x-forwarded-for")
+    ?.split(",")[0]
+    ?.trim()
+  if (forwardedIp) {
+    return forwardedIp
+  }
+
+  return request.headers.get("x-real-ip")?.trim() || "unknown"
 }
 
 function hasValidBasicAuth(
