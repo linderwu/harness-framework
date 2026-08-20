@@ -276,15 +276,28 @@ function createWorkflowRunIdempotencyKey() {
   )
 }
 
-type WorkflowRunQueuedResult = {
-  status: "queued"
+type WorkflowRunJobStatus = "queued" | "running" | "completed" | "failed" | "canceled"
+
+type WorkflowRunJobResult = {
+  status: WorkflowRunJobStatus
   jobId: string
+  error?: string
 }
 
-function isQueuedWorkflowRunResult(
-  result: WorkflowRun | WorkflowRunQueuedResult
-): result is WorkflowRunQueuedResult {
-  return "jobId" in result
+function isWorkflowRunJobResult(result: unknown): result is WorkflowRunJobResult {
+  if (typeof result !== "object" || result === null || !("status" in result) || !("jobId" in result)) {
+    return false
+  }
+
+  const candidate = result as { status?: unknown; jobId?: unknown }
+  return (
+    typeof candidate.jobId === "string" &&
+    (candidate.status === "queued" ||
+      candidate.status === "running" ||
+      candidate.status === "completed" ||
+      candidate.status === "failed" ||
+      candidate.status === "canceled")
+  )
 }
 
 export function HarnessDashboard({
@@ -501,9 +514,8 @@ export function HarnessDashboard({
 
       await refreshWorkspace()
       setSelectedProjectId(project.id)
-      if (run && isQueuedWorkflowRunResult(run)) {
-        setSelectedRunId(undefined)
-        setMutationNotice(`Workflow run creation queued. Job ID: ${run.jobId}.`)
+      if (run && isWorkflowRunJobResult(run)) {
+        reportWorkflowRunJobResult(run, undefined, "Workflow run creation")
       } else {
         setSelectedRunId(run?.id)
       }
@@ -554,9 +566,8 @@ export function HarnessDashboard({
       const run = await readRunMutationResponse(response)
       await refreshWorkspace()
       setSelectedProjectId(project.id)
-      if (isQueuedWorkflowRunResult(run)) {
-        setSelectedRunId(undefined)
-        setMutationNotice(`Workflow run queued. Job ID: ${run.jobId}.`)
+      if (isWorkflowRunJobResult(run)) {
+        reportWorkflowRunJobResult(run, undefined, "Workflow run")
       } else {
         setSelectedRunId(run.id)
       }
@@ -576,9 +587,8 @@ export function HarnessDashboard({
     })
     const run = await readRunMutationResponse(response)
     await refreshWorkspace()
-    if (isQueuedWorkflowRunResult(run)) {
-      setSelectedRunId(runId)
-      setMutationNotice(`Workflow run update queued. Job ID: ${run.jobId}.`)
+    if (isWorkflowRunJobResult(run)) {
+      reportWorkflowRunJobResult(run, runId, "Workflow run update")
     } else {
       setSelectedRunId(run.id)
     }
@@ -594,9 +604,8 @@ export function HarnessDashboard({
     })
     const run = await readRunMutationResponse(response)
     await refreshWorkspace()
-    if (isQueuedWorkflowRunResult(run)) {
-      setSelectedRunId(runId)
-      setMutationNotice(`Workflow run update queued. Job ID: ${run.jobId}.`)
+    if (isWorkflowRunJobResult(run)) {
+      reportWorkflowRunJobResult(run, runId, "Workflow run update")
     } else {
       setSelectedRunId(run.id)
     }
@@ -620,9 +629,8 @@ export function HarnessDashboard({
     })
     const nextRun = await readRunMutationResponse(response)
     await refreshWorkspace()
-    if (isQueuedWorkflowRunResult(nextRun)) {
-      setSelectedRunId(run.id)
-      setMutationNotice(`Workflow run cancellation queued. Job ID: ${nextRun.jobId}.`)
+    if (isWorkflowRunJobResult(nextRun)) {
+      reportWorkflowRunJobResult(nextRun, run.id, "Workflow run cancellation")
     } else {
       setSelectedRunId(nextRun.id)
     }
@@ -641,9 +649,8 @@ export function HarnessDashboard({
     })
     const run = await readRunMutationResponse(response)
     await refreshWorkspace()
-    if (isQueuedWorkflowRunResult(run)) {
-      setSelectedRunId(selectedRun?.id)
-      setMutationNotice(`Approval gate decision queued. Job ID: ${run.jobId}.`)
+    if (isWorkflowRunJobResult(run)) {
+      reportWorkflowRunJobResult(run, selectedRun?.id, "Approval gate decision")
     } else {
       setSelectedRunId(run.id)
     }
@@ -759,8 +766,12 @@ export function HarnessDashboard({
   async function readRunMutationResponse(response: Response) {
     const data = (await response.json()) as
       | WorkflowRun
-      | WorkflowRunQueuedResult
+      | WorkflowRunJobResult
       | { error?: string; latestRun?: WorkflowRun }
+
+    if (isWorkflowRunJobResult(data)) {
+      return data
+    }
 
     if (response.status === 202) {
       const queuedData = data as { error?: string; jobId?: string }
@@ -771,7 +782,7 @@ export function HarnessDashboard({
       return {
         status: "queued",
         jobId: queuedData.jobId
-      } satisfies WorkflowRunQueuedResult
+      } satisfies WorkflowRunJobResult
     }
 
     if (response.ok) {
@@ -783,6 +794,20 @@ export function HarnessDashboard({
     }
 
     throw new Error(("error" in data && data.error) || "Workflow mutation failed")
+  }
+
+  function reportWorkflowRunJobResult(
+    result: WorkflowRunJobResult,
+    selectedRunId: string | undefined,
+    label: string
+  ) {
+    setSelectedRunId(selectedRunId)
+    const message = `${label} ${result.status}. Job ID: ${result.jobId}.`
+    if (result.status === "failed") {
+      setMutationError(result.error ? `${message} ${result.error}` : message)
+    } else {
+      setMutationNotice(message)
+    }
   }
 
   async function readProjectMutationResponse(response: Response) {

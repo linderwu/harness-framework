@@ -116,7 +116,23 @@ test("workflow creation clients retain queued job ids instead of assuming immedi
   assert.match(dashboard, /response\.status === 202/)
   assert.match(dashboard, /jobId/)
   assert.match(dashboard, /queued/)
-  assert.match(dashboard, /setSelectedRunId\(undefined\)/)
+  assert.match(dashboard, /reportWorkflowRunJobResult\(run, undefined, "Workflow run"\)/)
+})
+
+test("workflow actions keep durable job envelopes out of run selection", () => {
+  assert.match(
+    dashboard,
+    /type WorkflowRunJobStatus = "queued" \| "running" \| "completed" \| "failed" \| "canceled"/
+  )
+  assert.match(dashboard, /function isWorkflowRunJobResult\(result: unknown\)/)
+  assert.match(dashboard, /if \(isWorkflowRunJobResult\(data\)\) \{\s*return data/)
+  assert.match(dashboard, /function reportWorkflowRunJobResult\(/)
+  assert.match(dashboard, /result\.status === "failed"/)
+  assert.match(dashboard, /result\.jobId/)
+  assert.match(dashboard, /reportWorkflowRunJobResult\(run, undefined, "Workflow run"\)/)
+  assert.match(dashboard, /reportWorkflowRunJobResult\(run, runId, "Workflow run update"\)/)
+  assert.match(dashboard, /reportWorkflowRunJobResult\(nextRun, run\.id, "Workflow run cancellation"\)/)
+  assert.match(dashboard, /reportWorkflowRunJobResult\(run, selectedRun\?\.id, "Approval gate decision"\)/)
 })
 
 test("workflow run submissions send idempotency keys", () => {
