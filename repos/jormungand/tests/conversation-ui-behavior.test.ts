@@ -639,6 +639,114 @@ test("openclaw live submission lifecycle keeps the stream open for the current r
   assert.equal(terminalOutcome.lifecycle, undefined)
 })
 
+test("openclaw live source errors are ignored after a terminal frame until the POST settles", async () => {
+  const taskConversationModule = await loadTaskConversationModule()
+  const startAgentLiveSubmissionLifecycle = Reflect.get(taskConversationModule, "startAgentLiveSubmissionLifecycle") as
+    | (() => { postPending: boolean; terminalEventReceived: boolean })
+    | undefined
+  const advanceAgentLiveSubmissionLifecycle = Reflect.get(taskConversationModule, "advanceAgentLiveSubmissionLifecycle") as
+    | ((
+        lifecycle: { postPending: boolean; terminalEventReceived: boolean } | undefined,
+        event: AgentLiveEvent
+      ) => {
+        lifecycle: { postPending: boolean; terminalEventReceived: boolean } | undefined
+        shouldCloseSource: boolean
+      })
+    | undefined
+  const shouldIgnoreAgentLiveSourceError = Reflect.get(taskConversationModule, "shouldIgnoreAgentLiveSourceError") as
+    | ((lifecycle: { postPending: boolean; terminalEventReceived: boolean } | undefined) => boolean)
+    | undefined
+  const settleAgentLiveSubmissionLifecycle = Reflect.get(taskConversationModule, "settleAgentLiveSubmissionLifecycle") as
+    | ((
+        lifecycle: { postPending: boolean; terminalEventReceived: boolean } | undefined
+      ) => {
+        lifecycle: { postPending: boolean; terminalEventReceived: boolean } | undefined
+        shouldCloseSource: boolean
+      })
+    | undefined
+
+  assert.equal(typeof startAgentLiveSubmissionLifecycle, "function")
+  assert.equal(typeof advanceAgentLiveSubmissionLifecycle, "function")
+  assert.equal(typeof shouldIgnoreAgentLiveSourceError, "function")
+  assert.equal(typeof settleAgentLiveSubmissionLifecycle, "function")
+
+  const pendingLifecycle = startAgentLiveSubmissionLifecycle!()
+  assert.equal(shouldIgnoreAgentLiveSourceError!(pendingLifecycle), false)
+
+  const terminalOutcome = advanceAgentLiveSubmissionLifecycle!(pendingLifecycle, {
+    id: "completed-before-eof",
+    sequence: 12,
+    conversationId: "conversation-1",
+    agentId: "openclaw.rowlet",
+    type: "completed",
+    createdAt: "2026-08-20T00:00:12.000Z",
+    message: "current run completed"
+  })
+
+  assert.equal(terminalOutcome.shouldCloseSource, false)
+  assert.deepEqual(terminalOutcome.lifecycle, {
+    postPending: true,
+    terminalEventReceived: true
+  })
+  assert.equal(shouldIgnoreAgentLiveSourceError!(terminalOutcome.lifecycle), true)
+
+  const settledOutcome = settleAgentLiveSubmissionLifecycle!(terminalOutcome.lifecycle)
+  assert.equal(settledOutcome.shouldCloseSource, true)
+  assert.equal(settledOutcome.lifecycle, undefined)
+  assert.equal(shouldIgnoreAgentLiveSourceError!(settledOutcome.lifecycle), false)
+})
+
+test("agent live panel state follows the active live stream instead of the target selector", async () => {
+  const taskConversationModule = await loadTaskConversationModule()
+  const getAgentLivePanelState = Reflect.get(taskConversationModule, "getAgentLivePanelState") as
+    | ((input: {
+        targetAgent: AgentKind
+        liveSourceAgentId?: AgentKind
+        liveEventAgentId?: AgentKind
+        hasActiveSource: boolean
+        status?: string
+        reasoning?: string
+        eventCount: number
+      }) => {
+        visible: boolean
+        agentId?: AgentKind
+      })
+    | undefined
+
+  assert.equal(typeof getAgentLivePanelState, "function")
+
+  assert.deepEqual(getAgentLivePanelState!({
+    targetAgent: "codex",
+    liveSourceAgentId: "openclaw.rowlet",
+    hasActiveSource: true,
+    eventCount: 0
+  }), {
+    visible: true,
+    agentId: "openclaw.rowlet"
+  })
+
+  assert.deepEqual(getAgentLivePanelState!({
+    targetAgent: "codex",
+    liveSourceAgentId: "openclaw.rowlet",
+    liveEventAgentId: "openclaw.gengar",
+    hasActiveSource: false,
+    status: "OpenClaw finished",
+    eventCount: 2
+  }), {
+    visible: true,
+    agentId: "openclaw.gengar"
+  })
+
+  assert.deepEqual(getAgentLivePanelState!({
+    targetAgent: "codex",
+    hasActiveSource: false,
+    eventCount: 0
+  }), {
+    visible: false,
+    agentId: undefined
+  })
+})
+
 test("openclaw live helpers encode the SSE path and bound preview activity", async () => {
   const taskConversationModule = await loadTaskConversationModule()
   const buildConversationLivePath = Reflect.get(taskConversationModule, "buildConversationLivePath") as

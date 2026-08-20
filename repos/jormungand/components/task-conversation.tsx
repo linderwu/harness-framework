@@ -48,6 +48,10 @@ type AgentLiveSubmissionLifecycle = {
   postPending: boolean
   terminalEventReceived: boolean
 }
+type AgentLivePanelState = {
+  visible: boolean
+  agentId?: AgentKind
+}
 
 export const MAX_VISIBLE_AGENT_LIVE_EVENTS = 18
 
@@ -143,6 +147,37 @@ export function settleAgentLiveSubmissionLifecycle(
   }
 }
 
+export function shouldIgnoreAgentLiveSourceError(
+  lifecycle: AgentLiveSubmissionLifecycle | undefined
+) {
+  return !!lifecycle?.postPending && lifecycle.terminalEventReceived
+}
+
+export function getAgentLivePanelState(input: {
+  targetAgent: AgentKind
+  liveSourceAgentId?: AgentKind
+  liveEventAgentId?: AgentKind
+  hasActiveSource: boolean
+  status?: string
+  reasoning?: string
+  eventCount: number
+}): AgentLivePanelState {
+  const agentId = input.liveEventAgentId
+    ?? input.liveSourceAgentId
+    ?? (shouldOpenAgentLiveStream(input.targetAgent) ? input.targetAgent : undefined)
+  const visible = !!agentId && (
+    input.hasActiveSource
+    || !!input.status
+    || !!input.reasoning
+    || input.eventCount > 0
+  )
+
+  return {
+    visible,
+    agentId
+  }
+}
+
 export function TaskConversation(props: {
   run?: WorkflowRun
   initialEntries: ConversationEntry[]
@@ -169,6 +204,7 @@ export function TaskConversation(props: {
   const [agentLiveReasoning, setAgentLiveReasoning] = useState<string | undefined>()
   const [agentLiveStatus, setAgentLiveStatus] = useState<string | undefined>()
   const [activeEventSource, setActiveEventSource] = useState<EventSource | undefined>()
+  const [activeAgentLiveSourceAgentId, setActiveAgentLiveSourceAgentId] = useState<AgentKind | undefined>()
   const [isControlling, setIsControlling] = useState(false)
   const [isLoadingConversation, setIsLoadingConversation] = useState(true)
   const [isStartingConversation, setIsStartingConversation] = useState(false)
@@ -259,6 +295,7 @@ export function TaskConversation(props: {
     agentLiveEventListenerRef.current = undefined
     agentLiveErrorListenerRef.current = undefined
     setActiveEventSource(undefined)
+    setActiveAgentLiveSourceAgentId(undefined)
 
     if (!options?.preservePreview) {
       resetAgentLivePreview()
@@ -441,6 +478,7 @@ export function TaskConversation(props: {
         if (typeof window !== "undefined" && typeof EventSource === "function") {
           try {
             const source = new EventSource(buildConversationLivePath(activeConversationId))
+            setActiveAgentLiveSourceAgentId(targetAgent)
             const handleAgentLiveEvent: EventListener = (rawEvent) => {
               const nextGeneration = requestGeneration.current
               if (generation !== nextGeneration) {
@@ -466,6 +504,9 @@ export function TaskConversation(props: {
               }
             }
             const handleAgentLiveError: EventListener = () => {
+              if (shouldIgnoreAgentLiveSourceError(agentLiveSubmissionLifecycleRef.current)) {
+                return
+              }
               closeAgentLiveSource()
             }
 
@@ -803,11 +844,22 @@ export function TaskConversation(props: {
       type: event.type,
       message: readAgentLiveMessage(event) ?? "Agent activity"
     }))
-  const hasAgentLiveActivity = shouldOpenAgentLiveStream(targetAgent)
-    && (!!activeEventSource || !!agentLiveStatus || !!agentLiveReasoning || agentLiveEvents.length > 0)
-  const selectedAgentLabel = hasCodexSession
-    ? getAgentLabel("codex")
-    : getAgentLabel(agentLiveEvents.at(-1)?.agentId ?? targetAgent)
+  const agentLivePanelState = getAgentLivePanelState({
+    targetAgent,
+    liveSourceAgentId: activeAgentLiveSourceAgentId,
+    liveEventAgentId: agentLiveEvents.at(-1)?.agentId,
+    hasActiveSource: !!activeEventSource,
+    status: agentLiveStatus,
+    reasoning: agentLiveReasoning,
+    eventCount: agentLiveEvents.length
+  })
+  const hasAgentLiveActivity = agentLivePanelState.visible
+  const showsCodexSession = hasCodexSession && !hasAgentLiveActivity
+  const selectedAgentLabel = getAgentLabel(
+    hasAgentLiveActivity
+      ? agentLivePanelState.agentId ?? targetAgent
+      : "codex"
+  )
   const isConversationActionPending = isLoadingConversation || isStartingConversation || !!activeManagerAction
   const areManagerControlsDisabled = isConversationManagerLocked({
     isLoadingConversation,
@@ -985,33 +1037,33 @@ export function TaskConversation(props: {
         </dialog>
       ) : null}
       {statusMessage ? <p role="status">{statusMessage}</p> : null}
-      {isUnbound && (session || hasAgentLiveActivity) ? (
-        <section className="codexActivity" aria-label={hasCodexSession ? "Codex activity" : "Agent activity"}>
+      {isUnbound && (showsCodexSession || hasAgentLiveActivity) ? (
+        <section className="codexActivity" aria-label={showsCodexSession ? "Codex activity" : "Agent activity"}>
           <div className="codexActivityHeader">
             <div>
-              <p className="eyebrow">{hasCodexSession ? "Live Codex session" : "Live Agent session"}</p>
-              <strong>{hasCodexSession ? formatSessionStatus(session) : agentLiveStatus ?? "Working"}</strong>
+              <p className="eyebrow">{showsCodexSession ? "Live Codex session" : "Live Agent session"}</p>
+              <strong>{showsCodexSession ? formatSessionStatus(session) : agentLiveStatus ?? "Working"}</strong>
               <p>{selectedAgentLabel}</p>
             </div>
             <div className="codexActivityActions">
               {isTurnRunning ? <button className="compactPanelButton" disabled={isControlling} onClick={() => void control("interrupt")} type="button">Pause</button> : null}
               {isPaused ? <button className="compactPanelButton" disabled={isControlling} onClick={() => void control("resume")} type="button">Continue</button> : null}
-              {hasCodexSession && session.status !== "stopped" && session.status !== "failed" && (isTurnRunning || isPaused) ? <button className="compactPanelButton danger" disabled={isControlling} onClick={() => void control("stop")} type="button">Stop</button> : null}
+              {showsCodexSession && session.status !== "stopped" && session.status !== "failed" && (isTurnRunning || isPaused) ? <button className="compactPanelButton danger" disabled={isControlling} onClick={() => void control("stop")} type="button">Stop</button> : null}
             </div>
           </div>
-          {hasCodexSession && visibleActivityEvents.length ? (
+          {showsCodexSession && visibleActivityEvents.length ? (
             <ol className="codexActivityEvents" aria-live="polite">
               {visibleActivityEvents.map((event) => <li key={event.id}><span>{formatActivityType(event.type)}</span><p>{event.message ?? event.text ?? "Codex activity"}</p></li>)}
             </ol>
           ) : null}
-          {!hasCodexSession && agentLiveVisibleEvents.length ? (
+          {!showsCodexSession && agentLiveVisibleEvents.length ? (
             <ol className="codexActivityEvents" aria-live="polite">
               {agentLiveVisibleEvents.map((event) => <li key={event.id}><span>{formatActivityType(event.type)}</span><p>{event.message}</p></li>)}
             </ol>
           ) : null}
-          {hasCodexSession && liveAssistantText ? <pre className="codexLiveResponse" aria-live="polite">{liveAssistantText}</pre> : null}
-          {!hasCodexSession && agentLiveAssistantText ? <pre className="codexLiveResponse" aria-live="polite">{agentLiveAssistantText}</pre> : null}
-          {!hasCodexSession && agentLiveReasoning ? (
+          {showsCodexSession && liveAssistantText ? <pre className="codexLiveResponse" aria-live="polite">{liveAssistantText}</pre> : null}
+          {!showsCodexSession && agentLiveAssistantText ? <pre className="codexLiveResponse" aria-live="polite">{agentLiveAssistantText}</pre> : null}
+          {!showsCodexSession && agentLiveReasoning ? (
             <details>
               <summary>Reasoning preview</summary>
               <pre className="codexLiveResponse" aria-live="polite">{agentLiveReasoning}</pre>
