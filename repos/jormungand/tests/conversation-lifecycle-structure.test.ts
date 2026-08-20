@@ -732,7 +732,16 @@ test("unbound OpenClaw routing preserves conversation and agent identity at the 
     })
   })
 
-  const services = createHiveServices({ database, repository })
+  const services = createHiveServices({
+    database,
+    repository,
+    listProjects: async () => {
+      throw new Error("listProjects should not be called for unbound OpenClaw conversations")
+    },
+    listWorkflowRuns: async () => {
+      throw new Error("listWorkflowRuns should not be called for unbound OpenClaw conversations")
+    }
+  })
 
   const post = (conversationId: string, targetAgent: AgentKind, sequence: number) =>
     services.conversation.postUnboundMessage({
