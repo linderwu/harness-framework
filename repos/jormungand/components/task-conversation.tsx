@@ -1,7 +1,8 @@
 "use client"
 
+import { createPortal } from "react-dom"
 import { FormEvent, KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { Send } from "lucide-react"
+import { ChevronDown, ChevronLeft, Send } from "lucide-react"
 import type {
   CodexConversationEvent,
   CodexConversationState
@@ -45,6 +46,7 @@ export function TaskConversation(props: {
   onEntriesChanged: (entries: ConversationEntry[]) => void
   onBound?: (binding: ConversationBinding) => void
   onNewConversation?: () => void
+  codexActivityMount?: HTMLElement | null
 }) {
   const runId = props.run?.id
   const isUnbound = !runId
@@ -61,6 +63,7 @@ export function TaskConversation(props: {
   const [session, setSession] = useState<CodexConversationState["session"]>()
   const [events, setEvents] = useState<CodexConversationEvent[]>([])
   const [isControlling, setIsControlling] = useState(false)
+  const [isCodexActivityExpanded, setIsCodexActivityExpanded] = useState(true)
   const [isLoadingConversation, setIsLoadingConversation] = useState(true)
   const [isStartingConversation, setIsStartingConversation] = useState(false)
   const [conversations, setConversations] = useState<ConversationSummary[]>([])
@@ -582,6 +585,50 @@ export function TaskConversation(props: {
     .filter((event) => event.type !== "assistant_delta")
     .slice(-18)
   const liveAssistantText = session?.liveText?.trim()
+  const codexActivityPanel = isUnbound && session ? (
+    <section className={`panel runsPanel codexActivityPanel${isCodexActivityExpanded ? "" : " collapsed"}`} aria-label="Codex activity panel">
+      <button
+        aria-expanded={isCodexActivityExpanded}
+        aria-label={isCodexActivityExpanded ? "Collapse Live Codex session" : "Expand Live Codex session"}
+        className="projectSelectorSummary codexActivityToggle"
+        onClick={() => setIsCodexActivityExpanded((current) => !current)}
+        type="button"
+      >
+        <span className="projectSelectorHeader">
+          <span><strong>Live Codex session</strong></span>
+          {isCodexActivityExpanded ? <ChevronDown size={18} /> : <ChevronLeft size={18} />}
+        </span>
+      </button>
+      {isCodexActivityExpanded ? (
+        <div className="codexActivityPanelBody">
+          <section className="codexActivity" aria-label="Codex activity">
+            <div className="codexActivityHeader">
+              <div>
+                <p className="eyebrow">Live Codex session</p>
+                <strong>{formatSessionStatus(session)}</strong>
+              </div>
+              <div className="codexActivityActions">
+                {isTurnRunning ? <button className="compactPanelButton" disabled={isControlling} onClick={() => void control("interrupt")} type="button">Pause</button> : null}
+                {isPaused ? <button className="compactPanelButton" disabled={isControlling} onClick={() => void control("resume")} type="button">Continue</button> : null}
+                {session.status !== "stopped" && session.status !== "failed" && (isTurnRunning || isPaused) ? <button className="compactPanelButton danger" disabled={isControlling} onClick={() => void control("stop")} type="button">Stop</button> : null}
+              </div>
+            </div>
+            {visibleActivityEvents.length ? (
+              <ol className="codexActivityEvents" aria-live="polite">
+                {visibleActivityEvents.map((event) => <li key={event.id}><span>{formatActivityType(event.type)}</span><p>{event.message ?? event.text ?? "Codex activity"}</p></li>)}
+              </ol>
+            ) : null}
+            {liveAssistantText ? <pre className="codexLiveResponse" aria-live="polite">{liveAssistantText}</pre> : null}
+          </section>
+        </div>
+      ) : null}
+    </section>
+  ) : null
+  const renderedCodexActivity = props.codexActivityMount === undefined
+    ? codexActivityPanel
+    : props.codexActivityMount && codexActivityPanel
+      ? createPortal(codexActivityPanel, props.codexActivityMount)
+      : null
   const isConversationActionPending = isLoadingConversation || isStartingConversation || !!activeManagerAction
   const areManagerControlsDisabled = isConversationManagerLocked({
     isLoadingConversation,
@@ -759,27 +806,7 @@ export function TaskConversation(props: {
         </dialog>
       ) : null}
       {statusMessage ? <p role="status">{statusMessage}</p> : null}
-      {isUnbound && session ? (
-        <section className="codexActivity" aria-label="Codex activity">
-          <div className="codexActivityHeader">
-            <div>
-              <p className="eyebrow">Live Codex session</p>
-              <strong>{formatSessionStatus(session)}</strong>
-            </div>
-            <div className="codexActivityActions">
-              {isTurnRunning ? <button className="compactPanelButton" disabled={isControlling} onClick={() => void control("interrupt")} type="button">Pause</button> : null}
-              {isPaused ? <button className="compactPanelButton" disabled={isControlling} onClick={() => void control("resume")} type="button">Continue</button> : null}
-              {session.status !== "stopped" && session.status !== "failed" && (isTurnRunning || isPaused) ? <button className="compactPanelButton danger" disabled={isControlling} onClick={() => void control("stop")} type="button">Stop</button> : null}
-            </div>
-          </div>
-          {visibleActivityEvents.length ? (
-            <ol className="codexActivityEvents" aria-live="polite">
-              {visibleActivityEvents.map((event) => <li key={event.id}><span>{formatActivityType(event.type)}</span><p>{event.message ?? event.text ?? "Codex activity"}</p></li>)}
-            </ol>
-          ) : null}
-          {liveAssistantText ? <pre className="codexLiveResponse" aria-live="polite">{liveAssistantText}</pre> : null}
-        </section>
-      ) : null}
+      {renderedCodexActivity}
       <ol className="conversationEntries">
         {entries.length ? entries.map((entry) => (
           <li className={`conversationEntry ${entry.role} ${entry.importance}`} key={entry.id}>
