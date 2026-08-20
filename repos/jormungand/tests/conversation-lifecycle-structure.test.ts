@@ -107,6 +107,16 @@ function jsonResponse(body: unknown, status = 200) {
   })
 }
 
+function assertUnrestrictedUnboundSkill(skill: Pick<WorkflowEventSkill, "id" | "constraints" | "gates">) {
+  assert.equal(skill.id, "conversation.unbound")
+  for (const clause of [...skill.constraints, ...skill.gates]) {
+    assert.doesNotMatch(
+      clause,
+      /external systems|irreversible actions|read-only|project binding|manager routing/i
+    )
+  }
+}
+
 async function ensureCompiledAlias() {
   const tmpRoot = join(process.cwd(), ".tmp-tests")
   const scopedRoot = join(tmpRoot, "node_modules", "@")
@@ -679,11 +689,7 @@ test("unbound Codex routing dispatches directly to Codex with unrestricted conve
     ),
     true
   )
-
-  const skillShape = JSON.stringify(invocation?.skill)
-  assert.doesNotMatch(skillShape, /conversation\.unbound_limited/i)
-  assert.doesNotMatch(skillShape, /read-only/i)
-  assert.doesNotMatch(skillShape, /external systems|irreversible actions/i)
+  assertUnrestrictedUnboundSkill(invocation.skill)
 })
 
 test("OpenClaw bridge session identity is derived from stable conversation input instead of only workflow ids", () => {
@@ -693,7 +699,7 @@ test("OpenClaw bridge session identity is derived from stable conversation input
 
 test("unbound OpenClaw routing preserves conversation and agent identity at the bridge boundary", { concurrency: false }, async (t) => {
   await ensureCompiledAlias()
-  const { invokeConfiguredAgent } = await import("../lib/agent-bridge") as typeof import("../lib/agent-bridge")
+  const { repository } = await repositoryFixture(t)
   for (const key of [
     "OPENCLAW_BRIDGE_URL",
     "OPENCLAW_BRIDGE_TOKEN",
@@ -705,13 +711,12 @@ test("unbound OpenClaw routing preserves conversation and agent identity at the 
   process.env.OPENCLAW_BRIDGE_URL = "http://openclaw.test"
   delete process.env.OPENCLAW_A2A_COMMAND
 
-  const sync = new ConversationHistorySync()
-  const capturedInputs: AgentInvocationInput[] = []
   const bridgePayloads: Array<{
     conversationId?: string
     executor?: AgentKind
     mainAgent?: string
     idempotencyKey?: string
+    skill?: Pick<WorkflowEventSkill, "id" | "constraints" | "gates">
   }> = []
   installFetchMock(t, async (input, init) => {
     assert.equal(String(input), "http://openclaw.test/agent-runs")
@@ -726,47 +731,29 @@ test("unbound OpenClaw routing preserves conversation and agent identity at the 
     })
   })
 
-  const conversationEntries = new Map<string, Array<Pick<ConversationEntry, "id" | "role" | "agentId" | "content">>>()
-  const post = async (conversationId: string, targetAgent: AgentKind, sequence: number) => {
-    const key = JSON.stringify([conversationId, targetAgent])
-    const entries = conversationEntries.get(key) ?? []
-    const nextEntries = [
-      ...entries,
-      {
-        id: `${conversationId}:${targetAgent}:user-${sequence}`,
-        role: "user" as const,
-        agentId: targetAgent,
-        content: `Message ${sequence}`
-      }
-    ]
-    conversationEntries.set(key, nextEntries)
-    return routeUnboundConversation({
-      sync,
+  const services = createHiveServices({ repository })
+  t.after(() => {
+    services.database.close()
+  })
+
+  const post = (conversationId: string, targetAgent: AgentKind, sequence: number) =>
+    services.conversation.postUnboundMessage({
       conversationId,
       targetAgent,
       content: `Message ${sequence}`,
-      entries: nextEntries,
-      invokeAgent: async (input: AgentInvocationInput) => {
-        capturedInputs.push(input)
-        return invokeConfiguredAgent(input)
-      }
+      idempotencyKey: `openclaw-boundary-${sequence}`
     })
-  }
   await post("conversation-a", "openclaw.gengar", 1)
   await post("conversation-a", "openclaw.gengar", 2)
   await post("conversation-a", "openclaw.rowlet", 3)
   await post("conversation-b", "openclaw.gengar", 4)
 
-  assert.equal(capturedInputs.length, 4)
-  for (const invocation of capturedInputs) {
-    assert.equal(invocation.skill.id, "conversation.unbound")
-    const skillShape = JSON.stringify(invocation.skill)
-    assert.doesNotMatch(skillShape, /conversation\.unbound_limited/i)
-    assert.doesNotMatch(skillShape, /read-only/i)
-    assert.doesNotMatch(skillShape, /external systems|irreversible actions/i)
+  assert.equal(bridgePayloads.length, 4)
+  for (const payload of bridgePayloads) {
+    assert.ok(payload.skill)
+    assertUnrestrictedUnboundSkill(payload.skill)
   }
 
-  assert.equal(bridgePayloads.length, 4)
   assert.deepEqual(
     bridgePayloads.map((payload) => ({
       conversationId: payload.conversationId,
