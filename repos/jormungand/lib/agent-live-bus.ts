@@ -40,6 +40,17 @@ function isTerminalEvent(event: AgentLiveEvent) {
   return event.type === "completed" || event.type === "failed"
 }
 
+function maybeUnrefTimer(timer: TimerHandle) {
+  if (
+    typeof timer === "object" &&
+    timer !== null &&
+    "unref" in timer &&
+    typeof timer.unref === "function"
+  ) {
+    timer.unref()
+  }
+}
+
 export function createAgentLiveBus(options: AgentLiveBusOptions = {}): AgentLiveBus {
   const maxEvents = Math.max(1, options.maxEvents ?? MAX_AGENT_LIVE_EVENTS)
   const idleTtlMs = Math.max(1, options.idleTtlMs ?? DEFAULT_IDLE_TTL_MS)
@@ -77,6 +88,7 @@ export function createAgentLiveBus(options: AgentLiveBusOptions = {}): AgentLive
       }
       conversations.delete(conversationId)
     }, idleTtlMs)
+    maybeUnrefTimer(state.cleanupTimer)
   }
 
   function getSnapshot(conversationId: string): AgentLiveSnapshot {
@@ -97,7 +109,7 @@ export function createAgentLiveBus(options: AgentLiveBusOptions = {}): AgentLive
       }
 
       state.lastSequence = event.sequence
-      state.terminal = isTerminalEvent(event)
+      state.terminal = state.terminal || isTerminalEvent(event)
       state.events = [...state.events, event].slice(-maxEvents)
 
       for (const listener of [...state.listeners]) {

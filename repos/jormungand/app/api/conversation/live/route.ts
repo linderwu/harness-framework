@@ -1,5 +1,10 @@
 import { NextResponse } from "next/server"
 import {
+  ConversationIdentityError,
+  resolveConversationId,
+  setConversationCookie
+} from "@/lib/conversation-identity"
+import {
   agentLiveBus,
   getAgentLiveSnapshot,
   subscribeAgentLiveEvents,
@@ -107,20 +112,41 @@ export function createConversationLiveRouteHandlers(
 
   return {
     async GET(request: Request) {
-      const conversationId = new URL(request.url).searchParams.get("conversationId")?.trim()
+      const requestedConversationId = new URL(request.url).searchParams.get("conversationId")
 
-      if (!conversationId) {
-        return NextResponse.json({ error: "conversationId is required" }, { status: 400 })
-      }
+      try {
+        const identity = resolveConversationId({
+          request: requestedConversationId === null ? undefined : request,
+          bodyConversationId: requestedConversationId ?? undefined,
+          legacyMode: "reject",
+          requireExplicit: true
+        })
 
-      return new Response(createConversationLiveStream(request, conversationId, bus), {
-        status: 200,
-        headers: {
-          "cache-control": "no-cache, no-transform",
-          connection: "keep-alive",
-          "content-type": "text/event-stream; charset=utf-8"
+        const response = new NextResponse(
+          createConversationLiveStream(request, identity.conversationId, bus),
+          {
+            status: 200,
+            headers: {
+              "cache-control": "no-cache, no-transform",
+              connection: "keep-alive",
+              "content-type": "text/event-stream; charset=utf-8"
+            }
+          }
+        )
+
+        return identity.shouldSetCookie
+          ? setConversationCookie(response, identity.conversationId, request)
+          : response
+      } catch (error) {
+        if (error instanceof ConversationIdentityError) {
+          return NextResponse.json({ error: error.message }, { status: error.status })
         }
-      })
+
+        return NextResponse.json(
+          { error: error instanceof Error ? error.message : String(error) },
+          { status: 500 }
+        )
+      }
     }
   }
 }

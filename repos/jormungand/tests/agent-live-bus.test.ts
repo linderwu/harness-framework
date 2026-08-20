@@ -49,3 +49,39 @@ test("unsubscribe stops future delivery and terminal events close stream", () =>
   assert.deepEqual(received.map((event) => event.sequence), [1])
   assert.equal(bus.getSnapshot("conversation-1").terminal, true)
 })
+
+test("terminal state stays sticky after a later nonterminal event", () => {
+  const bus = createAgentLiveBus()
+
+  bus.publish(createEvent("completed", 2))
+  bus.publish(createEvent("status", 3))
+
+  const snapshot = bus.getSnapshot("conversation-1")
+  assert.equal(snapshot.terminal, true)
+  assert.deepEqual(snapshot.events.map((event) => event.sequence), [2, 3])
+})
+
+test("idle cleanup timer is unrefed when the runtime supports it", () => {
+  const originalSetTimeout = globalThis.setTimeout
+  let unrefCalled = false
+
+  const timeoutMock = (((callback: TimerHandler, _delay?: number) => ({
+    callback,
+    unref() {
+      unrefCalled = true
+      return this
+    }
+  })) as unknown) as typeof setTimeout
+
+  globalThis.setTimeout = timeoutMock
+
+  try {
+    const bus = createAgentLiveBus()
+    const subscription = bus.subscribe("conversation-1", () => undefined)
+    subscription.unsubscribe()
+  } finally {
+    globalThis.setTimeout = originalSetTimeout
+  }
+
+  assert.equal(unrefCalled, true)
+})
