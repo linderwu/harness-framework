@@ -264,14 +264,31 @@ const server = http.createServer(async (request, response) => {
     if (idempotencyKey) {
       activeIdempotencyKeys.set(idempotencyKey, id)
     }
-    const result = await runCodex(
-      buildPrompt(payload, contextDir, runtimeSkillBundleResults),
-      id,
-      idempotencyKey,
-      payload.workflowRunId,
-      workspace.path,
-      normalizePermissionMode(payload.permissionMode ?? permissionMode)
-    ).finally(async () => {
+    const executor = payload.executor ?? "codex"
+    const normalizedPermissionMode = normalizePermissionMode(
+      payload.permissionMode ?? permissionMode
+    )
+    const builtPrompt = buildPrompt(
+      payload,
+      contextDir,
+      runtimeSkillBundleResults
+    )
+    const result = await (isMinimaxExecutor(executor)
+      ? runMinimaxAgent(
+          builtPrompt,
+          id,
+          idempotencyKey,
+          payload.workflowRunId,
+          normalizedPermissionMode
+        )
+      : runCodex(
+          builtPrompt,
+          id,
+          idempotencyKey,
+          payload.workflowRunId,
+          workspace.path,
+          normalizedPermissionMode
+        )).finally(async () => {
       if (idempotencyKey) {
         activeIdempotencyKeys.delete(idempotencyKey)
       }
@@ -450,6 +467,156 @@ async function runCodex(
         : exitCode === 0
           ? "Codex produced no final message."
           : `Codex exited with status ${exitCode}.`
+  }
+}
+
+function isMinimaxExecutor(executor) {
+  return executor === "minimax" || executor === "mavis"
+}
+
+async function runMinimaxAgent(
+  prompt,
+  id,
+  idempotencyKey,
+  workflowRunId,
+  permissionModeInput = permissionMode
+) {
+  const backendUrl = process.env.MINIMAX_BACKEND_URL?.trim()
+  const backendCommand = process.env.MINIMAX_BACKEND_COMMAND?.trim()
+  const defaultModel =
+    process.env.MINIMAX_BACKEND_MODEL ?? "minimax/MiniMax-M2.7"
+  const timeoutMs = Number(process.env.MINIMAX_BRIDGE_TIMEOUT_MS ?? 900000)
+  const backendToken = process.env.MINIMAX_BACKEND_TOKEN?.trim()
+  normalizePermissionMode(permissionModeInput)
+
+  const cancel = () => {}
+  activeAgentRuns.set(id, {
+    cancel,
+    idempotencyKey,
+    startedAt: new Date().toISOString(),
+    workflowRunId
+  })
+  if (workflowRunId) {
+    activeWorkflowRuns.set(workflowRunId, id)
+  }
+
+  try {
+    if (backendUrl) {
+      const url = backendUrl.endsWith("/")
+        ? `${backendUrl}chat/completions`
+        : `${backendUrl}/chat/completions`
+      const response = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(backendToken ? { Authorization: `Bearer ${backendToken}` } : {})
+        },
+        body: JSON.stringify({
+          model: defaultModel,
+          messages: [
+            {
+              role: "system",
+              content: "You are the Jormungand harness minimax agent."
+            },
+            { role: "user", content: prompt }
+          ]
+        }),
+        signal: AbortSignal.timeout(timeoutMs)
+      }).catch((error) => {
+        throw new Error(
+          `minimax backend HTTP request failed: ${
+            error?.message ?? String(error)
+          }`
+        )
+      })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        return {
+          status: "failed",
+          output: data?.error?.message ?? data?.error ?? `HTTP ${response.status}`,
+          error: data?.error?.message ?? data?.error ?? `HTTP ${response.status}`,
+          stderr: "",
+          statusMessage: `minimax backend returned HTTP ${response.status}.`
+        }
+      }
+      const output =
+        data?.choices?.[0]?.message?.content ??
+        data?.output ??
+        data?.text ??
+        JSON.stringify(data)
+      return {
+        status: "completed",
+        output,
+        stderr: "",
+        statusMessage: "minimax backend completed via HTTP."
+      }
+    }
+
+    if (backendCommand) {
+      const child = spawn(backendCommand, {
+        shell: true,
+        stdio: ["pipe", "pipe", "pipe"],
+        env: {
+          ...process.env,
+          MINIMAX_AGENT: "minimax",
+          MINIMAX_MODEL: defaultModel,
+          MINIMAX_PROMPT: prompt,
+          MINIMAX_PERMISSION_MODE: permissionModeInput
+        }
+      })
+      let stdout = ""
+      let stderr = ""
+      const timer = setTimeout(() => child.kill("SIGTERM"), timeoutMs)
+      child.stdout.on("data", (chunk) => {
+        stdout += chunk.toString()
+      })
+      child.stderr.on("data", (chunk) => {
+        stderr += chunk.toString()
+      })
+      child.stdin.end(
+        JSON.stringify({ prompt, model: defaultModel, permissionMode: permissionModeInput })
+      )
+      let exitCode = 1
+      try {
+        exitCode = await new Promise((resolve, reject) => {
+          child.on("error", reject)
+          child.on("close", (code) => resolve(code ?? 1))
+        })
+      } finally {
+        clearTimeout(timer)
+      }
+      if (exitCode !== 0) {
+        return {
+          status: "failed",
+          output: stderr || stdout || `command exited with ${exitCode}`,
+          error: stderr || `minimax command exited with ${exitCode}`,
+          stderr,
+          statusMessage: `minimax backend command exited with ${exitCode}.`
+        }
+      }
+      return {
+        status: "completed",
+        output: stdout.trim() || "(no output)",
+        stderr,
+        statusMessage: "minimax backend command completed."
+      }
+    }
+
+    return {
+      status: "completed",
+      output: prompt,
+      stderr: "",
+      statusMessage:
+        "minimax bridge has no backend configured; echoed prompt back."
+    }
+  } finally {
+    activeAgentRuns.delete(id)
+    if (
+      workflowRunId &&
+      activeWorkflowRuns.get(workflowRunId) === id
+    ) {
+      activeWorkflowRuns.delete(workflowRunId)
+    }
   }
 }
 
