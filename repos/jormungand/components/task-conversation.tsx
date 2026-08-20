@@ -75,6 +75,8 @@ export function TaskConversation(props: {
   const [isDeleteDialogFallbackOpen, setIsDeleteDialogFallbackOpen] = useState(false)
   const requestGeneration = useRef(0)
   const renameInputRef = useRef<HTMLInputElement>(null)
+  const renameDialogRef = useRef<HTMLDialogElement>(null)
+  const renameTriggerRef = useRef<HTMLButtonElement>(null)
   const deleteDialogRef = useRef<HTMLDialogElement>(null)
   const deleteTriggerRef = useRef<HTMLButtonElement>(null)
   const deleteCancelRef = useRef<HTMLButtonElement>(null)
@@ -396,15 +398,42 @@ export function TaskConversation(props: {
     onEntriesChanged([])
   }
 
-  function openRenameForm() {
+  function queueRenameDialogFocus() {
+    if (typeof window === "undefined") return
+    window.requestAnimationFrame(() => {
+      renameInputRef.current?.focus()
+      renameInputRef.current?.select()
+    })
+  }
+
+  function closeRenameDialog() {
+    setIsRenameFormOpen(false)
+    const dialog = renameDialogRef.current
+    if (dialog?.open && dialog.close) {
+      dialog.close()
+    }
+    if (typeof window === "undefined") return
+    window.requestAnimationFrame(() => {
+      renameTriggerRef.current?.focus()
+    })
+  }
+
+  function openRenameDialog() {
     setError(undefined)
     setStatusMessage(undefined)
     setRenameDraft(metadata?.title ?? currentConversationTitle)
     setIsRenameFormOpen(true)
+    const dialog = renameDialogRef.current
+    if (dialog?.showModal) {
+      if (!dialog.open) {
+        dialog.showModal()
+      }
+      queueRenameDialogFocus()
+    }
   }
 
   function closeRenameForm() {
-    setIsRenameFormOpen(false)
+    closeRenameDialog()
     setRenameDraft(metadata?.title ?? "")
   }
 
@@ -420,7 +449,7 @@ export function TaskConversation(props: {
       if (generation !== requestGeneration.current) return
       setMetadata(toConversationHeaderMetadata(summary))
       setRenameDraft(summary.title)
-      setIsRenameFormOpen(false)
+      closeRenameDialog()
       setStatusMessage(`Renamed to ${summary.title}.`)
       void refreshConversations(generation)
     } catch (renameError) {
@@ -629,7 +658,8 @@ export function TaskConversation(props: {
                 aria-label="Rename conversation"
                 className="compactPanelButton"
                 disabled={areManagerControlsDisabled}
-                onClick={openRenameForm}
+                onClick={openRenameDialog}
+                ref={renameTriggerRef}
                 type="button"
               >
                 Rename
@@ -664,31 +694,43 @@ export function TaskConversation(props: {
           </button>
         </div>
       </header>
-      {isUnbound && isRenameFormOpen && activeConversationId ? (
-        <form
-          aria-label="Rename conversation form"
-          className="conversationComposer"
-          onSubmit={handleRenameSubmit}
-          style={{ alignItems: "flex-end", flexWrap: "wrap", marginTop: "0.75rem" }}
+      {isUnbound && activeConversationId ? (
+        <dialog
+          aria-describedby="rename-conversation-description"
+          aria-labelledby="rename-conversation-title"
+          onCancel={(event) => {
+            event.preventDefault()
+            closeRenameDialog()
+          }}
+          onClose={() => setIsRenameFormOpen(false)}
+          open={isRenameFormOpen ? true : undefined}
+          ref={renameDialogRef}
+          style={{ border: "1px solid var(--border)", borderRadius: "12px", boxShadow: "0 20px 60px rgba(15, 23, 42, 0.28)", maxWidth: "min(32rem, calc(100vw - 2rem))", padding: "1rem", width: "calc(100% - 2rem)" }}
         >
-          <label className="conversationInput" style={{ flex: "1 1 14rem", minWidth: 0 }}>
-            <span>Conversation title</span>
-            <input
-              maxLength={80}
-              onChange={(event) => setRenameDraft(event.target.value)}
-              ref={renameInputRef}
-              required
-              type="text"
-              value={renameDraft}
-            />
-          </label>
-          <button className="compactPanelButton" disabled={!!activeManagerAction} type="submit">
-            {activeManagerAction === "rename" ? "Saving..." : "Save"}
-          </button>
-          <button className="compactPanelButton" disabled={!!activeManagerAction} onClick={closeRenameForm} type="button">
-            Cancel
-          </button>
-        </form>
+          <form aria-label="Rename conversation form" onSubmit={handleRenameSubmit} style={{ display: "grid", gap: "0.75rem", minWidth: 0 }}>
+            <h3 id="rename-conversation-title">Rename conversation</h3>
+            <p id="rename-conversation-description">Choose a new name for this conversation.</p>
+            <label className="conversationInput" style={{ display: "grid", gap: "0.35rem", minWidth: 0 }}>
+              <span>Conversation title</span>
+              <input
+                maxLength={80}
+                onChange={(event) => setRenameDraft(event.target.value)}
+                ref={renameInputRef}
+                required
+                type="text"
+                value={renameDraft}
+              />
+            </label>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem", justifyContent: "flex-end", minWidth: 0 }}>
+              <button className="compactPanelButton" disabled={!!activeManagerAction} onClick={closeRenameForm} type="button">
+                Cancel
+              </button>
+              <button className="compactPanelButton" disabled={!!activeManagerAction} type="submit">
+                {activeManagerAction === "rename" ? "Saving..." : "Save"}
+              </button>
+            </div>
+          </form>
+        </dialog>
       ) : null}
       {isUnbound && activeConversationId ? (
         <dialog
