@@ -33,7 +33,11 @@ Observed output summary:
   Error: listProjects should not be called for unbound Codex conversations
 
 ✖ unbound OpenClaw routing preserves conversation and agent identity at the bridge boundary
-  TypeError: (0 , hive_services_1.routeUnboundConversation) is not a function
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  + actual - expected
+  
+  + 'conversation.unbound_limited'
+  - 'conversation.unbound'
 
 ✖ unbound route helper advances conversation history cursor only after successful delivery
   TypeError: (0 , hive_services_1.routeUnboundConversation) is not a function
@@ -42,7 +46,7 @@ Observed output summary:
 Observed regression set:
 
 - Codex unbound routing still calls `listProjects`, proving it is not yet dispatching directly to Codex with the requested unbound skill.
-- The shared OpenClaw helper path is still missing because `routeUnboundConversation` is not exported.
+- The live OpenClaw unbound route still emits `conversation.unbound_limited` instead of `conversation.unbound`.
 - The cursor-delivery helper test is also blocked by the missing `routeUnboundConversation` export.
 
 No production code changes were made while collecting this evidence.
