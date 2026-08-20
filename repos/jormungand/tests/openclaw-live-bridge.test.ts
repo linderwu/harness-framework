@@ -1,8 +1,9 @@
 import assert from "node:assert/strict"
+import http from "node:http"
 import { mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { createServer } from "node:net"
+import { createServer as createNetServer } from "node:net"
 import { spawn, type ChildProcess } from "node:child_process"
 import test from "node:test"
 import type { TestContext } from "node:test"
@@ -15,7 +16,7 @@ interface BridgeHandle {
 }
 
 async function getFreePort() {
-  const server = createServer()
+  const server = createNetServer()
 
   try {
     await new Promise<void>((resolve, reject) => {
@@ -33,6 +34,61 @@ async function getFreePort() {
     await new Promise<void>((resolve, reject) => {
       server.close((error) => (error ? reject(error) : resolve()))
     })
+  }
+}
+
+async function createRuntimeSkillLock(
+  t: TestContext,
+  lockedBundles: Record<string, unknown>[]
+) {
+  const lockDir = await mkdtemp(join(tmpdir(), "jormungand-openclaw-lock-"))
+  const lockPath = join(lockDir, "skill.lock.json")
+
+  t.after(async () => {
+    await rm(lockDir, { recursive: true, force: true })
+  })
+
+  await writeFile(
+    lockPath,
+    JSON.stringify({ lockedBundles }, null, 2),
+    "utf8"
+  )
+
+  return lockPath
+}
+
+async function createBundleServer(
+  t: TestContext,
+  options: { delayMs: number; body: string }
+) {
+  let requestCount = 0
+  const server = http.createServer((request, response) => {
+    requestCount += 1
+    setTimeout(() => {
+      response.writeHead(200, {
+        "Content-Type": "application/octet-stream"
+      })
+      response.end(options.body)
+    }, options.delayMs)
+  })
+
+  const port = await getFreePort()
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject)
+    server.listen(port, "127.0.0.1", () => resolve())
+  })
+
+  t.after(async () => {
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => (error ? reject(error) : resolve()))
+    })
+  })
+
+  return {
+    url: `http://127.0.0.1:${port}/bundle.tgz`,
+    get requestCount() {
+      return requestCount
+    }
   }
 }
 
@@ -75,6 +131,7 @@ async function createFakeDocker(t: TestContext) {
       "  await sleep(300)",
       '  writeStdout(\' completed","toolArgs":{"command":"leak-me"},"request":{"message":"do not leak"},"tokens":99}\\n\')',
       '  process.stderr.write("raw stderr should stay private: token=stderr-secret\\n")',
+      '  process.stderr.write(`${JSON.stringify({ reasoning_content: "stderr reasoning", delta: "stderr delta", result: { payloads: [{ text: "stderr output" }] } })}\\n`)',
       "  writeLine({",
       '    reasoning_content: "structured reasoning",',
       '    frame: { arbitrary: "ignore-me" },',
@@ -279,6 +336,14 @@ test("OpenClaw bridge replays bounded safe live events by idempotency key", { co
     false
   )
   assert.equal(
+    JSON.stringify(livePoll.body.events).includes("stderr reasoning"),
+    false
+  )
+  assert.equal(
+    JSON.stringify(livePoll.body.events).includes("stderr delta"),
+    false
+  )
+  assert.equal(
     JSON.stringify(livePoll.body.events).includes("open secret"),
     false
   )
@@ -296,6 +361,7 @@ test("OpenClaw bridge replays bounded safe live events by idempotency key", { co
   const completedRun = await runResponse.json()
   assert.equal(completedRun.status, "completed")
   assert.equal(completedRun.output, "Final answer")
+  assert.notEqual(completedRun.output, "stderr output")
   assert.ok(completedRun.capabilities.includes("live-events"))
 
   const completedPoll = await getJson(
@@ -320,6 +386,14 @@ test("OpenClaw bridge replays bounded safe live events by idempotency key", { co
   )
   assert.equal(
     JSON.stringify(completedPoll.body.events).includes("raw stderr should stay private"),
+    false
+  )
+  assert.equal(
+    JSON.stringify(completedPoll.body.events).includes("stderr reasoning"),
+    false
+  )
+  assert.equal(
+    JSON.stringify(completedPoll.body.events).includes("stderr delta"),
     false
   )
 
@@ -391,4 +465,87 @@ test("OpenClaw bridge keeps terminal live events after stop and advertises the c
   assert.ok(
     ["completed", "failed"].includes(eventsResponse.body.events.at(-1)?.type)
   )
+})
+
+test("OpenClaw bridge snapshots failed runtime-skill setup as a failed live journal", { concurrency: false }, async (t) => {
+  const { baseUrl } = await startBridge(t, {})
+
+  const runResponse = await postRun(baseUrl, {
+    protocolVersion: "harness-agent-bridge/v0.3",
+    idempotencyKey: "live-events-runtime-skill-failure",
+    workflowRunId: "workflow-runtime-skill-failure",
+    executor: "openclaw.rowlet",
+    title: "Fail runtime skill installation",
+    requirement: "Exercise runtime skill setup failure journaling.",
+    runtimeSkillBundles: [
+      {
+        id: "missing-bundle",
+        version: "1.0.0",
+        sourceUrl: "https://example.invalid/bundle.tgz",
+        checksum: {
+          algorithm: "sha256",
+          value: "bad-checksum"
+        }
+      }
+    ]
+  })
+
+  assert.equal(runResponse.status, 200)
+  const completedRun = await runResponse.json()
+  assert.equal(completedRun.status, "failed")
+
+  const eventsResponse = await getJson(
+    baseUrl,
+    "/agent-runs/by-idempotency/live-events-runtime-skill-failure/events?after=0"
+  )
+  assert.equal(eventsResponse.status, 200)
+  assert.equal(eventsResponse.body.status, "failed")
+  assert.deepEqual(
+    eventsResponse.body.events.map((event: { type: string }) => event.type),
+    ["failed"]
+  )
+})
+
+test("OpenClaw bridge reserves idempotency during runtime-skill setup and releases it after failure", { concurrency: false }, async (t) => {
+  const bundleServer = await createBundleServer(t, {
+    delayMs: 300,
+    body: "slow bundle bytes"
+  })
+  const runtimeSkillBundle = {
+    id: "slow-bundle",
+    version: "1.0.0",
+    sourceUrl: bundleServer.url,
+    checksum: {
+      algorithm: "sha256",
+      value: "0".repeat(64)
+    }
+  }
+  const lockPath = await createRuntimeSkillLock(t, [runtimeSkillBundle])
+  const { baseUrl } = await startBridge(t, {
+    OPENCLAW_RUNTIME_SKILL_LOCK: lockPath
+  })
+  const payload = {
+    protocolVersion: "harness-agent-bridge/v0.3",
+    idempotencyKey: "runtime-skill-setup-race",
+    workflowRunId: "workflow-runtime-skill-setup-race",
+    executor: "openclaw.rowlet",
+    title: "Reserve idempotency during setup",
+    requirement: "Exercise the runtime skill setup reservation race.",
+    runtimeSkillBundles: [runtimeSkillBundle]
+  }
+
+  const firstRunPromise = postRun(baseUrl, payload)
+  await waitFor(async () => bundleServer.requestCount > 0)
+
+  const duplicateResponse = await postRun(baseUrl, payload)
+  assert.equal(duplicateResponse.status, 409)
+  assert.equal((await duplicateResponse.json()).idempotencyKey, payload.idempotencyKey)
+
+  const firstRun = await firstRunPromise
+  assert.equal(firstRun.status, 200)
+  assert.equal((await firstRun.json()).status, "failed")
+
+  const retryResponse = await postRun(baseUrl, payload)
+  assert.equal(retryResponse.status, 200)
+  assert.equal((await retryResponse.json()).status, "failed")
 })

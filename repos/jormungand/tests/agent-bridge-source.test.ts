@@ -31,6 +31,14 @@ test("OpenClaw HTTP bridge source exposes safe live-event replay markers", () =>
   assert.match(openClawBridge, /appendRunEvent/)
   assert.match(openClawBridge, /reasoning_content/)
   assert.match(openClawBridge, /<think>/)
+  assert.doesNotMatch(openClawBridge, /stderrParser/)
+})
+
+test("OpenClaw HTTP bridge source bounds auxiliary live parsing state", () => {
+  assert.match(openClawBridge, /appendTailText/)
+  assert.match(openClawBridge, /appendBoundedRecord/)
+  assert.match(openClawBridge, /appendBoundedFragment/)
+  assert.match(openClawBridge, /maxParserBufferText/)
 })
 
 test("Codex quota reader accepts primary rate limits first, fallback to secondary", () => {

@@ -33,11 +33,14 @@ const containerRuntimeSkillRoot =
   "/tmp/jormungandr-runtime-skills"
 const runtimeSkillLock = loadRuntimeSkillLock()
 const liveEventsPathTemplate = "/agent-runs/by-idempotency/:key/events/"
+const liveEventsPathPattern = createPathMatchPattern(liveEventsPathTemplate)
 const maxRunLiveEvents = 64
 const maxAgentLiveText = 8_000
+const maxParserBufferText = maxAgentLiveText
 const activeRuns = new Map()
 const activeWorkflowRuns = new Map()
 const activeIdempotencyKeys = new Map()
+const activeIdempotencyJournals = new Map()
 const completedIdempotencyRuns = new Map()
 const completedRunJournals = new Map()
 
@@ -80,9 +83,7 @@ const server = http.createServer(async (request, response) => {
       return
     }
 
-    const liveEventsMatch = requestUrl.pathname.match(
-      /^\/agent-runs\/by-idempotency\/(.+)\/events\/?$/
-    )
+    const liveEventsMatch = requestUrl.pathname.match(liveEventsPathPattern)
 
     if (request.method === "GET" && liveEventsMatch) {
       const idempotencyKey = decodeURIComponent(liveEventsMatch[1])
@@ -151,90 +152,95 @@ const server = http.createServer(async (request, response) => {
 
     const id = randomUUID()
     const startedAt = new Date().toISOString()
-    const runtimeSkillBundleResults = await installRuntimeSkillBundles(
-      payload.runtimeSkillBundles
-    )
-    const failedRuntimeBundle = runtimeSkillBundleResults.find(
-      (result) => result.verified === false
-    )
+    const journal = createRunJournal({
+      id,
+      idempotencyKey,
+      workflowRunId: payload.workflowRunId
+    })
 
-    if (failedRuntimeBundle) {
-      const failedJournal = createRunJournal({
+    if (idempotencyKey) {
+      reserveIdempotencyKey(idempotencyKey, id, journal)
+    }
+
+    try {
+      const runtimeSkillBundleResults = await installRuntimeSkillBundles(
+        payload.runtimeSkillBundles
+      )
+      const failedRuntimeBundle = runtimeSkillBundleResults.find(
+        (result) => result.verified === false
+      )
+
+      if (failedRuntimeBundle) {
+        journal.status = "failed"
+        appendRunEvent(journal, "failed", {
+          message: "Runtime skill installation failed."
+        })
+        const failedResponse = {
+          id,
+          idempotencyKey,
+          startedAt,
+          finishedAt: new Date().toISOString(),
+          status: "failed",
+          output: failedRuntimeBundle.errorMessage,
+          statusMessage: `Runtime skill installation failed: ${failedRuntimeBundle.errorCode}.`,
+          capabilities: bridgeCapabilities(),
+          runtimeSkillBundleResults
+        }
+        rememberCompletedRun(idempotencyKey, failedResponse, journal)
+        sendJson(response, 200, failedResponse)
+        return
+      }
+
+      const mainAgent = normalizeOpenClawAgent(
+        payload.mainAgent,
+        payload.executor
+      )
+      const model = resolveModel(mainAgent)
+      const sessionKey = deriveOpenClawSessionKey({
+        mainAgent,
+        conversationId: payload.conversationId,
+        workflowRunId: payload.workflowRunId,
+        fallbackId: id
+      })
+      const conversationHistory = sanitizeConversationHistory(
+        payload.conversationHistory
+      )
+      const message = buildOpenClawMessage(payload, {
+        id,
+        idempotencyKey: idempotencyKey ?? id,
+        mainAgent,
+        model,
+        sessionKey,
+        conversationHistory,
+        runtimeSkillBundleResults
+      })
+      const { journal: completedJournal, ...result } = await runOpenClawAgent({
         id,
         idempotencyKey,
-        workflowRunId: payload.workflowRunId
+        workflowRunId: payload.workflowRunId,
+        mainAgent,
+        model,
+        sessionKey,
+        message,
+        journal
       })
-      appendRunEvent(failedJournal, "failed", {
-        message: "Runtime skill installation failed."
-      })
-      const failedResponse = {
+
+      const completedResponse = {
         id,
         idempotencyKey,
         startedAt,
         finishedAt: new Date().toISOString(),
-        status: "failed",
-        output: failedRuntimeBundle.errorMessage,
-        statusMessage: `Runtime skill installation failed: ${failedRuntimeBundle.errorCode}.`,
         capabilities: bridgeCapabilities(),
-        runtimeSkillBundleResults
+        runtimeSkillBundleResults,
+        ...result
       }
-      rememberCompletedRun(idempotencyKey, failedResponse, failedJournal)
-      sendJson(response, 200, failedResponse)
-      return
-    }
-
-    if (idempotencyKey) {
-      activeIdempotencyKeys.set(idempotencyKey, id)
-    }
-
-    const mainAgent = normalizeOpenClawAgent(
-      payload.mainAgent,
-      payload.executor
-    )
-    const model = resolveModel(mainAgent)
-    const sessionKey = deriveOpenClawSessionKey({
-      mainAgent,
-      conversationId: payload.conversationId,
-      workflowRunId: payload.workflowRunId,
-      fallbackId: id
-    })
-    const conversationHistory = sanitizeConversationHistory(
-      payload.conversationHistory
-    )
-    const message = buildOpenClawMessage(payload, {
-      id,
-      idempotencyKey: idempotencyKey ?? id,
-      mainAgent,
-      model,
-      sessionKey,
-      conversationHistory,
-      runtimeSkillBundleResults
-    })
-    const { journal, ...result } = await runOpenClawAgent({
-      id,
-      idempotencyKey,
-      workflowRunId: payload.workflowRunId,
-      mainAgent,
-      model,
-      sessionKey,
-      message
-    }).finally(() => {
+      rememberCompletedRun(idempotencyKey, completedResponse, completedJournal)
+      sendJson(response, 200, completedResponse)
+    } finally {
       if (idempotencyKey) {
-        activeIdempotencyKeys.delete(idempotencyKey)
+        releaseIdempotencyKey(idempotencyKey, id)
       }
-    })
-
-    const completedResponse = {
-      id,
-      idempotencyKey,
-      startedAt,
-      finishedAt: new Date().toISOString(),
-      capabilities: bridgeCapabilities(),
-      runtimeSkillBundleResults,
-      ...result
     }
-    rememberCompletedRun(idempotencyKey, completedResponse, journal)
-    sendJson(response, 200, completedResponse)
   } catch (error) {
     sendJson(response, 500, { error: formatError(error) })
   }
@@ -255,13 +261,13 @@ async function runOpenClawAgent({
   mainAgent,
   model,
   sessionKey,
-  message
-}) {
-  const journal = createRunJournal({
+  message,
+  journal = createRunJournal({
     id,
     idempotencyKey,
     workflowRunId
   })
+}) {
   appendRunEvent(journal, "started", {
     message: `Starting ${mainAgent} through OpenClaw bridge.`
   })
@@ -300,23 +306,18 @@ async function runOpenClawAgent({
   }
 
   const stdoutParser = createStructuredRecordParser((record) => {
-    structuredRecords.push(record)
-    consumeStructuredRecord(record, journal, assistantFragments)
-  })
-  const stderrParser = createStructuredRecordParser((record) => {
-    structuredRecords.push(record)
+    appendBoundedRecord(structuredRecords, record)
     consumeStructuredRecord(record, journal, assistantFragments)
   })
 
   child.stdout.on("data", (chunk) => {
     const text = chunk.toString()
-    stdout += text
+    stdout = appendTailText(stdout, text, maxAgentLiveText)
     stdoutParser.push(text)
   })
   child.stderr.on("data", (chunk) => {
     const text = chunk.toString()
-    stderr += text
-    stderrParser.push(text)
+    stderr = appendTailText(stderr, text, maxAgentLiveText)
   })
 
   let exitCode = 1
@@ -329,7 +330,6 @@ async function runOpenClawAgent({
   } finally {
     clearTimeout(timer)
     stdoutParser.flush()
-    stderrParser.flush()
     journal.status = exitCode === 0 ? "completed" : "failed"
     appendRunEvent(journal, journal.status, {
       message:
@@ -803,6 +803,11 @@ function normalizeRunEvent(type, sequence, payload) {
 }
 
 function getRunJournalByIdempotencyKey(idempotencyKey) {
+  const activeJournal = activeIdempotencyJournals.get(idempotencyKey)
+  if (activeJournal) {
+    return activeJournal
+  }
+
   const activeRunId = activeIdempotencyKeys.get(idempotencyKey)
   if (activeRunId) {
     return activeRuns.get(activeRunId)?.journal
@@ -848,7 +853,7 @@ function createStructuredRecordParser(onRecord) {
 
   return {
     push(chunk) {
-      buffer += chunk
+      buffer = appendTailText(buffer, chunk, maxParserBufferText)
       drainBuffer()
     },
     flush() {
@@ -911,7 +916,7 @@ function consumeStructuredRecord(record, journal, assistantFragments) {
 
   const assistantDelta = extractAssistantDelta(record)
   if (assistantDelta) {
-    assistantFragments.push(assistantDelta)
+    appendBoundedFragment(assistantFragments, assistantDelta)
     appendRunEvent(journal, "assistant_delta", { delta: assistantDelta })
   }
 }
@@ -988,6 +993,56 @@ function normalizeBoundedDelta(value) {
   }
 
   return value.slice(0, maxAgentLiveText)
+}
+
+function createPathMatchPattern(pathTemplate) {
+  return new RegExp(
+    `^${pathTemplate
+      .replaceAll("/", "\\/")
+      .replace(":key", "(.+)")}\\/?$`
+  )
+}
+
+function appendTailText(current, chunk, maxLength) {
+  return tail(`${current}${chunk}`, maxLength)
+}
+
+function appendBoundedRecord(records, record) {
+  records.push(record)
+  if (records.length > maxRunLiveEvents) {
+    records.splice(0, records.length - maxRunLiveEvents)
+  }
+}
+
+function appendBoundedFragment(fragments, fragment) {
+  fragments.push(normalizeBoundedDelta(fragment))
+
+  while (fragments.length > maxRunLiveEvents) {
+    fragments.shift()
+  }
+
+  while (fragments.join("").length > maxAgentLiveText && fragments.length > 1) {
+    fragments.shift()
+  }
+
+  if (fragments.join("").length > maxAgentLiveText && fragments[0]) {
+    fragments[0] = tail(fragments[0], maxAgentLiveText)
+  }
+}
+
+function reserveIdempotencyKey(idempotencyKey, id, journal) {
+  activeIdempotencyKeys.set(idempotencyKey, id)
+  activeIdempotencyJournals.set(idempotencyKey, journal)
+}
+
+function releaseIdempotencyKey(idempotencyKey, id) {
+  if (activeIdempotencyKeys.get(idempotencyKey) === id) {
+    activeIdempotencyKeys.delete(idempotencyKey)
+  }
+
+  if (activeIdempotencyJournals.get(idempotencyKey)?.id === id) {
+    activeIdempotencyJournals.delete(idempotencyKey)
+  }
 }
 
 function isLoopbackHost(value) {
