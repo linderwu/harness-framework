@@ -1,7 +1,7 @@
 import type Database from "better-sqlite3"
 import { legacyConversationId } from "../conversation-identity"
 
-export const hiveSchemaVersion = 5
+export const hiveSchemaVersion = 6
 
 const migrationV1 = `
 CREATE TABLE schema_migrations (
@@ -249,6 +249,28 @@ const migrationV5 = `
 ALTER TABLE conversation_entries ADD COLUMN recipient_agent TEXT;
 `
 
+const migrationV6 = `
+CREATE TABLE execution_jobs (
+  id TEXT PRIMARY KEY,
+  kind TEXT NOT NULL,
+  workflow_run_id TEXT,
+  payload_json TEXT NOT NULL,
+  idempotency_key TEXT NOT NULL UNIQUE,
+  status TEXT NOT NULL,
+  attempt_count INTEGER NOT NULL,
+  available_at TEXT NOT NULL,
+  lease_owner TEXT,
+  lease_expires_at TEXT,
+  result_json TEXT,
+  last_error TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  completed_at TEXT
+);
+CREATE INDEX execution_jobs_status_available_idx ON execution_jobs(status, available_at);
+CREATE INDEX execution_jobs_lease_expires_idx ON execution_jobs(lease_expires_at);
+`
+
 export function migrateHiveSchema(database: Database.Database) {
   const hasMigrationTable = database
     .prepare("SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'")
@@ -299,6 +321,14 @@ export function migrateHiveSchema(database: Database.Database) {
       database.exec(migrationV5)
       database.prepare("INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)")
         .run(5, new Date().toISOString())
+    })()
+  }
+
+  if (currentVersion < 6) {
+    database.transaction(() => {
+      database.exec(migrationV6)
+      database.prepare("INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)")
+        .run(6, new Date().toISOString())
     })()
   }
 }
