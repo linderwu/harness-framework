@@ -269,6 +269,13 @@ function splitLines(value: string) {
   return value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
 }
 
+function createWorkflowRunIdempotencyKey() {
+  return (
+    globalThis.crypto?.randomUUID?.() ??
+    `workflow-run-${Date.now()}-${Math.random().toString(36).slice(2)}`
+  )
+}
+
 type WorkflowRunQueuedResult = {
   status: "queued"
   jobId: string
@@ -480,7 +487,10 @@ export function HarnessDashboard({
         ? await readRunMutationResponse(
             await fetch(`/api/projects/${project.id}/workflow-runs`, {
               method: "POST",
-              headers: { "Content-Type": "application/json" },
+              headers: {
+                "Content-Type": "application/json",
+                "Idempotency-Key": createWorkflowRunIdempotencyKey()
+              },
               body: JSON.stringify({
                 selectedAgent: form.selectedAgent,
                 ...codexProfile
@@ -530,7 +540,10 @@ export function HarnessDashboard({
     try {
       const response = await fetch(`/api/projects/${project.id}/workflow-runs`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": createWorkflowRunIdempotencyKey()
+        },
         body: JSON.stringify({
           selectedAgent: form.selectedAgent,
           ...getCodexProfileForProject(project.id),

@@ -119,6 +119,18 @@ test("workflow creation clients retain queued job ids instead of assuming immedi
   assert.match(dashboard, /setSelectedRunId\(undefined\)/)
 })
 
+test("workflow run submissions send idempotency keys", () => {
+  assert.match(
+    dashboard,
+    /function createWorkflowRunIdempotencyKey\(\) \{\s*return \(\s*globalThis\.crypto\?\.randomUUID\?\.\(\)/
+  )
+  assert.match(dashboard, /workflow-run-\$\{Date\.now\(\)\}/)
+  assert.equal(
+    (dashboard.match(/"Idempotency-Key": createWorkflowRunIdempotencyKey\(\)/g) ?? []).length,
+    2
+  )
+})
+
 test("bridge status panel polls quotas and forwards only codex quota to the Arceus row", () => {
   const panel = functionBody("BridgeStatusPanel")
   const card = functionBody("BridgeStatusCard")
