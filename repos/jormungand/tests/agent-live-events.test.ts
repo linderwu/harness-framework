@@ -1,0 +1,77 @@
+import assert from "node:assert/strict"
+import test from "node:test"
+
+import {
+  extractReasoningText,
+  MAX_AGENT_LIVE_TEXT,
+  normalizeAgentLiveEvent
+} from "../lib/agent-live-events"
+
+test("normalizes a provider reasoning frame without exposing arbitrary fields", () => {
+  const event = normalizeAgentLiveEvent({
+    sequence: 4,
+    conversationId: "conversation-1",
+    agentId: "openclaw.rowlet",
+    type: "reasoning",
+    text: "Checking the repository",
+    metadata: { secret: "must-not-survive" }
+  })
+
+  assert.deepEqual(
+    {
+      sequence: event.sequence,
+      conversationId: event.conversationId,
+      agentId: event.agentId,
+      type: event.type,
+      text: event.text,
+      metadata: event.metadata
+    },
+    {
+      sequence: 4,
+      conversationId: "conversation-1",
+      agentId: "openclaw.rowlet",
+      type: "reasoning",
+      text: "Checking the repository",
+      metadata: undefined
+    }
+  )
+  assert.match(event.id, /\S/)
+  assert.match(event.createdAt, /^\d{4}-\d{2}-\d{2}T/)
+})
+
+test("extracts only explicit closed reasoning blocks", () => {
+  assert.equal(extractReasoningText({ reasoning: "structured" }), "structured")
+  assert.equal(extractReasoningText({ thinking: "thought" }), "thought")
+  assert.equal(extractReasoningText({ reasoning_content: "content" }), "content")
+  assert.equal(extractReasoningText({ text: "<think>inline</think>answer" }), "inline")
+  assert.equal(extractReasoningText({ text: "ordinary log output" }), undefined)
+  assert.equal(extractReasoningText({ text: "<think>missing close" }), undefined)
+})
+
+test("bounds event text and rejects invalid identity", () => {
+  assert.throws(() =>
+    normalizeAgentLiveEvent({ conversationId: "", agentId: "codex", type: "status" })
+  )
+  assert.throws(() =>
+    normalizeAgentLiveEvent({ conversationId: "conversation-1", agentId: "", type: "status" })
+  )
+
+  const event = normalizeAgentLiveEvent({
+    conversationId: "conversation-1",
+    agentId: "openclaw.rowlet",
+    type: "status",
+    message: "x".repeat(20_000)
+  })
+
+  assert.equal(event.message?.length, MAX_AGENT_LIVE_TEXT)
+})
+
+test("rejects unsupported live event types", () => {
+  assert.throws(() =>
+    normalizeAgentLiveEvent({
+      conversationId: "conversation-1",
+      agentId: "openclaw.rowlet",
+      type: "unknown"
+    })
+  )
+})
