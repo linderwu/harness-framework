@@ -92,7 +92,7 @@ async function respondWithExecutionJob(
   allowDrain = false
 ) {
   const response = getExecutionJobRouteResponse(job)
-  if (allowDrain && response.shouldScheduleDrain) {
+  if (response.shouldScheduleDrain && (allowDrain || response.isLeaseExpired)) {
     await scheduleExecutionJobDrain(job.id)
   }
   return NextResponse.json(response.body, { status: response.httpStatus })

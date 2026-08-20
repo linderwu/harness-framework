@@ -14,29 +14,56 @@ export type ExecutionJobRouteResponse = {
   }
   httpStatus: 202 | 200 | 500 | 409
   shouldScheduleDrain: boolean
+  isLeaseExpired: boolean
 }
 
 export function getExecutionJobRouteResponse(job: ExecutionJob, now = new Date().toISOString()): ExecutionJobRouteResponse {
   if (job.status === "queued") {
-    return { body: { status: "queued", jobId: job.id }, httpStatus: 202, shouldScheduleDrain: true }
+    return {
+      body: { status: "queued", jobId: job.id },
+      httpStatus: 202,
+      shouldScheduleDrain: true,
+      isLeaseExpired: false
+    }
   }
   if (job.status === "running") {
     if (isExecutionJobLeaseExpired(job, now)) {
-      return { body: { status: "queued", jobId: job.id }, httpStatus: 202, shouldScheduleDrain: true }
+      return {
+        body: { status: "queued", jobId: job.id },
+        httpStatus: 202,
+        shouldScheduleDrain: true,
+        isLeaseExpired: true
+      }
     }
-    return { body: { status: "running", jobId: job.id }, httpStatus: 202, shouldScheduleDrain: false }
+    return {
+      body: { status: "running", jobId: job.id },
+      httpStatus: 202,
+      shouldScheduleDrain: false,
+      isLeaseExpired: false
+    }
   }
   if (job.status === "completed") {
-    return { body: { status: "completed", jobId: job.id }, httpStatus: 200, shouldScheduleDrain: false }
+    return {
+      body: { status: "completed", jobId: job.id },
+      httpStatus: 200,
+      shouldScheduleDrain: false,
+      isLeaseExpired: false
+    }
   }
   if (job.status === "failed") {
     return {
       body: { status: "failed", jobId: job.id, error: job.lastError ?? "Execution job failed." },
       httpStatus: 500,
-      shouldScheduleDrain: false
+      shouldScheduleDrain: false,
+      isLeaseExpired: false
     }
   }
-  return { body: { status: "canceled", jobId: job.id }, httpStatus: 409, shouldScheduleDrain: false }
+  return {
+    body: { status: "canceled", jobId: job.id },
+    httpStatus: 409,
+    shouldScheduleDrain: false,
+    isLeaseExpired: false
+  }
 }
 
 export async function runNextExecutionJob(input: {

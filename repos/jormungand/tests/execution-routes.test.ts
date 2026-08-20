@@ -713,19 +713,8 @@ test("manager duplicate reports running or queued without draining existing jobs
   assert.equal(expiredResponse.status, 202)
   assert.equal(expiredBody.status, "queued")
   assert.equal(expiredBody.jobId, expiredJob.job.id)
-  assert.equal(repository.getExecutionJob(expiredJob.job.id)?.status, "running")
-  assert.equal(drainCalls.length, 1)
-
-  const recovered = await runNextExecutionJob({
-    repository,
-    jobId: expiredJob.job.id,
-    leaseOwner: "replacement-worker",
-    leaseDurationMs: 30_000,
-    handlers: {
-      manager_wake: async () => ({ status: "recovered" })
-    }
-  })
-  assert.equal(recovered?.status, "completed")
+  assert.equal(repository.getExecutionJob(expiredJob.job.id)?.status, "completed")
+  assert.equal(drainCalls.length, 2)
 })
 
 test("agent task workflow runs enqueue a durable advance job before returning", async (t) => {
