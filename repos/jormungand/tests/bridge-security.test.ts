@@ -57,11 +57,11 @@ test("Codex bridge rejects a successful exit without a final response", () => {
   assert.match(codexBridgeSource, /Codex exited successfully but produced no final message/)
 })
 
-test("unbound Codex conversation switches between restricted and full operator scope language", () => {
-  assert.match(hiveServicesSource, /createPermissionModeText/)
-  assert.match(hiveServicesSource, /permissionText\.operatorScopeLine/)
-  assert.match(hiveServicesSource, /permissionText\.workflowAuthorityConstraint/)
-  assert.match(hiveServicesSource, /Recent conversation:/)
+test("unbound conversation source contracts direct agent execution", () => {
+  assert.match(hiveServicesSource, /routeUnboundConversation/)
+  assert.match(hiveServicesSource, /id: "conversation\.unbound"/)
+  assert.doesNotMatch(hiveServicesSource, /conversation\.unbound_limited/)
+  assert.doesNotMatch(hiveServicesSource, /Recent conversation:/)
 })
 
 test("permission mode text returns runtime full and restricted prompt wording", () => {
