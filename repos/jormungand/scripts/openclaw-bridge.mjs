@@ -996,8 +996,12 @@ function normalizeBoundedDelta(value) {
 }
 
 function createPathMatchPattern(pathTemplate) {
+  const normalizedTemplate = pathTemplate.endsWith("/")
+    ? pathTemplate.slice(0, -1)
+    : pathTemplate
+
   return new RegExp(
-    `^${pathTemplate
+    `^${normalizedTemplate
       .replaceAll("/", "\\/")
       .replace(":key", "(.+)")}\\/?$`
   )
