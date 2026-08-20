@@ -51,19 +51,19 @@ const workflowRun: WorkflowRun = {
 }
 
 const workflowSkill: WorkflowEventSkill = {
-  id: "conversation.unbound_limited",
+  id: "conversation.unbound",
   eventType: "requirement_intake",
-  stage: "implementation",
-  name: "OpenClaw conversation",
-  purpose: "Reply to the operator",
-  trigger: "The operator sent a message.",
+  stage: "intake",
+  name: "Unbound agent execution",
+  purpose: "Execute the operator request directly without requiring project or workflow binding.",
+  trigger: "The operator posted to an unbound conversation.",
   allowedActors: ["openclaw.gengar"],
-  inputs: ["conversation history"],
-  outputs: ["reply"],
-  constraints: ["Stay read-only."],
-  gates: ["No workflow mutation."],
-  knowledgeSources: ["persisted conversation"],
-  verificationRules: ["Return one concise text response."]
+  inputs: ["recent conversation text", "agent style guidance"],
+  outputs: ["agent response and requested execution results"],
+  constraints: ["Report execution results and side effects accurately."],
+  gates: ["Server authentication and bridge authorization remain required."],
+  knowledgeSources: ["persisted unbound conversation"],
+  verificationRules: ["Return the agent response and preserve the conversation identity."]
 }
 
 function createEnvelopeInput() {
@@ -73,7 +73,7 @@ function createEnvelopeInput() {
     executor: "openclaw.gengar",
     stage: "implementation",
     artifactType: "log" as Artifact["type"],
-    title: "Unbound limited conversation",
+    title: "Unbound agent execution",
     fallbackBody: "fallback body",
     idempotencyKey: "idem-123",
     sessionKey: "session-123",

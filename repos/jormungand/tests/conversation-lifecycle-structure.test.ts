@@ -902,19 +902,19 @@ test("OpenClaw A2A uses the bounded shared session identity for long conversatio
 
   const run = createRun()
   const skill = {
-    id: "conversation.unbound_limited",
+    id: "conversation.unbound",
     eventType: "requirement_intake",
     stage: "intake",
-    name: "Unbound limited conversation",
-    purpose: "Reply safely without binding a workflow run.",
+    name: "Unbound agent execution",
+    purpose: "Execute the operator request directly without requiring project or workflow binding.",
     trigger: "An operator posted to an unbound conversation.",
     allowedActors: ["openclaw.gengar"],
-    inputs: ["conversation text"],
-    outputs: ["one response"],
-    constraints: ["Do not mutate workflow state."],
-    gates: ["Jormungand retains workflow authority."],
-    knowledgeSources: ["persisted conversation"],
-    verificationRules: ["Return one concise response."]
+    inputs: ["recent conversation text", "agent style guidance"],
+    outputs: ["agent response and requested execution results"],
+    constraints: ["Report execution results and side effects accurately."],
+    gates: ["Server authentication and bridge authorization remain required."],
+    knowledgeSources: ["persisted unbound conversation"],
+    verificationRules: ["Return the agent response and preserve the conversation identity."]
   } satisfies WorkflowEventSkill
   const invoke = (conversationId: string, executor: AgentKind) => invokeConfiguredAgent({
     run: { ...run, selectedAgent: executor },

@@ -50,11 +50,11 @@ Observed output:
 ✖ unbound OpenClaw routing preserves conversation and agent identity at the bridge boundary (32.5651ms)
   AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
   + actual - expected
-  
+
   + 'conversation.unbound_limited'
   - 'conversation.unbound'
                          ^
-  
+
 ✖ unbound route helper advances conversation history cursor only after successful delivery (0.6089ms)
   TypeError: (0 , hive_services_1.routeUnboundConversation) is not a function
 ✔ OpenClaw A2A uses the bounded shared session identity for long conversations (407.325ms)
@@ -83,11 +83,11 @@ test at .tmp-tests\tests\conversation-lifecycle-structure.test.js:525:25
 ✖ unbound OpenClaw routing preserves conversation and agent identity at the bridge boundary (32.5651ms)
   AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
   + actual - expected
-  
+
   + 'conversation.unbound_limited'
   - 'conversation.unbound'
                          ^
-  
+
       at assertUnrestrictedUnboundSkill (C:\Users\Linder.Wu\Documents\jormungand\.worktrees\unbound-full-agent-execution\repos\jormungand\.tmp-tests\tests\conversation-lifecycle-structure.test.js:107:22)
       at TestContext.<anonymous> (C:\Users\Linder.Wu\Documents\jormungand\.worktrees\unbound-full-agent-execution\repos\jormungand\.tmp-tests\tests\conversation-lifecycle-structure.test.js:574:9)
       at async Test.run (node:internal/test_runner/test:1125:7)
