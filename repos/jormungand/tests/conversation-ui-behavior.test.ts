@@ -463,7 +463,7 @@ test("conversation manager lock state disables new conversation while running or
   }), false)
 })
 
-test("openclaw live reducer keeps status and reasoning separate from visible activity", async () => {
+test("openclaw live reducer keeps reasoning opt-in while status and tool activity stay visible", async () => {
   const taskConversationModule = await loadTaskConversationModule()
   const reduceAgentLivePreview = Reflect.get(taskConversationModule, "reduceAgentLivePreview") as
     | ((input: AgentLivePreview, event: AgentLiveEvent) => AgentLivePreview)
@@ -504,8 +504,17 @@ test("openclaw live reducer keeps status and reasoning separate from visible act
     message: "Running rg"
   })
   preview = reduceAgentLivePreview!(preview, {
-    id: "delta-1",
+    id: "completed-1",
     sequence: 4,
+    conversationId: "conversation-1",
+    agentId: "openclaw.rowlet",
+    type: "completed",
+    createdAt: "2026-08-20T00:00:03.500Z",
+    message: "OpenClaw finished"
+  })
+  preview = reduceAgentLivePreview!(preview, {
+    id: "delta-1",
+    sequence: 5,
     conversationId: "conversation-1",
     agentId: "openclaw.rowlet",
     type: "assistant_delta",
@@ -513,12 +522,18 @@ test("openclaw live reducer keeps status and reasoning separate from visible act
     delta: "Partial answer"
   })
 
-  assert.equal(preview.status, "Running rg")
+  assert.equal(preview.status, "OpenClaw finished")
   assert.equal(preview.reasoning, "Thinking through the repository layout")
-  assert.deepEqual(preview.events.map((event) => event.type), ["started", "tool", "assistant_delta"])
+  assert.deepEqual(preview.events.map((event) => event.type), ["started", "tool", "completed", "assistant_delta"])
+  assert.deepEqual(
+    preview.events
+      .filter((event) => event.type !== "assistant_delta")
+      .map((event) => event.message ?? event.text ?? event.delta),
+    ["OpenClaw started", "Running rg", "OpenClaw finished"]
+  )
   assert.equal(isAgentLiveTerminal!({
-    id: "completed-1",
-    sequence: 5,
+    id: "completed-2",
+    sequence: 6,
     conversationId: "conversation-1",
     agentId: "openclaw.rowlet",
     type: "completed",
@@ -704,6 +719,7 @@ test("agent live panel state follows the active live stream instead of the targe
         liveSourceAgentId?: AgentKind
         liveEventAgentId?: AgentKind
         hasActiveSource: boolean
+        hasActiveSubmission: boolean
         status?: string
         reasoning?: string
         eventCount: number
@@ -719,6 +735,7 @@ test("agent live panel state follows the active live stream instead of the targe
     targetAgent: "codex",
     liveSourceAgentId: "openclaw.rowlet",
     hasActiveSource: true,
+    hasActiveSubmission: true,
     eventCount: 0
   }), {
     visible: true,
@@ -730,7 +747,23 @@ test("agent live panel state follows the active live stream instead of the targe
     liveSourceAgentId: "openclaw.rowlet",
     liveEventAgentId: "openclaw.gengar",
     hasActiveSource: false,
+    hasActiveSubmission: false,
     status: "OpenClaw finished",
+    reasoning: "Thinking through the final answer",
+    eventCount: 2
+  }), {
+    visible: false,
+    agentId: "openclaw.gengar"
+  })
+
+  assert.deepEqual(getAgentLivePanelState!({
+    targetAgent: "codex",
+    liveSourceAgentId: "openclaw.rowlet",
+    liveEventAgentId: "openclaw.gengar",
+    hasActiveSource: false,
+    hasActiveSubmission: true,
+    status: "OpenClaw finished",
+    reasoning: "Thinking through the final answer",
     eventCount: 2
   }), {
     visible: true,
@@ -740,6 +773,7 @@ test("agent live panel state follows the active live stream instead of the targe
   assert.deepEqual(getAgentLivePanelState!({
     targetAgent: "codex",
     hasActiveSource: false,
+    hasActiveSubmission: false,
     eventCount: 0
   }), {
     visible: false,

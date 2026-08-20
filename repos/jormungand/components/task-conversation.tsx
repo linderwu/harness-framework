@@ -158,6 +158,7 @@ export function getAgentLivePanelState(input: {
   liveSourceAgentId?: AgentKind
   liveEventAgentId?: AgentKind
   hasActiveSource: boolean
+  hasActiveSubmission: boolean
   status?: string
   reasoning?: string
   eventCount: number
@@ -165,12 +166,7 @@ export function getAgentLivePanelState(input: {
   const agentId = input.liveEventAgentId
     ?? input.liveSourceAgentId
     ?? (shouldOpenAgentLiveStream(input.targetAgent) ? input.targetAgent : undefined)
-  const visible = !!agentId && (
-    input.hasActiveSource
-    || !!input.status
-    || !!input.reasoning
-    || input.eventCount > 0
-  )
+  const visible = !!agentId && (input.hasActiveSource || input.hasActiveSubmission)
 
   return {
     visible,
@@ -497,7 +493,7 @@ export function TaskConversation(props: {
                 const lifecycleResult = advanceAgentLiveSubmissionLifecycle(agentLiveSubmissionLifecycleRef.current, event)
                 agentLiveSubmissionLifecycleRef.current = lifecycleResult.lifecycle
                 if (lifecycleResult.shouldCloseSource) {
-                  closeAgentLiveSource({ preservePreview: true })
+                  closeAgentLiveSource()
                 }
               } catch {
                 // Ignore malformed or non-agent-live frames so final POST still succeeds.
@@ -541,7 +537,7 @@ export function TaskConversation(props: {
       const lifecycleResult = settleAgentLiveSubmissionLifecycle(agentLiveSubmissionLifecycleRef.current)
       agentLiveSubmissionLifecycleRef.current = lifecycleResult.lifecycle
       if (lifecycleResult.shouldCloseSource) {
-        closeAgentLiveSource({ preservePreview: true })
+        closeAgentLiveSource()
       }
       setConversationId(result.conversationId ?? activeConversationId)
       setEntries((current) => result.entries ?? mergeResult(current, optimistic.id, result.userEntry!, result.responseEntry))
@@ -849,6 +845,7 @@ export function TaskConversation(props: {
     liveSourceAgentId: activeAgentLiveSourceAgentId,
     liveEventAgentId: agentLiveEvents.at(-1)?.agentId,
     hasActiveSource: !!activeEventSource,
+    hasActiveSubmission: !!agentLiveSubmissionLifecycleRef.current,
     status: agentLiveStatus,
     reasoning: agentLiveReasoning,
     eventCount: agentLiveEvents.length
