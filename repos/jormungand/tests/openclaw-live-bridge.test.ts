@@ -356,6 +356,13 @@ test("OpenClaw bridge replays bounded safe live events by idempotency key", { co
     false
   )
 
+  const trailingSlashLivePoll = await getJson(
+    baseUrl,
+    "/agent-runs/by-idempotency/live-events-structured/events/?after=0"
+  )
+  assert.equal(trailingSlashLivePoll.status, 200)
+  assert.deepEqual(trailingSlashLivePoll.body, livePoll.body)
+
   const runResponse = await runPromise
   assert.equal(runResponse.status, 200)
   const completedRun = await runResponse.json()
@@ -467,6 +474,50 @@ test("OpenClaw bridge keeps terminal live events after stop and advertises the c
   )
 })
 
+test("OpenClaw bridge expires completed idempotency recovery and live journals after the TTL", { concurrency: false }, async (t) => {
+  const { commandDir, fixturePath } = await createFakeDocker(t)
+  const commandPath = `${commandDir};${process.env.Path ?? process.env.PATH ?? ""}`
+  const { baseUrl } = await startBridge(t, {
+    PATH: commandPath,
+    Path: commandPath,
+    FAKE_DOCKER_MODE: "structured",
+    OPENCLAW_DOCKER_COMMAND: JSON.stringify([process.execPath, fixturePath]),
+    OPENCLAW_BRIDGE_COMPLETED_RUN_TTL_MS: "50"
+  })
+
+  const runResponse = await postRun(baseUrl, {
+    protocolVersion: "harness-agent-bridge/v0.3",
+    idempotencyKey: "live-events-expire",
+    workflowRunId: "workflow-live-expire",
+    executor: "openclaw.rowlet",
+    title: "Expire a completed live journal",
+    requirement: "Exercise completed run TTL cleanup."
+  })
+
+  assert.equal(runResponse.status, 200)
+  const completedRun = await runResponse.json()
+  assert.equal(completedRun.status, "completed")
+
+  const recoveryPath = "/agent-runs/by-idempotency/live-events-expire"
+  const eventsPath = `${recoveryPath}/events`
+
+  const recoveryPoll = await getJson(baseUrl, recoveryPath)
+  assert.equal(recoveryPoll.status, 200)
+
+  const eventsPoll = await getJson(baseUrl, eventsPath)
+  assert.equal(eventsPoll.status, 200)
+  assert.equal(eventsPoll.body.status, "completed")
+
+  await waitFor(async () => {
+    const [recoveryExpired, eventsExpired] = await Promise.all([
+      getJson(baseUrl, recoveryPath),
+      getJson(baseUrl, eventsPath)
+    ])
+
+    return recoveryExpired.status === 404 && eventsExpired.status === 404
+  })
+})
+
 test("OpenClaw bridge snapshots failed runtime-skill setup as a failed live journal", { concurrency: false }, async (t) => {
   const { baseUrl } = await startBridge(t, {})
 
@@ -504,6 +555,47 @@ test("OpenClaw bridge snapshots failed runtime-skill setup as a failed live jour
     eventsResponse.body.events.map((event: { type: string }) => event.type),
     ["failed"]
   )
+})
+
+test("OpenClaw bridge keeps a failed live journal when the child process cannot start", { concurrency: false }, async (t) => {
+  const { baseUrl } = await startBridge(t, {
+    OPENCLAW_DOCKER_COMMAND: "definitely-missing-command"
+  })
+
+  const runResponse = await postRun(baseUrl, {
+    protocolVersion: "harness-agent-bridge/v0.3",
+    idempotencyKey: "live-events-spawn-error",
+    workflowRunId: "workflow-spawn-error",
+    executor: "openclaw.rowlet",
+    title: "Fail child-process startup",
+    requirement: "Exercise startup failure journaling."
+  })
+
+  assert.equal(runResponse.status, 500)
+  assert.match((await runResponse.json()).error, /definitely-missing-command/i)
+
+  await waitFor(async () => {
+    const response = await getJson(
+      baseUrl,
+      "/agent-runs/by-idempotency/live-events-spawn-error/events?after=0"
+    )
+    return response.status === 200 && response.body.status === "failed"
+  })
+
+  const recoveryResponse = await getJson(
+    baseUrl,
+    "/agent-runs/by-idempotency/live-events-spawn-error"
+  )
+  assert.equal(recoveryResponse.status, 200)
+  assert.equal(recoveryResponse.body.status, "failed")
+
+  const eventsResponse = await getJson(
+    baseUrl,
+    "/agent-runs/by-idempotency/live-events-spawn-error/events?after=0"
+  )
+  assert.equal(eventsResponse.status, 200)
+  assert.equal(eventsResponse.body.status, "failed")
+  assert.equal(eventsResponse.body.events.at(-1)?.type, "failed")
 })
 
 test("OpenClaw bridge reserves idempotency during runtime-skill setup and releases it after failure", { concurrency: false }, async (t) => {

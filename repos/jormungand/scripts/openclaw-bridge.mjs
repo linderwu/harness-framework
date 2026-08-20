@@ -37,12 +37,16 @@ const liveEventsPathPattern = createPathMatchPattern(liveEventsPathTemplate)
 const maxRunLiveEvents = 64
 const maxAgentLiveText = 8_000
 const maxParserBufferText = maxAgentLiveText
+const completedRunTtlMs = parseCompletedRunTtlMs(
+  process.env.OPENCLAW_BRIDGE_COMPLETED_RUN_TTL_MS
+)
 const activeRuns = new Map()
 const activeWorkflowRuns = new Map()
 const activeIdempotencyKeys = new Map()
 const activeIdempotencyJournals = new Map()
 const completedIdempotencyRuns = new Map()
 const completedRunJournals = new Map()
+let completedRunCleanupTimer
 
 if (!isLoopbackHost(host) && !token) {
   throw new Error("OPENCLAW_BRIDGE_TOKEN is required for non-loopback binding")
@@ -104,6 +108,7 @@ const server = http.createServer(async (request, response) => {
 
     if (request.method === "GET" && idempotencyMatch) {
       const idempotencyKey = decodeURIComponent(idempotencyMatch[1])
+      pruneCompletedRuns()
       const activeRunId = activeIdempotencyKeys.get(idempotencyKey)
       const completedRun = completedIdempotencyRuns.get(idempotencyKey)
 
@@ -214,16 +219,41 @@ const server = http.createServer(async (request, response) => {
         conversationHistory,
         runtimeSkillBundleResults
       })
-      const { journal: completedJournal, ...result } = await runOpenClawAgent({
-        id,
-        idempotencyKey,
-        workflowRunId: payload.workflowRunId,
-        mainAgent,
-        model,
-        sessionKey,
-        message,
-        journal
-      })
+      let completedRun
+
+      try {
+        completedRun = await runOpenClawAgent({
+          id,
+          idempotencyKey,
+          workflowRunId: payload.workflowRunId,
+          mainAgent,
+          model,
+          sessionKey,
+          message,
+          journal
+        })
+      } catch (error) {
+        rememberCompletedRun(
+          idempotencyKey,
+          {
+            id,
+            idempotencyKey,
+            startedAt,
+            finishedAt: new Date().toISOString(),
+            status: "failed",
+            output: formatError(error),
+            stderr: "",
+            statusMessage: formatStartupFailureMessage(mainAgent, error),
+            capabilities: bridgeCapabilities(),
+            runtimeSkillBundleResults,
+            failureKind: "agent-startup"
+          },
+          journal
+        )
+        throw error
+      }
+
+      const { journal: completedJournal, ...result } = completedRun
 
       const completedResponse = {
         id,
@@ -321,21 +351,28 @@ async function runOpenClawAgent({
   })
 
   let exitCode = 1
+  let startupError
 
   try {
     exitCode = await new Promise((resolve, reject) => {
       child.on("error", reject)
       child.on("close", (code) => resolve(code ?? 1))
     })
+  } catch (error) {
+    startupError = error
+    throw error
   } finally {
     clearTimeout(timer)
     stdoutParser.flush()
-    journal.status = exitCode === 0 ? "completed" : "failed"
+    journal.status =
+      startupError || exitCode !== 0 ? "failed" : "completed"
     appendRunEvent(journal, journal.status, {
       message:
-        exitCode === 0
-          ? `${mainAgent} completed through OpenClaw bridge.`
-          : `${mainAgent} exited with status ${exitCode}.`
+        startupError
+          ? formatStartupFailureMessage(mainAgent, startupError)
+          : exitCode === 0
+            ? `${mainAgent} completed through OpenClaw bridge.`
+            : `${mainAgent} exited with status ${exitCode}.`
     })
     activeRuns.delete(id)
     if (workflowRunId && activeWorkflowRuns.get(workflowRunId) === id) {
@@ -745,6 +782,7 @@ function rememberCompletedRun(idempotencyKey, result, journal) {
     return
   }
 
+  pruneCompletedRuns()
   completedIdempotencyRuns.set(idempotencyKey, result)
   if (journal) {
     completedRunJournals.set(idempotencyKey, snapshotRunJournal(journal))
@@ -754,6 +792,7 @@ function rememberCompletedRun(idempotencyKey, result, journal) {
     completedIdempotencyRuns.delete(oldestKey)
     completedRunJournals.delete(oldestKey)
   }
+  scheduleCompletedRunCleanup()
 }
 
 function createRunJournal({ id, idempotencyKey, workflowRunId }) {
@@ -803,6 +842,7 @@ function normalizeRunEvent(type, sequence, payload) {
 }
 
 function getRunJournalByIdempotencyKey(idempotencyKey) {
+  pruneCompletedRuns()
   const activeJournal = activeIdempotencyJournals.get(idempotencyKey)
   if (activeJournal) {
     return activeJournal
@@ -846,6 +886,50 @@ function snapshotRunJournal(journal) {
     cancel: undefined,
     events: journal.events.map((event) => ({ ...event }))
   }
+}
+
+function pruneCompletedRuns(now = Date.now()) {
+  for (const [idempotencyKey, result] of completedIdempotencyRuns) {
+    const finishedAt = Date.parse(result.finishedAt ?? "")
+
+    if (!Number.isFinite(finishedAt) || now - finishedAt <= completedRunTtlMs) {
+      continue
+    }
+
+    completedIdempotencyRuns.delete(idempotencyKey)
+    completedRunJournals.delete(idempotencyKey)
+  }
+
+  scheduleCompletedRunCleanup(now)
+}
+
+function scheduleCompletedRunCleanup(now = Date.now()) {
+  if (completedRunCleanupTimer) {
+    clearTimeout(completedRunCleanupTimer)
+    completedRunCleanupTimer = undefined
+  }
+
+  let nextExpiryAt = Infinity
+
+  for (const result of completedIdempotencyRuns.values()) {
+    const finishedAt = Date.parse(result.finishedAt ?? "")
+
+    if (!Number.isFinite(finishedAt)) {
+      continue
+    }
+
+    nextExpiryAt = Math.min(nextExpiryAt, finishedAt + completedRunTtlMs)
+  }
+
+  if (!Number.isFinite(nextExpiryAt)) {
+    return
+  }
+
+  completedRunCleanupTimer = setTimeout(() => {
+    completedRunCleanupTimer = undefined
+    pruneCompletedRuns()
+  }, Math.max(0, nextExpiryAt - now))
+  completedRunCleanupTimer.unref?.()
 }
 
 function createStructuredRecordParser(onRecord) {
@@ -1061,6 +1145,10 @@ function formatError(error) {
   return error instanceof Error ? error.message : String(error)
 }
 
+function formatStartupFailureMessage(mainAgent, error) {
+  return `${mainAgent} failed to start through OpenClaw bridge: ${formatError(error)}`
+}
+
 function resolveCommandOverride(rawValue, fallbackCommand) {
   const value = rawValue?.trim()
 
@@ -1087,4 +1175,9 @@ function resolveCommandOverride(rawValue, fallbackCommand) {
     command: value,
     args: []
   }
+}
+
+function parseCompletedRunTtlMs(value) {
+  const ttlMs = Number(value ?? 3600000)
+  return Number.isFinite(ttlMs) && ttlMs >= 0 ? ttlMs : 3600000
 }

@@ -23,6 +23,10 @@ test("OpenClaw HTTP bridge supports idempotency recovery polling", () => {
   assert.match(openClawBridge, /by-idempotency/)
   assert.match(openClawBridge, /completedIdempotencyRuns/)
   assert.match(openClawBridge, /idempotency-recovery/)
+  assert.match(openClawBridge, /OPENCLAW_BRIDGE_COMPLETED_RUN_TTL_MS/)
+  assert.match(openClawBridge, /pruneCompletedRuns/)
+  assert.match(openClawBridge, /scheduleCompletedRunCleanup/)
+  assert.match(openClawBridge, /completedRunCleanupTimer\.unref\?\.\(\)/)
 })
 
 test("OpenClaw HTTP bridge source exposes safe live-event replay markers", () => {
