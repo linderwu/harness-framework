@@ -66,6 +66,24 @@ test("bounds event text and rejects invalid identity", () => {
   assert.equal(event.message?.length, MAX_AGENT_LIVE_TEXT)
 })
 
+test("preserves non-empty assistant delta whitespace while still bounding it", () => {
+  const leadingSpace = normalizeAgentLiveEvent({
+    conversationId: "conversation-1",
+    agentId: "openclaw.rowlet",
+    type: "assistant_delta",
+    delta: " hello"
+  })
+  const newline = normalizeAgentLiveEvent({
+    conversationId: "conversation-1",
+    agentId: "openclaw.rowlet",
+    type: "assistant_delta",
+    delta: "\n"
+  })
+
+  assert.equal(leadingSpace.delta, " hello")
+  assert.equal(newline.delta, "\n")
+})
+
 test("rejects unsupported live event types", () => {
   assert.throws(() =>
     normalizeAgentLiveEvent({

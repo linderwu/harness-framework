@@ -52,7 +52,7 @@ export function normalizeAgentLiveEvent(input: unknown): AgentLiveEvent {
     type,
     message: normalizeBoundedText(value.message),
     text: normalizeBoundedText(value.text),
-    delta: normalizeBoundedText(value.delta),
+    delta: normalizeBoundedDelta(value.delta),
     createdAt: readOptionalString(value.createdAt) ?? new Date().toISOString(),
     metadata
   }
@@ -140,6 +140,14 @@ function normalizeBoundedText(value: unknown) {
   }
 
   return text.slice(0, MAX_AGENT_LIVE_TEXT)
+}
+
+function normalizeBoundedDelta(value: unknown) {
+  if (typeof value !== "string" || value.length === 0) {
+    return undefined
+  }
+
+  return value.slice(0, MAX_AGENT_LIVE_TEXT)
 }
 
 function normalizeMetadata(value: unknown): AgentLiveEvent["metadata"] | undefined {
