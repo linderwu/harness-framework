@@ -18,13 +18,13 @@ export async function GET() {
   const bridgeChecks = [
     createHttpBridgeCheck({
       id: "codex-bridge",
-      label: "Codex Bridge",
+      label: "寶可夢中心",
       url: process.env.CODEX_BRIDGE_URL,
       token: process.env.CODEX_BRIDGE_TOKEN
     }),
     createHttpBridgeCheck({
       id: "openclaw-bridge",
-      label: "OpenClaw Bridge",
+      label: "Linder的寶貝球",
       url: process.env.OPENCLAW_BRIDGE_URL,
       token:
         process.env.OPENCLAW_BRIDGE_TOKEN?.trim() ||
