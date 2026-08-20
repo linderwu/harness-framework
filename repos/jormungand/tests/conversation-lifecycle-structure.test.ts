@@ -7,16 +7,22 @@ import { pathToFileURL } from "node:url"
 import test, { describe } from "node:test"
 import type {} from "../app/api/conversations/route"
 import type {} from "../app/api/conversations/[id]/route"
+import type { AgentInvocationInput } from "../lib/agent-bridge"
 import type { AgentKind, WorkflowEventSkill } from "../lib/types"
 import {
   createConversationService,
   type ConversationBinding,
   unboundConversationId
 } from "../lib/conversation"
+import { ConversationHistorySync } from "../lib/conversation-history-sync"
 import {
   getCodexConversationState,
   postCodexConversationMessage
 } from "../lib/codex-conversation"
+import {
+  createHiveServices,
+  routeUnboundConversation
+} from "../lib/hive-services"
 import { openHiveDatabase } from "../lib/hive-memory/database"
 import { createHiveMemoryRepository } from "../lib/hive-memory/repository"
 import type { ConversationEntry } from "../lib/hive-memory/types"
@@ -631,6 +637,55 @@ test("Codex cursor updates stay monotonic and state exposes the persisted effect
   assert.equal(state.nextCursor, 7)
 })
 
+test("unbound Codex routing dispatches directly to Codex with unrestricted conversation skill context", async (t) => {
+  const { repository } = await repositoryFixture(t)
+  const capturedInputs: AgentInvocationInput[] = []
+  const services = createHiveServices({
+    repository,
+    listProjects: async () => {
+      throw new Error("listProjects should not be called for unbound Codex conversations")
+    },
+    listWorkflowRuns: async () => {
+      throw new Error("listWorkflowRuns should not be called for unbound Codex conversations")
+    },
+    invokeAgent: async (input) => {
+      capturedInputs.push(input)
+      return {
+        status: "completed",
+        source: "simulated",
+        body: "Direct Codex reply"
+      }
+    }
+  })
+
+  const conversationId = "conversation:direct-codex"
+  const content = "Please answer directly from the unbound conversation."
+
+  await services.conversation.postUnboundMessage({
+    conversationId,
+    targetAgent: "codex",
+    content,
+    idempotencyKey: "codex-unbound-direct"
+  })
+
+  assert.equal(capturedInputs.length, 1)
+  const invocation = capturedInputs[0]
+  assert.equal(invocation?.executor, "codex")
+  assert.equal(invocation?.conversationId, conversationId)
+  assert.equal(invocation?.skill.id, "conversation.unbound")
+  assert.equal(
+    invocation?.conversationHistory?.some(
+      (entry) => entry.role === "user" && entry.content === content
+    ),
+    true
+  )
+
+  const skillShape = JSON.stringify(invocation?.skill)
+  assert.doesNotMatch(skillShape, /conversation\.unbound_limited/i)
+  assert.doesNotMatch(skillShape, /read-only/i)
+  assert.doesNotMatch(skillShape, /external systems|irreversible actions/i)
+})
+
 test("OpenClaw bridge session identity is derived from stable conversation input instead of only workflow ids", () => {
   assert.match(openClawBridgeSource, /sessionKey/)
   assert.match(openClawBridgeSource, /payload\.conversationId|payload\.sessionKey/)
@@ -639,7 +694,6 @@ test("OpenClaw bridge session identity is derived from stable conversation input
 test("unbound OpenClaw routing preserves conversation and agent identity at the bridge boundary", { concurrency: false }, async (t) => {
   await ensureCompiledAlias()
   const { invokeConfiguredAgent } = await import("../lib/agent-bridge") as typeof import("../lib/agent-bridge")
-  const { repository } = await repositoryFixture(t)
   for (const key of [
     "OPENCLAW_BRIDGE_URL",
     "OPENCLAW_BRIDGE_TOKEN",
@@ -651,6 +705,8 @@ test("unbound OpenClaw routing preserves conversation and agent identity at the 
   process.env.OPENCLAW_BRIDGE_URL = "http://openclaw.test"
   delete process.env.OPENCLAW_A2A_COMMAND
 
+  const sync = new ConversationHistorySync()
+  const capturedInputs: AgentInvocationInput[] = []
   const bridgePayloads: Array<{
     conversationId?: string
     executor?: AgentKind
@@ -670,63 +726,45 @@ test("unbound OpenClaw routing preserves conversation and agent identity at the 
     })
   })
 
-  const routeSkill = {
-    id: "conversation.unbound_limited",
-    eventType: "requirement_intake",
-    stage: "intake",
-    name: "Unbound limited conversation",
-    purpose: "Reply safely without binding a workflow run.",
-    trigger: "An operator posted to an unbound conversation.",
-    allowedActors: ["openclaw.gengar"],
-    inputs: ["conversation text"],
-    outputs: ["one response"],
-    constraints: ["Do not mutate workflow state."],
-    gates: ["Jormungand retains workflow authority."],
-    knowledgeSources: ["persisted conversation"],
-    verificationRules: ["Return one concise response."]
-  } satisfies WorkflowEventSkill
-
-  const service = createConversationService({
-    repository,
-    getRun: async () => undefined,
-    buildContext: async () => undefined,
-    invokeAgent: async () => ({ status: "completed" as const, body: "unused" }),
-    persistRawArtifact: async () => "unused-artifact",
-    enqueueManagerWake: async () => undefined,
-    routeUnbound: async ({ conversationId, targetAgent, content }) => {
-      const syntheticRun = createWorkflowRun({
-        projectId: "",
-        projectName: "Unbound conversation",
-        repository: "",
-        requirement: content,
-        selectedAgent: targetAgent,
-        designApprovalActor: "human",
-        verificationApprovalActor: "human"
-      })
-      const result = await invokeConfiguredAgent({
-        run: syntheticRun,
-        executor: targetAgent,
-        stage: "intake",
-        artifactType: "log",
-        title: "Unbound limited conversation",
-        fallbackBody: "Fallback response",
-        conversationId,
-        skill: { ...routeSkill, allowedActors: [targetAgent] }
-      })
-      return { status: result.status, body: result.body }
-    }
-  })
-
-  const post = (conversationId: string, targetAgent: AgentKind, sequence: number) => service.postUnboundMessage({
-    conversationId,
-    targetAgent,
-    content: `Message ${sequence}`,
-    idempotencyKey: `openclaw-boundary-${sequence}`
-  })
+  const conversationEntries = new Map<string, Array<Pick<ConversationEntry, "id" | "role" | "agentId" | "content">>>()
+  const post = async (conversationId: string, targetAgent: AgentKind, sequence: number) => {
+    const key = JSON.stringify([conversationId, targetAgent])
+    const entries = conversationEntries.get(key) ?? []
+    const nextEntries = [
+      ...entries,
+      {
+        id: `${conversationId}:${targetAgent}:user-${sequence}`,
+        role: "user" as const,
+        agentId: targetAgent,
+        content: `Message ${sequence}`
+      }
+    ]
+    conversationEntries.set(key, nextEntries)
+    return routeUnboundConversation({
+      sync,
+      conversationId,
+      targetAgent,
+      content: `Message ${sequence}`,
+      entries: nextEntries,
+      invokeAgent: async (input: AgentInvocationInput) => {
+        capturedInputs.push(input)
+        return invokeConfiguredAgent(input)
+      }
+    })
+  }
   await post("conversation-a", "openclaw.gengar", 1)
   await post("conversation-a", "openclaw.gengar", 2)
   await post("conversation-a", "openclaw.rowlet", 3)
   await post("conversation-b", "openclaw.gengar", 4)
+
+  assert.equal(capturedInputs.length, 4)
+  for (const invocation of capturedInputs) {
+    assert.equal(invocation.skill.id, "conversation.unbound")
+    const skillShape = JSON.stringify(invocation.skill)
+    assert.doesNotMatch(skillShape, /conversation\.unbound_limited/i)
+    assert.doesNotMatch(skillShape, /read-only/i)
+    assert.doesNotMatch(skillShape, /external systems|irreversible actions/i)
+  }
 
   assert.equal(bridgePayloads.length, 4)
   assert.deepEqual(
@@ -751,6 +789,97 @@ test("unbound OpenClaw routing preserves conversation and agent identity at the 
   assert.equal(sessionKeys[0], sessionKeys[1])
   assert.notEqual(sessionKeys[0], sessionKeys[2])
   assert.notEqual(sessionKeys[0], sessionKeys[3])
+})
+
+test("unbound route helper advances conversation history cursor only after successful delivery", async () => {
+  const sync = new ConversationHistorySync()
+  const capturedHistories: Array<Array<{ role: "user" | "assistant"; content: string }> | undefined> = []
+  let attempt = 0
+  const invokeAgent = async (input: AgentInvocationInput) => {
+    capturedHistories.push(input.conversationHistory)
+    attempt += 1
+    return {
+      status: attempt === 1 ? "failed" as const : "completed" as const,
+      body: `reply-${attempt}`
+    }
+  }
+
+  await routeUnboundConversation({
+    sync,
+    conversationId: "conversation:cursor-check",
+    targetAgent: "openclaw.gengar",
+    content: "Message 1",
+    entries: [
+      {
+        id: "entry-1",
+        role: "user",
+        agentId: "openclaw.gengar",
+        content: "Message 1"
+      }
+    ],
+    invokeAgent
+  })
+
+  await routeUnboundConversation({
+    sync,
+    conversationId: "conversation:cursor-check",
+    targetAgent: "openclaw.gengar",
+    content: "Message 2",
+    entries: [
+      {
+        id: "entry-1",
+        role: "user",
+        agentId: "openclaw.gengar",
+        content: "Message 1"
+      },
+      {
+        id: "entry-2",
+        role: "user",
+        agentId: "openclaw.gengar",
+        content: "Message 2"
+      }
+    ],
+    invokeAgent
+  })
+
+  await routeUnboundConversation({
+    sync,
+    conversationId: "conversation:cursor-check",
+    targetAgent: "openclaw.gengar",
+    content: "Message 3",
+    entries: [
+      {
+        id: "entry-1",
+        role: "user",
+        agentId: "openclaw.gengar",
+        content: "Message 1"
+      },
+      {
+        id: "entry-2",
+        role: "user",
+        agentId: "openclaw.gengar",
+        content: "Message 2"
+      },
+      {
+        id: "entry-3",
+        role: "user",
+        agentId: "openclaw.gengar",
+        content: "Message 3"
+      }
+    ],
+    invokeAgent
+  })
+
+  assert.deepEqual(capturedHistories[0], [
+    { role: "user", content: "Message 1" }
+  ])
+  assert.deepEqual(capturedHistories[1], [
+    { role: "user", content: "Message 1" },
+    { role: "user", content: "Message 2" }
+  ])
+  assert.deepEqual(capturedHistories[2], [
+    { role: "user", content: "Message 3" }
+  ])
 })
 
 test("OpenClaw A2A uses the bounded shared session identity for long conversations", { concurrency: false }, async (t) => {
