@@ -776,9 +776,26 @@ test("codex controls remain available while an OpenClaw preview is active for th
         sessionStatus?: "idle" | "running" | "paused" | "stopped" | "failed"
       }) => boolean)
     | undefined
+  const getConversationActivityViewModel = Reflect.get(taskConversationModule, "getConversationActivityViewModel") as
+    | ((input: {
+        hasCodexSession: boolean
+        isTurnRunning: boolean
+        isPaused: boolean
+        sessionStatus?: "idle" | "running" | "paused" | "stopped" | "failed"
+        agentLivePanelState: {
+          visible: boolean
+          agentId?: AgentKind
+        }
+      }) => {
+        hasAgentLiveActivity: boolean
+        showsCodexControls: boolean
+        showsCodexSession: boolean
+      })
+    | undefined
 
   assert.equal(typeof getAgentLivePanelState, "function")
   assert.equal(typeof shouldShowCodexControls, "function")
+  assert.equal(typeof getConversationActivityViewModel, "function")
 
   const panel = getAgentLivePanelState!({
     targetAgent: "openclaw.rowlet",
@@ -792,6 +809,17 @@ test("codex controls remain available while an OpenClaw preview is active for th
   assert.deepEqual(panel, {
     visible: true,
     agentId: "openclaw.rowlet"
+  })
+  assert.deepEqual(getConversationActivityViewModel!({
+    hasCodexSession: true,
+    isTurnRunning: true,
+    isPaused: false,
+    sessionStatus: "running",
+    agentLivePanelState: panel
+  }), {
+    hasAgentLiveActivity: true,
+    showsCodexControls: true,
+    showsCodexSession: false
   })
   assert.equal(shouldShowCodexControls!({
     hasCodexSession: true,

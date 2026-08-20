@@ -195,6 +195,27 @@ export function shouldShowCodexControls(input: {
     && (input.isTurnRunning || input.isPaused)
 }
 
+export function getConversationActivityViewModel(input: {
+  hasCodexSession: boolean
+  isTurnRunning: boolean
+  isPaused: boolean
+  sessionStatus?: string
+  agentLivePanelState: AgentLivePanelState
+}) {
+  const hasAgentLiveActivity = input.agentLivePanelState.visible
+
+  return {
+    hasAgentLiveActivity,
+    showsCodexSession: input.hasCodexSession && !hasAgentLiveActivity,
+    showsCodexControls: shouldShowCodexControls({
+      hasCodexSession: input.hasCodexSession,
+      isTurnRunning: input.isTurnRunning,
+      isPaused: input.isPaused,
+      sessionStatus: input.sessionStatus
+    })
+  }
+}
+
 export function TaskConversation(props: {
   run?: WorkflowRun
   initialEntries: ConversationEntry[]
@@ -867,16 +888,16 @@ export function TaskConversation(props: {
     reasoning: agentLiveReasoning,
     eventCount: agentLiveEvents.length
   })
-  const hasAgentLiveActivity = agentLivePanelState.visible
-  const showsCodexSession = hasCodexSession && !hasAgentLiveActivity
-  const showsCodexControls = shouldShowCodexControls({
+  const activityViewModel = getConversationActivityViewModel({
     hasCodexSession,
     isTurnRunning,
     isPaused,
-    sessionStatus: session?.status
+    sessionStatus: session?.status,
+    agentLivePanelState
   })
+  const showsCodexSession = activityViewModel.showsCodexSession
   const selectedAgentLabel = getAgentLabel(
-    hasAgentLiveActivity
+    activityViewModel.hasAgentLiveActivity
       ? agentLivePanelState.agentId ?? targetAgent
       : "codex"
   )
@@ -1057,7 +1078,7 @@ export function TaskConversation(props: {
         </dialog>
       ) : null}
       {statusMessage ? <p role="status">{statusMessage}</p> : null}
-      {isUnbound && (showsCodexSession || hasAgentLiveActivity) ? (
+      {isUnbound && (activityViewModel.showsCodexSession || activityViewModel.hasAgentLiveActivity) ? (
         <section className="codexActivity" aria-label={showsCodexSession ? "Codex activity" : "Agent activity"}>
           <div className="codexActivityHeader">
             <div>
@@ -1066,9 +1087,9 @@ export function TaskConversation(props: {
               <p>{selectedAgentLabel}</p>
             </div>
             <div className="codexActivityActions">
-              {showsCodexControls && isTurnRunning ? <button className="compactPanelButton" disabled={isControlling} onClick={() => void control("interrupt")} type="button">Pause</button> : null}
-              {showsCodexControls && isPaused ? <button className="compactPanelButton" disabled={isControlling} onClick={() => void control("resume")} type="button">Continue</button> : null}
-              {showsCodexControls && session && session.status !== "stopped" && session.status !== "failed" && (isTurnRunning || isPaused) ? <button className="compactPanelButton danger" disabled={isControlling} onClick={() => void control("stop")} type="button">Stop</button> : null}
+              {activityViewModel.showsCodexControls && isTurnRunning ? <button className="compactPanelButton" disabled={isControlling} onClick={() => void control("interrupt")} type="button">Pause</button> : null}
+              {activityViewModel.showsCodexControls && isPaused ? <button className="compactPanelButton" disabled={isControlling} onClick={() => void control("resume")} type="button">Continue</button> : null}
+              {activityViewModel.showsCodexControls && session && session.status !== "stopped" && session.status !== "failed" && (isTurnRunning || isPaused) ? <button className="compactPanelButton danger" disabled={isControlling} onClick={() => void control("stop")} type="button">Stop</button> : null}
             </div>
           </div>
           {showsCodexSession && visibleActivityEvents.length ? (

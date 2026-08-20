@@ -45,6 +45,7 @@ const liveEventsPathPattern = createPathMatchPattern(liveEventsPathTemplate)
 const maxRunLiveEvents = 64
 const maxAgentLiveText = 8_000
 const maxParserBufferText = maxAgentLiveText
+const noFinalTextFallback = "OpenClaw completed without a final text response."
 const completedRunTtlMs = parseCompletedRunTtlMs(
   process.env.OPENCLAW_BRIDGE_COMPLETED_RUN_TTL_MS
 )
@@ -860,14 +861,17 @@ function resolveModel(mainAgent) {
 }
 
 function extractOpenClawText(raw, structuredRecords = [], assistantFragments = []) {
+  const directStructuredText = extractStructuredTextValue(raw)
+
+  if (directStructuredText) {
+    return directStructuredText
+  }
+
   try {
     const data = JSON.parse(raw)
-    return (
-      data?.result?.payloads
-        ?.map((payload) => payload.text)
-        .filter(Boolean)
-        .join("\n") || raw
-    )
+    if (isStructuredTextCarrier(data)) {
+      return noFinalTextFallback
+    }
   } catch {
     const finalPayloadText = structuredRecords
       .map(extractStructuredPayloadText)
@@ -882,8 +886,14 @@ function extractOpenClawText(raw, structuredRecords = [], assistantFragments = [
       return assistantFragments.join("")
     }
 
+    if (structuredRecords.length > 0) {
+      return noFinalTextFallback
+    }
+
     return raw
   }
+
+  return raw
 }
 
 async function readJson(request) {
@@ -1202,6 +1212,53 @@ function extractStructuredPayloadText(record) {
         .filter(Boolean)
         .join("\n")
     : undefined
+}
+
+function extractStructuredTextValue(value) {
+  const parsed = parseStructuredValue(value)
+
+  if (!parsed) {
+    return undefined
+  }
+
+  const structuredValues = Array.isArray(parsed) ? parsed : [parsed]
+
+  for (let index = structuredValues.length - 1; index >= 0; index -= 1) {
+    const finalPayloadText = extractStructuredPayloadText(structuredValues[index])
+    if (finalPayloadText) {
+      return finalPayloadText
+    }
+  }
+
+  for (let index = structuredValues.length - 1; index >= 0; index -= 1) {
+    const assistantText = extractAssistantDelta(structuredValues[index])
+    if (assistantText) {
+      return assistantText
+    }
+  }
+
+  return undefined
+}
+
+function parseStructuredValue(value) {
+  try {
+    const parsed = JSON.parse(value)
+    return isStructuredTextCarrier(parsed) ? parsed : undefined
+  } catch {
+    return undefined
+  }
+}
+
+function isStructuredTextCarrier(value) {
+  if (!value || typeof value !== "object") {
+    return false
+  }
+
+  if (Array.isArray(value)) {
+    return value.some((entry) => isStructuredTextCarrier(entry))
+  }
+
+  return true
 }
 
 function normalizeBoundedText(value) {

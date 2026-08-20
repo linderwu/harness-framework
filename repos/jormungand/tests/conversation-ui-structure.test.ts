@@ -118,11 +118,12 @@ test("activity panel renders live agent preview details without changing codex c
   assert.match(taskConversation, /const \[activeAgentLiveSourceAgentId, setActiveAgentLiveSourceAgentId\] = useState<AgentKind \| undefined>\(\)/)
   assert.match(taskConversation, /const agentLivePanelState = getAgentLivePanelState\(\{/)
   assert.match(taskConversation, /hasActiveSubmission: !!agentLiveSubmissionLifecycleRef\.current/)
-  assert.match(taskConversation, /const showsCodexControls = shouldShowCodexControls\(\{/)
+  assert.match(taskConversation, /const activityViewModel = getConversationActivityViewModel\(\{/)
+  assert.match(taskConversation, /agentLivePanelState/)
   assert.match(taskConversation, /selectedAgentLabel/)
-  assert.match(taskConversation, /\{showsCodexControls && isTurnRunning \? <button className="compactPanelButton"[\s\S]*>Pause<\/button> : null\}/)
-  assert.match(taskConversation, /\{showsCodexControls && isPaused \? <button className="compactPanelButton"[\s\S]*>Continue<\/button> : null\}/)
-  assert.match(taskConversation, /\{showsCodexControls && session && session\.status !== "stopped" && session\.status !== "failed" && \(isTurnRunning \|\| isPaused\) \? <button className="compactPanelButton danger"[\s\S]*>Stop<\/button> : null\}/)
+  assert.match(taskConversation, /\{activityViewModel\.showsCodexControls && isTurnRunning \? <button className="compactPanelButton"[\s\S]*>Pause<\/button> : null\}/)
+  assert.match(taskConversation, /\{activityViewModel\.showsCodexControls && isPaused \? <button className="compactPanelButton"[\s\S]*>Continue<\/button> : null\}/)
+  assert.match(taskConversation, /\{activityViewModel\.showsCodexControls && session && session\.status !== "stopped" && session\.status !== "failed" && \(isTurnRunning \|\| isPaused\) \? <button className="compactPanelButton danger"[\s\S]*>Stop<\/button> : null\}/)
 })
 
 test("rename action opens a visible native dialog for the title input", () => {

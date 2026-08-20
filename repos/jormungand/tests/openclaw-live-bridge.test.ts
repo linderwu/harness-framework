@@ -203,6 +203,25 @@ async function createFakeDocker(t: TestContext) {
       '  writeLine({ result: { payloads: [{ text: "Final answer" }] } })',
       "}",
       "",
+      "async function runStructuredNoFinalPayload() {",
+      "  writeStdout(JSON.stringify({",
+      '    reasoning_content: "private chain of thought",',
+      '    request: { message: "do not leak this request" },',
+      '    toolArgs: { command: "do not leak this tool" },',
+      '    raw: { nested: "still private" }',
+      "  }))",
+      "}",
+      "",
+      "async function runAssistantFragmentsNoFinalPayload() {",
+      '  writeLine({ reasoning_content: "private reasoning" })',
+      '  writeLine({ request: { prompt: "do not leak this request" }, toolArgs: { command: "do not leak this tool" } })',
+      '  writeLine({ text: "<think>private analysis</think>Visible assistant answer" })',
+      "}",
+      "",
+      "async function runPlainText() {",
+      '  writeStdout("Plain text final output")',
+      "}",
+      "",
       "async function runSlowStop() {",
       "  writeLine({ reasoning_content: \"starting stop workflow\" })",
       "  await sleep(350)",
@@ -222,6 +241,21 @@ async function createFakeDocker(t: TestContext) {
       "const main = async () => {",
       '  if (process.argv[2] === "runtime-skill-docker") {',
       "    await runRuntimeSkillDocker()",
+      "    return",
+      "  }",
+      "",
+      '  if (mode === "structured-no-final-payload") {',
+      "    await runStructuredNoFinalPayload()",
+      "    return",
+      "  }",
+      "",
+      '  if (mode === "assistant-fragments-no-final-payload") {',
+      "    await runAssistantFragmentsNoFinalPayload()",
+      "    return",
+      "  }",
+      "",
+      '  if (mode === "plain-text") {',
+      "    await runPlainText()",
       "    return",
       "  }",
       "",
@@ -488,6 +522,97 @@ test("OpenClaw bridge replays bounded safe live events by idempotency key", { co
     "/agent-runs/by-idempotency/unknown-live-events/events?after=0"
   )
   assert.equal(missingPoll.status, 404)
+})
+
+test("OpenClaw bridge does not leak raw structured JSON when no final payload text exists", { concurrency: false }, async (t) => {
+  const { commandDir, fixturePath } = await createFakeDocker(t)
+  const commandPath = `${commandDir};${process.env.Path ?? process.env.PATH ?? ""}`
+  const { baseUrl } = await startBridge(t, {
+    PATH: commandPath,
+    Path: commandPath,
+    FAKE_DOCKER_MODE: "structured-no-final-payload",
+    OPENCLAW_DOCKER_COMMAND: JSON.stringify([process.execPath, fixturePath])
+  })
+
+  const runResponse = await postRun(baseUrl, {
+    protocolVersion: "harness-agent-bridge/v0.3",
+    idempotencyKey: "structured-no-final-payload",
+    workflowRunId: "workflow-structured-no-final-payload",
+    executor: "openclaw.rowlet",
+    title: "Structured output without final payload",
+    requirement: "Verify the bridge never returns raw private structured stdout."
+  })
+
+  assert.equal(runResponse.status, 200)
+  const completedRun = await runResponse.json()
+  assert.equal(completedRun.status, "completed")
+  assert.notEqual(
+    completedRun.output,
+    JSON.stringify({
+      reasoning_content: "private chain of thought",
+      request: { message: "do not leak this request" },
+      toolArgs: { command: "do not leak this tool" },
+      raw: { nested: "still private" }
+    })
+  )
+  assert.equal(completedRun.output.includes("private chain of thought"), false)
+  assert.equal(completedRun.output.includes("do not leak this request"), false)
+  assert.equal(completedRun.output.includes("do not leak this tool"), false)
+  assert.equal(completedRun.output.includes("still private"), false)
+  assert.match(completedRun.output, /without a final text/i)
+})
+
+test("OpenClaw bridge falls back to sanitized assistant fragments when structured records omit a final payload", { concurrency: false }, async (t) => {
+  const { commandDir, fixturePath } = await createFakeDocker(t)
+  const commandPath = `${commandDir};${process.env.Path ?? process.env.PATH ?? ""}`
+  const { baseUrl } = await startBridge(t, {
+    PATH: commandPath,
+    Path: commandPath,
+    FAKE_DOCKER_MODE: "assistant-fragments-no-final-payload",
+    OPENCLAW_DOCKER_COMMAND: JSON.stringify([process.execPath, fixturePath])
+  })
+
+  const runResponse = await postRun(baseUrl, {
+    protocolVersion: "harness-agent-bridge/v0.3",
+    idempotencyKey: "assistant-fragments-no-final-payload",
+    workflowRunId: "workflow-assistant-fragments-no-final-payload",
+    executor: "openclaw.rowlet",
+    title: "Assistant fragments without final payload",
+    requirement: "Verify the bridge prefers sanitized assistant fragments over raw structured stdout."
+  })
+
+  assert.equal(runResponse.status, 200)
+  const completedRun = await runResponse.json()
+  assert.equal(completedRun.status, "completed")
+  assert.equal(completedRun.output, "Visible assistant answer")
+  assert.equal(completedRun.output.includes("private analysis"), false)
+  assert.equal(completedRun.output.includes("do not leak this request"), false)
+  assert.equal(completedRun.output.includes("do not leak this tool"), false)
+})
+
+test("OpenClaw bridge preserves plain-text final output compatibility", { concurrency: false }, async (t) => {
+  const { commandDir, fixturePath } = await createFakeDocker(t)
+  const commandPath = `${commandDir};${process.env.Path ?? process.env.PATH ?? ""}`
+  const { baseUrl } = await startBridge(t, {
+    PATH: commandPath,
+    Path: commandPath,
+    FAKE_DOCKER_MODE: "plain-text",
+    OPENCLAW_DOCKER_COMMAND: JSON.stringify([process.execPath, fixturePath])
+  })
+
+  const runResponse = await postRun(baseUrl, {
+    protocolVersion: "harness-agent-bridge/v0.3",
+    idempotencyKey: "plain-text-output",
+    workflowRunId: "workflow-plain-text-output",
+    executor: "openclaw.rowlet",
+    title: "Plain text final output",
+    requirement: "Verify plain text output remains unchanged."
+  })
+
+  assert.equal(runResponse.status, 200)
+  const completedRun = await runResponse.json()
+  assert.equal(completedRun.status, "completed")
+  assert.equal(completedRun.output, "Plain text final output")
 })
 
 test("OpenClaw bridge keeps terminal live events after stop and advertises the capability", { concurrency: false }, async (t) => {
