@@ -52,7 +52,8 @@
     <text class="node-desc" x="1096" y="432">Runtime skill bundle resolution.</text>
     <rect class="node storage" x="820" y="380" width="220" height="110" rx="8" fill="#f5e6ff" />
     <text class="node-title" x="836" y="408">Workspace Store</text>
-    <text class="node-desc" x="836" y="432">JSON-backed persistence.</text>
+    <text class="node-desc" x="836" y="432">Configured data-dir persistence</text>
+    <text class="node-desc" x="836" y="448">for SQLite and workflow JSON.</text>
     <rect class="node external" x="1340" y="80" width="220" height="110" rx="8" fill="#ffe3d8" />
     <text class="node-title" x="1356" y="108">Codex Bridge</text>
     <text class="node-desc" x="1356" y="132">Authenticated v0.3 external</text>
@@ -66,7 +67,7 @@
     <text class="node-desc" x="1356" y="452">Repository service.</text>
     <rect class="node component" x="560" y="70" width="220" height="120" rx="8" fill="#eef0ff" />
     <text class="node-title" x="576" y="98">State File</text>
-    <text class="node-desc" x="576" y="122">repos/jormungand/data/harness-state.json.</text>
+    <text class="node-desc" x="576" y="122">`JORMUNGAND_DATA_DIR`/harness-state.json.</text>
     <rect class="node component" x="820" y="70" width="220" height="120" rx="8" fill="#eef0ff" />
     <text class="node-title" x="836" y="98">State Access</text>
     <text class="node-desc" x="836" y="122">Read/write/list/upsert/delete</text>

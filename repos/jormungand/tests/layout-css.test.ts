@@ -140,6 +140,23 @@ test("task workspace makes conversation the largest responsive column", () => {
   assert.match(tablet, /grid-template-columns:\s*1fr/)
 })
 
+test("Codex activity is a responsive page-level lower-left overlay", () => {
+  const activityRule = ruleBody(/\.codexActivity/, ".codexActivity")
+  const mobileBlock = mediaBlock(/\(max-width: 640px\)/, "mobile Codex activity layout")
+
+  assert.match(activityRule, /position:\s*fixed;/)
+  assert.match(activityRule, /left:\s*18px;/)
+  assert.match(activityRule, /bottom:\s*max\(18px,\s*env\(safe-area-inset-bottom\)\);/)
+  assert.match(activityRule, /width:\s*min\(360px,\s*calc\(100vw\s*-\s*36px\)\);/)
+  assert.match(activityRule, /max-height:\s*min\(32vh,\s*280px\);/)
+  assert.match(activityRule, /overflow:\s*hidden;/)
+  assert.match(activityRule, /z-index:\s*20;/)
+  assert.match(
+    mobileBlock,
+    /\.codexActivity\s*\{[\s\S]*?bottom:\s*max\(96px,\s*calc\(12px\s*\+\s*env\(safe-area-inset-bottom\)\)\);[\s\S]*?left:\s*max\(12px,\s*env\(safe-area-inset-left\)\);[\s\S]*?width:\s*min\(360px,\s*calc\(100vw\s*-\s*24px\)\);/
+  )
+})
+
 test("conversation buttons use short layered press depth with focus, disabled, and motion-safe states", () => {
   const rootRule = ruleBody(/:root/, ":root")
   const sharedConversationRule = ruleBody(

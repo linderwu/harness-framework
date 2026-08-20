@@ -6,7 +6,7 @@ flowchart LR
   engine["Workflow Engine<br/>Creates/advances runs and coordinates gates."]
   bridge["Agent Bridge<br/>Normalizes Codex/OpenClaw/simulated executor calls."]
   resolver["Runtime Skill Resolver<br/>Resolves bridge protocol v0.3 skill bundles."]
-  store["Workspace Store<br/>Local JSON-backed project and workflow state."]
+  store["Workspace Store<br/>Configured data-dir persistence for SQLite and workflow JSON."]
   codex["Codex Bridge<br/>External execution bridge."]
   openclaw["OpenClaw Runtime<br/>Optional external executor."]
   github["GitHub<br/>Repository source/target."]

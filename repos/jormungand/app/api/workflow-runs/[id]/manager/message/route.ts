@@ -1,22 +1,121 @@
 import { NextResponse } from "next/server"
+import { getExecutionJobRouteResponse, runNextExecutionJob } from "@/lib/execution-job-runner"
 import { getDefaultHiveServices } from "@/lib/hive-services"
+import type { ExecutionJob } from "@/lib/hive-memory/types"
 import { getWorkflowRun } from "@/lib/store"
+import type { WorkflowRun } from "@/lib/types"
 
-export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
+type DefaultHiveServices = ReturnType<typeof getDefaultHiveServices>
+
+type WorkflowRunManagerRouteDependencies = {
+  getWorkflowRun?: (id: string) => Promise<WorkflowRun | undefined>
+  repository?: DefaultHiveServices["repository"]
+  scheduler?: Pick<DefaultHiveServices["scheduler"], "enqueue" | "runNext">
+  scheduleExecutionJobDrain?: (jobId: string) => Promise<void> | void
+}
+
+export function createWorkflowRunManagerMessageRouteHandlers(
+  dependencies: WorkflowRunManagerRouteDependencies = {}
+) {
+  return {
+    POST: (request: Request, context: { params: Promise<{ id: string }> }) =>
+      postManagerMessage(request, context, dependencies)
+  }
+}
+
+export const { POST } = createWorkflowRunManagerMessageRouteHandlers()
+
+async function postManagerMessage(
+  request: Request,
+  context: { params: Promise<{ id: string }> },
+  dependencies: WorkflowRunManagerRouteDependencies
+) {
   const { id } = await context.params
-  const run = await getWorkflowRun(id)
+  const run = await (dependencies.getWorkflowRun ?? getWorkflowRun)(id)
   if (!run) return NextResponse.json({ error: "Workflow run not found" }, { status: 404 })
   if (!run.managed) return NextResponse.json({ error: "Workflow run is not manager-controlled" }, { status: 409 })
   const body = (await request.json()) as { content?: string; idempotencyKey?: string }
   if (!body.content?.trim() || !body.idempotencyKey?.trim()) {
     return NextResponse.json({ error: "content and idempotencyKey are required" }, { status: 400 })
   }
-  const { repository, scheduler } = getDefaultHiveServices()
-  await repository.appendEvent({
-    eventType: "manager_operator_message", actor: "human", workflowRunId: id,
-    payload: { content: body.content.trim() }, idempotencyKey: body.idempotencyKey
-  })
-  await scheduler.enqueue({ workflowRunId: id, reason: "operator_message", idempotencyKey: `wake:${body.idempotencyKey}` })
-  void scheduler.runNext(id)
-  return NextResponse.json({ status: "queued" }, { status: 202 })
+  const defaultServices = dependencies.repository ? undefined : getDefaultHiveServices()
+  const repository = dependencies.repository ?? defaultServices!.repository
+  const scheduler = dependencies.scheduler ?? defaultServices?.scheduler ?? {
+    enqueue: (input: { workflowRunId: string; reason: string; idempotencyKey: string }) =>
+      repository.enqueueManagerWake(input),
+    runNext: async () => {
+      throw new Error("Manager scheduler is unavailable.")
+    }
+  }
+  const idempotencyKey = body.idempotencyKey.trim()
+  const executionJobIdempotencyKey = `workflow-run-manager-message:${id}:${idempotencyKey}`
+  const scheduleExecutionJobDrain = dependencies.scheduleExecutionJobDrain ??
+    createDefaultExecutionJobDrain({ repository, scheduler })
+  const existingJob = repository.getExecutionJobByIdempotencyKey(executionJobIdempotencyKey)
+  if (existingJob) {
+    return respondWithExecutionJob(existingJob, scheduleExecutionJobDrain)
+  }
+
+  let createdJob: ExecutionJob | undefined
+  try {
+    const created = await repository.createExecutionJob({
+      kind: "manager_message",
+      workflowRunId: id,
+      payload: { eventType: "manager_operator_message" },
+      idempotencyKey: executionJobIdempotencyKey
+    })
+    if (!created.inserted) {
+      return respondWithExecutionJob(created.job, scheduleExecutionJobDrain)
+    }
+    createdJob = created.job
+    await repository.appendEvent({
+      eventType: "manager_operator_message", actor: "human", workflowRunId: id,
+      payload: { content: body.content.trim() }, idempotencyKey
+    })
+    await scheduler.enqueue({ workflowRunId: id, reason: "operator_message", idempotencyKey: `wake:${idempotencyKey}` })
+    return respondWithExecutionJob(createdJob, scheduleExecutionJobDrain, true)
+  } catch (error) {
+    if (createdJob) {
+      await repository.cancelExecutionJob({ id: createdJob.id }).catch(() => undefined)
+    }
+    throw error
+  }
+}
+
+async function respondWithExecutionJob(
+  job: ExecutionJob,
+  scheduleExecutionJobDrain: (jobId: string) => Promise<void> | void,
+  allowDrain = false
+) {
+  const response = getExecutionJobRouteResponse(job)
+  if (response.shouldScheduleDrain && (allowDrain || response.isLeaseExpired)) {
+    await scheduleExecutionJobDrain(job.id)
+  }
+  return NextResponse.json(response.body, { status: response.httpStatus })
+}
+
+function createDefaultExecutionJobDrain(input: {
+  repository: DefaultHiveServices["repository"]
+  scheduler: Pick<DefaultHiveServices["scheduler"], "runNext">
+}) {
+  return (jobId: string) => {
+    void runNextExecutionJob({
+      repository: input.repository,
+      jobId,
+      leaseOwner: `route:${process.pid}`,
+      leaseDurationMs: 5 * 60 * 1000,
+      handlers: {
+        manager_message: async (job) => {
+          if (!job.workflowRunId) throw new Error("manager_message job is missing workflowRunId.")
+          const result = await input.scheduler.runNext(job.workflowRunId)
+          return { status: result.status }
+        }
+      }
+    }).catch((error) => {
+      console.error("Execution job drain failed", {
+        jobId,
+        error: error instanceof Error ? error.message : String(error)
+      })
+    })
+  }
 }

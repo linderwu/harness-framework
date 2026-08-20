@@ -1,7 +1,8 @@
 "use client"
 
+import { createPortal } from "react-dom"
 import { FormEvent, KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { Send } from "lucide-react"
+import { ChevronDown, ChevronLeft, Send } from "lucide-react"
 import type {
   CodexConversationEvent,
   CodexConversationState
@@ -36,6 +37,17 @@ type NewConversationResult = {
   metadata?: ConversationHeaderMetadata
 }
 
+type QueuedMutationResult = {
+  status: "queued"
+  jobId: string
+}
+
+function isQueuedMutationResult(
+  result: NewConversationResult | QueuedMutationResult | ConversationSummary
+): result is QueuedMutationResult {
+  return "jobId" in result
+}
+
 type ConversationManagerAction = "rename" | "archive" | "unarchive" | "delete"
 
 export function TaskConversation(props: {
@@ -45,6 +57,7 @@ export function TaskConversation(props: {
   onEntriesChanged: (entries: ConversationEntry[]) => void
   onBound?: (binding: ConversationBinding) => void
   onNewConversation?: () => void
+  codexActivityMount?: HTMLElement | null
 }) {
   const runId = props.run?.id
   const isUnbound = !runId
@@ -61,6 +74,7 @@ export function TaskConversation(props: {
   const [session, setSession] = useState<CodexConversationState["session"]>()
   const [events, setEvents] = useState<CodexConversationEvent[]>([])
   const [isControlling, setIsControlling] = useState(false)
+  const [isCodexActivityExpanded, setIsCodexActivityExpanded] = useState(true)
   const [isLoadingConversation, setIsLoadingConversation] = useState(true)
   const [isStartingConversation, setIsStartingConversation] = useState(false)
   const [conversations, setConversations] = useState<ConversationSummary[]>([])
@@ -286,6 +300,8 @@ export function TaskConversation(props: {
       const result = await response.json() as {
         conversationId?: string
         error?: string
+        jobId?: string
+        status?: string
         userEntry?: ConversationEntry
         responseEntry?: ConversationEntry
         binding?: ConversationBinding
@@ -293,8 +309,23 @@ export function TaskConversation(props: {
         session?: CodexConversationState["session"]
         events?: CodexConversationEvent[]
       }
-      if (!response.ok || !result.userEntry) throw new Error(result.error ?? "Message dispatch failed")
       if (generation !== requestGeneration.current) return
+      if (response.status === 202) {
+        if (!result.jobId) throw new Error(result.error ?? "Message dispatch failed")
+        setConversationId(result.conversationId ?? activeConversationId)
+        if (result.entries) {
+          setEntries(result.entries)
+        } else if (result.userEntry) {
+          setEntries((current) => mergeResult(current, optimistic.id, result.userEntry!, result.responseEntry))
+        }
+        if ("session" in result) setSession(result.session)
+        if ("events" in result) setEvents(result.events ?? [])
+        if (isUnbound) void refreshConversations(generation)
+        if (result.binding) props.onBound?.(result.binding)
+        setStatusMessage(`Message queued. Job ID: ${result.jobId}.`)
+        return
+      }
+      if (!response.ok || !result.userEntry) throw new Error(result.error ?? "Message dispatch failed")
       setConversationId(result.conversationId ?? activeConversationId)
       setEntries((current) => result.entries ?? mergeResult(current, optimistic.id, result.userEntry!, result.responseEntry))
       setSession(result.session)
@@ -320,9 +351,21 @@ export function TaskConversation(props: {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action, conversationId: activeConversationId })
       })
-      const result = await response.json() as CodexConversationState & { error?: string }
+      const result = await response.json() as CodexConversationState & { error?: string; jobId?: string; status?: string }
       if (!response.ok) throw new Error(result.error ?? "Codex control request failed")
       if (generation !== requestGeneration.current) return
+      if (response.status === 202) {
+        if (!result.jobId) throw new Error(result.error ?? "Codex control request failed")
+        if (result.conversationId) setConversationId(result.conversationId)
+        if ("entries" in result) {
+          setEntries(result.entries)
+        }
+        if ("session" in result) setSession(result.session)
+        if ("events" in result) setEvents(result.events ?? [])
+        onEntriesChanged(result.entries ?? entries)
+        setStatusMessage(`Conversation control queued. Job ID: ${result.jobId}.`)
+        return
+      }
       setConversationId(result.conversationId ?? activeConversationId)
       setEntries(result.entries)
       setSession(result.session)
@@ -353,6 +396,10 @@ export function TaskConversation(props: {
     setStatusMessage(undefined)
     try {
       const result = await requestNewConversation(fetch)
+      if (isQueuedMutationResult(result)) {
+        setStatusMessage(`New conversation queued. Job ID: ${result.jobId}.`)
+        return
+      }
       setConversationId(result.conversationId)
       setEntries([])
       setAllowedAgents(initialAllowedAgents)
@@ -447,6 +494,10 @@ export function TaskConversation(props: {
     try {
       const summary = await requestConversationRename(fetch, activeConversationId, renameDraft)
       if (generation !== requestGeneration.current) return
+      if (isQueuedMutationResult(summary)) {
+        setStatusMessage(`Rename queued. Job ID: ${summary.jobId}.`)
+        return
+      }
       setMetadata(toConversationHeaderMetadata(summary))
       setRenameDraft(summary.title)
       closeRenameDialog()
@@ -469,6 +520,10 @@ export function TaskConversation(props: {
     try {
       const summary = await requestConversationState(fetch, activeConversationId, nextState)
       if (generation !== requestGeneration.current) return
+      if (isQueuedMutationResult(summary)) {
+        setStatusMessage(`${nextState === "archived" ? "Archive" : "Unarchive"} queued. Job ID: ${summary.jobId}.`)
+        return
+      }
       setMetadata(toConversationHeaderMetadata(summary))
       setStatusMessage(
         nextState === "archived"
@@ -546,6 +601,10 @@ export function TaskConversation(props: {
       onEntriesChanged([])
       try {
         const replacement = await requestNewConversation(fetch)
+        if (isQueuedMutationResult(replacement)) {
+          setStatusMessage(`Replacement conversation queued. Job ID: ${replacement.jobId}.`)
+          return
+        }
         setConversationId(replacement.conversationId)
         setMetadata(replacement.metadata)
         setIsConversationIdentityUnavailable(false)
@@ -582,6 +641,50 @@ export function TaskConversation(props: {
     .filter((event) => event.type !== "assistant_delta")
     .slice(-18)
   const liveAssistantText = session?.liveText?.trim()
+  const codexActivityPanel = isUnbound && session ? (
+    <section className={`panel runsPanel codexActivityPanel${isCodexActivityExpanded ? "" : " collapsed"}`} aria-label="Codex activity panel">
+      <button
+        aria-expanded={isCodexActivityExpanded}
+        aria-label={isCodexActivityExpanded ? "Collapse Live session" : "Expand Live session"}
+        className="projectSelectorSummary codexActivityToggle"
+        onClick={() => setIsCodexActivityExpanded((current) => !current)}
+        type="button"
+      >
+        <span className="projectSelectorHeader">
+          <span><strong>Live session</strong></span>
+          {isCodexActivityExpanded ? <ChevronDown size={18} /> : <ChevronLeft size={18} />}
+        </span>
+      </button>
+      {isCodexActivityExpanded ? (
+        <div className="codexActivityPanelBody">
+          <section className="codexActivity" aria-label="Codex activity">
+            <div className="codexActivityHeader">
+              <div>
+                <p className="eyebrow">Live session</p>
+                <strong>{formatSessionStatus(session)}</strong>
+              </div>
+              <div className="codexActivityActions">
+                {isTurnRunning ? <button className="compactPanelButton" disabled={isControlling} onClick={() => void control("interrupt")} type="button">Pause</button> : null}
+                {isPaused ? <button className="compactPanelButton" disabled={isControlling} onClick={() => void control("resume")} type="button">Continue</button> : null}
+                {session.status !== "stopped" && session.status !== "failed" && (isTurnRunning || isPaused) ? <button className="compactPanelButton danger" disabled={isControlling} onClick={() => void control("stop")} type="button">Stop</button> : null}
+              </div>
+            </div>
+            {visibleActivityEvents.length ? (
+              <ol className="codexActivityEvents" aria-live="polite">
+                {visibleActivityEvents.map((event) => <li key={event.id}><span>{formatActivityType(event.type)}</span><p>{event.message ?? event.text ?? "Codex activity"}</p></li>)}
+              </ol>
+            ) : null}
+            {liveAssistantText ? <pre className="codexLiveResponse" aria-live="polite">{liveAssistantText}</pre> : null}
+          </section>
+        </div>
+      ) : null}
+    </section>
+  ) : null
+  const renderedCodexActivity = props.codexActivityMount === undefined
+    ? codexActivityPanel
+    : props.codexActivityMount && codexActivityPanel
+      ? createPortal(codexActivityPanel, props.codexActivityMount)
+      : null
   const isConversationActionPending = isLoadingConversation || isStartingConversation || !!activeManagerAction
   const areManagerControlsDisabled = isConversationManagerLocked({
     isLoadingConversation,
@@ -759,27 +862,7 @@ export function TaskConversation(props: {
         </dialog>
       ) : null}
       {statusMessage ? <p role="status">{statusMessage}</p> : null}
-      {isUnbound && session ? (
-        <section className="codexActivity" aria-label="Codex activity">
-          <div className="codexActivityHeader">
-            <div>
-              <p className="eyebrow">Live Codex session</p>
-              <strong>{formatSessionStatus(session)}</strong>
-            </div>
-            <div className="codexActivityActions">
-              {isTurnRunning ? <button className="compactPanelButton" disabled={isControlling} onClick={() => void control("interrupt")} type="button">Pause</button> : null}
-              {isPaused ? <button className="compactPanelButton" disabled={isControlling} onClick={() => void control("resume")} type="button">Continue</button> : null}
-              {session.status !== "stopped" && session.status !== "failed" && (isTurnRunning || isPaused) ? <button className="compactPanelButton danger" disabled={isControlling} onClick={() => void control("stop")} type="button">Stop</button> : null}
-            </div>
-          </div>
-          {visibleActivityEvents.length ? (
-            <ol className="codexActivityEvents" aria-live="polite">
-              {visibleActivityEvents.map((event) => <li key={event.id}><span>{formatActivityType(event.type)}</span><p>{event.message ?? event.text ?? "Codex activity"}</p></li>)}
-            </ol>
-          ) : null}
-          {liveAssistantText ? <pre className="codexLiveResponse" aria-live="polite">{liveAssistantText}</pre> : null}
-        </section>
-      ) : null}
+      {renderedCodexActivity}
       <ol className="conversationEntries">
         {entries.length ? entries.map((entry) => (
           <li className={`conversationEntry ${entry.role} ${entry.importance}`} key={entry.id}>
@@ -860,8 +943,8 @@ export function requestConversationSummaries(
 
 export function requestNewConversation(fetchImpl: typeof fetch) {
   return requestJson<
-    { conversationId?: string; metadata?: ConversationHeaderMetadata; error?: string },
-    NewConversationResult
+    { conversationId?: string; metadata?: ConversationHeaderMetadata; error?: string; jobId?: string; status?: string },
+    NewConversationResult | QueuedMutationResult
   >(
     fetchImpl,
     "/api/conversation/new",
@@ -870,7 +953,16 @@ export function requestNewConversation(fetchImpl: typeof fetch) {
       headers: { "Content-Type": "application/json" }
     },
     "New conversation could not be started",
-    (result) => {
+    (result, response) => {
+      if (response.status === 202) {
+        if (!result.jobId) {
+          throw new Error(result.error ?? "New conversation could not be started")
+        }
+        return {
+          status: "queued",
+          jobId: result.jobId
+        } satisfies QueuedMutationResult
+      }
       if (!result.conversationId) {
         throw new Error(result.error ?? "New conversation could not be started")
       }
@@ -1039,7 +1131,10 @@ function requestManagedConversationUpdate(
   body: { title?: string; state?: ConversationState },
   fallbackError: string
 ) {
-  return requestJson<ConversationSummary & { error?: string }>(
+  return requestJson<
+    ConversationSummary & { error?: string; jobId?: string; status?: string },
+    ConversationSummary | QueuedMutationResult
+  >(
     fetchImpl,
     `/api/conversations/${conversationId}`,
     {
@@ -1048,6 +1143,19 @@ function requestManagedConversationUpdate(
       body: JSON.stringify(body)
     },
     fallbackError
+    ,
+    (result, response) => {
+      if (response.status === 202) {
+        if (!result.jobId) {
+          throw new Error(result.error ?? fallbackError)
+        }
+        return {
+          status: "queued",
+          jobId: result.jobId
+        } satisfies QueuedMutationResult
+      }
+      return result
+    }
   )
 }
 
@@ -1056,12 +1164,12 @@ async function requestJson<T, TResult = T>(
   input: string,
   init: RequestInit,
   fallbackError: string,
-  select?: (result: T) => TResult
+  select?: (result: T, response: Response) => TResult
 ): Promise<TResult> {
   const response = await fetchImpl(input, init)
   const result = await response.json().catch(() => ({})) as T & { error?: string }
   if (!response.ok) {
     throw new Error(result.error ?? fallbackError)
   }
-  return select ? select(result) : result as unknown as TResult
+  return select ? select(result, response) : result as unknown as TResult
 }
