@@ -25,6 +25,14 @@ test("OpenClaw HTTP bridge supports idempotency recovery polling", () => {
   assert.match(openClawBridge, /idempotency-recovery/)
 })
 
+test("OpenClaw HTTP bridge source exposes safe live-event replay markers", () => {
+  assert.match(openClawBridge, /\/agent-runs\/by-idempotency\/:key\/events\//)
+  assert.match(openClawBridge, /live-events/)
+  assert.match(openClawBridge, /appendRunEvent/)
+  assert.match(openClawBridge, /reasoning_content/)
+  assert.match(openClawBridge, /<think>/)
+})
+
 test("Codex quota reader accepts primary rate limits first, fallback to secondary", () => {
   assert.match(codexBridge, /const rateLimit = result\?\.rateLimits\?\.primary/)
   assert.match(codexBridge, /result\?\.rateLimits\?\.secondary/)

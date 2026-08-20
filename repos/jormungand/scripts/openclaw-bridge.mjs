@@ -17,6 +17,10 @@ const token =
   process.env.HARNESS_BRIDGE_TOKEN?.trim() ||
   process.env.OPENCLAW_GATEWAY_TOKEN?.trim()
 const container = process.env.OPENCLAW_CONTAINER ?? "openclaw"
+const dockerCommand = resolveCommandOverride(
+  process.env.OPENCLAW_DOCKER_COMMAND,
+  "docker"
+)
 const defaultModel =
   process.env.OPENCLAW_A2A_MODEL ?? "minimax-portal/MiniMax-M2.7"
 const protocolVersion = "harness-agent-bridge/v0.3"
@@ -28,10 +32,14 @@ const containerRuntimeSkillRoot =
   process.env.OPENCLAW_CONTAINER_RUNTIME_SKILL_ROOT ??
   "/tmp/jormungandr-runtime-skills"
 const runtimeSkillLock = loadRuntimeSkillLock()
+const liveEventsPathTemplate = "/agent-runs/by-idempotency/:key/events/"
+const maxRunLiveEvents = 64
+const maxAgentLiveText = 8_000
 const activeRuns = new Map()
 const activeWorkflowRuns = new Map()
 const activeIdempotencyKeys = new Map()
 const completedIdempotencyRuns = new Map()
+const completedRunJournals = new Map()
 
 if (!isLoopbackHost(host) && !token) {
   throw new Error("OPENCLAW_BRIDGE_TOKEN is required for non-loopback binding")
@@ -69,6 +77,23 @@ const server = http.createServer(async (request, response) => {
         ok: true,
         [controlMatch[2] === "cancel" ? "cancelled" : "stopped"]: stopped
       })
+      return
+    }
+
+    const liveEventsMatch = requestUrl.pathname.match(
+      /^\/agent-runs\/by-idempotency\/(.+)\/events\/?$/
+    )
+
+    if (request.method === "GET" && liveEventsMatch) {
+      const idempotencyKey = decodeURIComponent(liveEventsMatch[1])
+      const journal = getRunJournalByIdempotencyKey(idempotencyKey)
+
+      if (!journal) {
+        sendJson(response, 404, { error: "agent run not found", idempotencyKey })
+        return
+      }
+
+      sendJson(response, 200, buildRunEventsResponse(journal, requestUrl))
       return
     }
 
@@ -134,6 +159,14 @@ const server = http.createServer(async (request, response) => {
     )
 
     if (failedRuntimeBundle) {
+      const failedJournal = createRunJournal({
+        id,
+        idempotencyKey,
+        workflowRunId: payload.workflowRunId
+      })
+      appendRunEvent(failedJournal, "failed", {
+        message: "Runtime skill installation failed."
+      })
       const failedResponse = {
         id,
         idempotencyKey,
@@ -145,7 +178,7 @@ const server = http.createServer(async (request, response) => {
         capabilities: bridgeCapabilities(),
         runtimeSkillBundleResults
       }
-      rememberCompletedRun(idempotencyKey, failedResponse)
+      rememberCompletedRun(idempotencyKey, failedResponse, failedJournal)
       sendJson(response, 200, failedResponse)
       return
     }
@@ -177,8 +210,9 @@ const server = http.createServer(async (request, response) => {
       conversationHistory,
       runtimeSkillBundleResults
     })
-    const result = await runOpenClawAgent({
+    const { journal, ...result } = await runOpenClawAgent({
       id,
+      idempotencyKey,
       workflowRunId: payload.workflowRunId,
       mainAgent,
       model,
@@ -199,7 +233,7 @@ const server = http.createServer(async (request, response) => {
       runtimeSkillBundleResults,
       ...result
     }
-    rememberCompletedRun(idempotencyKey, completedResponse)
+    rememberCompletedRun(idempotencyKey, completedResponse, journal)
     sendJson(response, 200, completedResponse)
   } catch (error) {
     sendJson(response, 500, { error: formatError(error) })
@@ -216,12 +250,21 @@ server.listen(port, host, () => {
 
 async function runOpenClawAgent({
   id,
+  idempotencyKey,
   workflowRunId,
   mainAgent,
   model,
   sessionKey,
   message
 }) {
+  const journal = createRunJournal({
+    id,
+    idempotencyKey,
+    workflowRunId
+  })
+  appendRunEvent(journal, "started", {
+    message: `Starting ${mainAgent} through OpenClaw bridge.`
+  })
   const args = [
     "exec",
     container,
@@ -239,25 +282,41 @@ async function runOpenClawAgent({
     "--timeout",
     String(Number(process.env.OPENCLAW_AGENT_TIMEOUT_SECONDS ?? 600))
   ]
-  const child = spawn("docker", args, {
+  const child = spawn(dockerCommand.command, [...dockerCommand.args, ...args], {
     stdio: ["ignore", "pipe", "pipe"]
   })
   let stdout = ""
   let stderr = ""
+  const structuredRecords = []
+  const assistantFragments = []
   const timeoutMs = Number(process.env.OPENCLAW_BRIDGE_TIMEOUT_MS ?? 900000)
   const cancel = () => child.kill("SIGTERM")
   const timer = setTimeout(cancel, timeoutMs)
 
-  activeRuns.set(id, { cancel, workflowRunId })
+  journal.cancel = cancel
+  activeRuns.set(id, { cancel, workflowRunId, journal })
   if (workflowRunId) {
     activeWorkflowRuns.set(workflowRunId, id)
   }
 
+  const stdoutParser = createStructuredRecordParser((record) => {
+    structuredRecords.push(record)
+    consumeStructuredRecord(record, journal, assistantFragments)
+  })
+  const stderrParser = createStructuredRecordParser((record) => {
+    structuredRecords.push(record)
+    consumeStructuredRecord(record, journal, assistantFragments)
+  })
+
   child.stdout.on("data", (chunk) => {
-    stdout += chunk.toString()
+    const text = chunk.toString()
+    stdout += text
+    stdoutParser.push(text)
   })
   child.stderr.on("data", (chunk) => {
-    stderr += chunk.toString()
+    const text = chunk.toString()
+    stderr += text
+    stderrParser.push(text)
   })
 
   let exitCode = 1
@@ -269,6 +328,15 @@ async function runOpenClawAgent({
     })
   } finally {
     clearTimeout(timer)
+    stdoutParser.flush()
+    stderrParser.flush()
+    journal.status = exitCode === 0 ? "completed" : "failed"
+    appendRunEvent(journal, journal.status, {
+      message:
+        exitCode === 0
+          ? `${mainAgent} completed through OpenClaw bridge.`
+          : `${mainAgent} exited with status ${exitCode}.`
+    })
     activeRuns.delete(id)
     if (workflowRunId && activeWorkflowRuns.get(workflowRunId) === id) {
       activeWorkflowRuns.delete(workflowRunId)
@@ -276,13 +344,16 @@ async function runOpenClawAgent({
   }
 
   return {
-    status: exitCode === 0 ? "completed" : "failed",
-    output: extractOpenClawText(stdout).trim() || tail(stdout, 8000),
+    status: journal.status,
+    output:
+      extractOpenClawText(stdout, structuredRecords, assistantFragments).trim() ||
+      tail(stdout, 8000),
     stderr: tail(stderr, 8000),
     statusMessage:
       exitCode === 0
         ? `${mainAgent} completed through OpenClaw bridge.`
-        : `${mainAgent} exited with status ${exitCode}.`
+        : `${mainAgent} exited with status ${exitCode}.`,
+    journal
   }
 }
 
@@ -609,7 +680,7 @@ function resolveModel(mainAgent) {
   return defaultModel
 }
 
-function extractOpenClawText(raw) {
+function extractOpenClawText(raw, structuredRecords = [], assistantFragments = []) {
   try {
     const data = JSON.parse(raw)
     return (
@@ -619,6 +690,19 @@ function extractOpenClawText(raw) {
         .join("\n") || raw
     )
   } catch {
+    const finalPayloadText = structuredRecords
+      .map(extractStructuredPayloadText)
+      .filter(Boolean)
+      .at(-1)
+
+    if (finalPayloadText) {
+      return finalPayloadText
+    }
+
+    if (assistantFragments.length > 0) {
+      return assistantFragments.join("")
+    }
+
     return raw
   }
 }
@@ -650,20 +734,260 @@ function bridgeCapabilities() {
     "stop",
     "idempotency-key",
     "idempotency-recovery",
+    "live-events",
     "text-output",
     "runtime-skill-bundles"
   ]
 }
 
-function rememberCompletedRun(idempotencyKey, result) {
+function rememberCompletedRun(idempotencyKey, result, journal) {
   if (!idempotencyKey) {
     return
   }
 
   completedIdempotencyRuns.set(idempotencyKey, result)
-  while (completedIdempotencyRuns.size > 100) {
-    completedIdempotencyRuns.delete(completedIdempotencyRuns.keys().next().value)
+  if (journal) {
+    completedRunJournals.set(idempotencyKey, snapshotRunJournal(journal))
   }
+  while (completedIdempotencyRuns.size > 100) {
+    const oldestKey = completedIdempotencyRuns.keys().next().value
+    completedIdempotencyRuns.delete(oldestKey)
+    completedRunJournals.delete(oldestKey)
+  }
+}
+
+function createRunJournal({ id, idempotencyKey, workflowRunId }) {
+  return {
+    id,
+    idempotencyKey,
+    workflowRunId,
+    status: "running",
+    nextCursor: 0,
+    events: [],
+    cancel: undefined
+  }
+}
+
+function appendRunEvent(journal, type, payload = {}) {
+  journal.nextCursor += 1
+  const event = normalizeRunEvent(type, journal.nextCursor, payload)
+  journal.events.push(event)
+  if (journal.events.length > maxRunLiveEvents) {
+    journal.events.splice(0, journal.events.length - maxRunLiveEvents)
+  }
+  return event
+}
+
+function normalizeRunEvent(type, sequence, payload) {
+  const event = {
+    id: randomUUID(),
+    sequence,
+    type,
+    createdAt: new Date().toISOString()
+  }
+  const message = normalizeBoundedText(payload.message)
+  const text = normalizeBoundedText(payload.text)
+  const delta = normalizeBoundedDelta(payload.delta)
+
+  if (message) {
+    event.message = message
+  }
+  if (text) {
+    event.text = text
+  }
+  if (delta) {
+    event.delta = delta
+  }
+
+  return event
+}
+
+function getRunJournalByIdempotencyKey(idempotencyKey) {
+  const activeRunId = activeIdempotencyKeys.get(idempotencyKey)
+  if (activeRunId) {
+    return activeRuns.get(activeRunId)?.journal
+  }
+
+  return completedRunJournals.get(idempotencyKey)
+}
+
+function buildRunEventsResponse(journal, requestUrl) {
+  const after = readCursor(requestUrl.searchParams.get("after"))
+
+  return {
+    id: journal.id,
+    status: journal.status,
+    events: journal.events.filter((event) => event.sequence > after),
+    nextCursor: journal.nextCursor
+  }
+}
+
+function readCursor(value) {
+  if (value === null || value === "") {
+    return -1
+  }
+
+  const numeric = Number(value)
+  return Number.isInteger(numeric) && numeric >= 0 ? numeric : -1
+}
+
+function snapshotRunJournal(journal) {
+  return {
+    id: journal.id,
+    idempotencyKey: journal.idempotencyKey,
+    workflowRunId: journal.workflowRunId,
+    status: journal.status,
+    nextCursor: journal.nextCursor,
+    cancel: undefined,
+    events: journal.events.map((event) => ({ ...event }))
+  }
+}
+
+function createStructuredRecordParser(onRecord) {
+  let buffer = ""
+
+  return {
+    push(chunk) {
+      buffer += chunk
+      drainBuffer()
+    },
+    flush() {
+      const trailing = buffer.trim()
+      buffer = ""
+      if (trailing) {
+        const record = parseStructuredRecord(trailing)
+        if (record) {
+          onRecord(record)
+        }
+      }
+    }
+  }
+
+  function drainBuffer() {
+    while (true) {
+      const newlineIndex = buffer.indexOf("\n")
+      if (newlineIndex === -1) {
+        return
+      }
+
+      const line = buffer.slice(0, newlineIndex).trim()
+      buffer = buffer.slice(newlineIndex + 1)
+      if (!line) {
+        continue
+      }
+
+      const record = parseStructuredRecord(line)
+      if (record) {
+        onRecord(record)
+      }
+    }
+  }
+}
+
+function parseStructuredRecord(line) {
+  if (!(line.startsWith("{") && line.endsWith("}"))) {
+    return undefined
+  }
+
+  try {
+    const record = JSON.parse(line)
+    return record && typeof record === "object" && !Array.isArray(record)
+      ? record
+      : undefined
+  } catch {
+    return undefined
+  }
+}
+
+function consumeStructuredRecord(record, journal, assistantFragments) {
+  const reasoningText = extractReasoningText(record)
+  if (reasoningText) {
+    appendRunEvent(journal, "reasoning", { text: reasoningText })
+  }
+
+  if (record.stream === "thinking") {
+    return
+  }
+
+  const assistantDelta = extractAssistantDelta(record)
+  if (assistantDelta) {
+    assistantFragments.push(assistantDelta)
+    appendRunEvent(journal, "assistant_delta", { delta: assistantDelta })
+  }
+}
+
+function extractReasoningText(record) {
+  for (const field of ["reasoning", "thinking", "reasoning_content"]) {
+    const text = normalizeBoundedText(record[field])
+    if (text) {
+      return text
+    }
+  }
+
+  if (record.stream === "thinking") {
+    return (
+      normalizeBoundedText(record.delta) ||
+      normalizeBoundedText(record.text) ||
+      normalizeBoundedText(record.message)
+    )
+  }
+
+  const text = typeof record.text === "string" ? record.text : undefined
+  if (!text) {
+    return undefined
+  }
+
+  const match = /<think>([\s\S]*?)<\/think>/i.exec(text)
+  return match ? normalizeBoundedText(match[1]) : undefined
+}
+
+function extractAssistantDelta(record) {
+  const explicitDelta = normalizeBoundedDelta(record.delta)
+  if (explicitDelta) {
+    return explicitDelta
+  }
+
+  const explicitText = normalizeBoundedText(stripThinkBlocks(record.text))
+  if (explicitText) {
+    return explicitText
+  }
+
+  return undefined
+}
+
+function stripThinkBlocks(value) {
+  if (typeof value !== "string") {
+    return undefined
+  }
+
+  const withoutThink = value.replace(/<think>[\s\S]*?<\/think>/gi, "")
+  return withoutThink.trim() ? withoutThink : undefined
+}
+
+function extractStructuredPayloadText(record) {
+  return Array.isArray(record?.result?.payloads)
+    ? record.result.payloads
+        .map((payload) => normalizeBoundedText(payload?.text))
+        .filter(Boolean)
+        .join("\n")
+    : undefined
+}
+
+function normalizeBoundedText(value) {
+  if (typeof value !== "string") {
+    return undefined
+  }
+
+  const text = value.trim()
+  return text ? text.slice(0, maxAgentLiveText) : undefined
+}
+
+function normalizeBoundedDelta(value) {
+  if (typeof value !== "string" || value.length === 0) {
+    return undefined
+  }
+
+  return value.slice(0, maxAgentLiveText)
 }
 
 function isLoopbackHost(value) {
@@ -676,4 +1000,32 @@ function tail(value, maxLength) {
 
 function formatError(error) {
   return error instanceof Error ? error.message : String(error)
+}
+
+function resolveCommandOverride(rawValue, fallbackCommand) {
+  const value = rawValue?.trim()
+
+  if (!value) {
+    return {
+      command: fallbackCommand,
+      args: []
+    }
+  }
+
+  if (value.startsWith("[")) {
+    try {
+      const parsed = JSON.parse(value)
+      if (Array.isArray(parsed) && typeof parsed[0] === "string") {
+        return {
+          command: parsed[0],
+          args: parsed.slice(1).map((entry) => String(entry))
+        }
+      }
+    } catch {}
+  }
+
+  return {
+    command: value,
+    args: []
+  }
 }
