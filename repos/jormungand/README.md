@@ -41,8 +41,8 @@ Unbound conversations dispatch directly to the selected Codex or OpenClaw
 agent and do not require a project or workflow binding. They may perform the
 requested external commands and write artifacts when the configured bridge
 runtime has those capabilities. Server-side authentication, bridge tokens,
-conversation audit, and `JORMUNGAND_AGENT_PERMISSION_MODE` still apply;
-frontend validation is not an authorization boundary.
+conversation audit/history, and `JORMUNGAND_AGENT_PERMISSION_MODE` still
+apply; frontend validation is not an authorization boundary.
 
 The OpenClaw HTTP bridge uses `OPENCLAW_BRIDGE_TOKEN`; when that value is blank,
 the app can reuse `OPENCLAW_GATEWAY_TOKEN` for compatibility with an existing
