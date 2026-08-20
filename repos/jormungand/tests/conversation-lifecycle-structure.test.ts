@@ -921,7 +921,7 @@ test("OpenClaw A2A uses the bounded shared session identity for long conversatio
     executor,
     stage: "intake",
     artifactType: "log",
-    title: "Unbound limited conversation",
+    title: "Unbound agent execution",
     fallbackBody: "Fallback response",
     conversationId,
     skill: { ...skill, allowedActors: [executor] }
