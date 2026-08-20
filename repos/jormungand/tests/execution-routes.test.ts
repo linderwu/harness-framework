@@ -288,7 +288,72 @@ test("managed workflow run creation enqueues a durable execution job and returns
   assert.equal(duplicateResponse.status, 202)
   assert.equal(duplicateBody.jobId, body.jobId)
   assert.equal(repository.getExecutionJob(body.jobId ?? "")?.id, body.jobId)
-  assert.deepEqual(drainCalls, [body.jobId, body.jobId])
+  assert.deepEqual(drainCalls, [body.jobId])
+})
+
+test("managed duplicate does not drain while the original request persists prerequisites", async (t) => {
+  const { repository } = await openRepository(t)
+  const project = createProject({
+    name: "Initialization fence",
+    type: "hive_mission",
+    goal: "Do not drain before manager prerequisites finish.",
+    repository: "github.com/acme/initialization-fence",
+    source: "dashboard",
+    managedConfig: createManagedProjectConfig()
+  })
+  const drainCalls: string[] = []
+  let releasePersistence!: () => void
+  let resolvePersistenceStarted!: () => void
+  const persistenceStarted = new Promise<void>((resolve) => {
+    resolvePersistenceStarted = resolve
+  })
+  const persistenceGate = new Promise<void>((resolve) => {
+    releasePersistence = resolve
+  })
+  const routeModule = await importProjectWorkflowRunsRoute()
+  const handlers = routeModule.createProjectWorkflowRunsRouteHandlers?.({
+    getProject: async (id) => (id === project.id ? project : undefined),
+    repository,
+    upsertWorkflowRun: async (workflowRun) => {
+      if (workflowRun.status === "running") {
+        resolvePersistenceStarted()
+        await persistenceGate
+      }
+      return workflowRun
+    },
+    scheduleExecutionJobDrain: async (jobId) => {
+      drainCalls.push(jobId)
+    }
+  }) ?? routeModule
+
+  const request = () => handlers.POST(
+    new Request(`https://jormungand.test/api/projects/${project.id}/workflow-runs`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": "initialization-fence-request"
+      },
+      body: JSON.stringify({ selectedAgent: "codex" })
+    }),
+    { params: Promise.resolve({ id: project.id }) }
+  )
+
+  const originalResponsePromise = request()
+  await persistenceStarted
+  const duplicateResponse = await request()
+  const duplicateBody = await duplicateResponse.json() as { status?: string; jobId?: string }
+
+  assert.equal(duplicateResponse.status, 202)
+  assert.equal(duplicateBody.status, "queued")
+  assert.ok(duplicateBody.jobId)
+  assert.deepEqual(drainCalls, [])
+
+  releasePersistence()
+  const originalResponse = await originalResponsePromise
+  const originalBody = await originalResponse.json() as { status?: string; jobId?: string }
+  assert.equal(originalResponse.status, 202)
+  assert.equal(originalBody.jobId, duplicateBody.jobId)
+  assert.deepEqual(drainCalls, [duplicateBody.jobId])
 })
 
 test("managed workflow duplicate reports a completed execution job", async (t) => {
@@ -467,7 +532,7 @@ test("manager wake and message mutations queue durable execution jobs without dr
 
   assert.equal(duplicateWakeResponse.status, 202)
   assert.equal(duplicateWakeBody.jobId, wakeBody.jobId)
-  assert.equal(drainCalls.length, 3)
+  assert.equal(drainCalls.length, 2)
 
   const duplicateMessageResponse = await messageHandlers.POST(
     new Request(`https://jormungand.test/api/workflow-runs/${managedRun.id}/manager/message`, {
@@ -484,7 +549,7 @@ test("manager wake and message mutations queue durable execution jobs without dr
 
   assert.equal(duplicateMessageResponse.status, 202)
   assert.equal(duplicateMessageBody.jobId, messageBody.jobId)
-  assert.equal(drainCalls.length, 4)
+  assert.equal(drainCalls.length, 2)
 
   const missingRunResponse = await wakeHandlers.POST(
     new Request("https://jormungand.test/api/workflow-runs/missing/manager/wake", {
@@ -569,7 +634,7 @@ test("manager wake and message do not append side effects when execution job cre
   assert.equal(repository.listManagerWakes(messageRun.id).length, 0)
 })
 
-test("manager duplicate reports running while active and re-drains an expired lease", async (t) => {
+test("manager duplicate reports running or queued without draining existing jobs", async (t) => {
   const { repository } = await openRepository(t)
   const managedRun = createManagedRun()
   const drainCalls: string[] = []
@@ -648,8 +713,19 @@ test("manager duplicate reports running while active and re-drains an expired le
   assert.equal(expiredResponse.status, 202)
   assert.equal(expiredBody.status, "queued")
   assert.equal(expiredBody.jobId, expiredJob.job.id)
-  assert.equal(repository.getExecutionJob(expiredJob.job.id)?.status, "completed")
-  assert.equal(drainCalls.length, 2)
+  assert.equal(repository.getExecutionJob(expiredJob.job.id)?.status, "running")
+  assert.equal(drainCalls.length, 1)
+
+  const recovered = await runNextExecutionJob({
+    repository,
+    jobId: expiredJob.job.id,
+    leaseOwner: "replacement-worker",
+    leaseDurationMs: 30_000,
+    handlers: {
+      manager_wake: async () => ({ status: "recovered" })
+    }
+  })
+  assert.equal(recovered?.status, "completed")
 })
 
 test("agent task workflow runs enqueue a durable advance job before returning", async (t) => {
@@ -713,7 +789,7 @@ test("agent task workflow runs enqueue a durable advance job before returning", 
 
   assert.equal(duplicateResponse.status, 202)
   assert.equal(duplicateBody.jobId, body.jobId)
-  assert.deepEqual(drainCalls, [job?.id, job?.id])
+  assert.deepEqual(drainCalls, [job?.id])
 })
 
 test("agent task job insertion failure does not persist a running workflow", async (t) => {

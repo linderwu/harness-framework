@@ -77,7 +77,7 @@ async function postManagerWake(
     }
     createdJob = created.job
     await scheduler.enqueue({ workflowRunId: id, reason: body.reason, idempotencyKey })
-    return respondWithExecutionJob(createdJob, scheduleExecutionJobDrain)
+    return respondWithExecutionJob(createdJob, scheduleExecutionJobDrain, true)
   } catch (error) {
     if (createdJob) {
       await repository.cancelExecutionJob({ id: createdJob.id }).catch(() => undefined)
@@ -88,10 +88,11 @@ async function postManagerWake(
 
 async function respondWithExecutionJob(
   job: ExecutionJob,
-  scheduleExecutionJobDrain: (jobId: string) => Promise<void> | void
+  scheduleExecutionJobDrain: (jobId: string) => Promise<void> | void,
+  allowDrain = false
 ) {
   const response = getExecutionJobRouteResponse(job)
-  if (response.shouldScheduleDrain) {
+  if (allowDrain && response.shouldScheduleDrain) {
     await scheduleExecutionJobDrain(job.id)
   }
   return NextResponse.json(response.body, { status: response.httpStatus })

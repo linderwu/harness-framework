@@ -146,7 +146,7 @@ async function postProjectWorkflowRun(
         reason: "mission_created",
         idempotencyKey: executionJobIdempotencyKey
       })
-      return respondWithExecutionJob(createdJob, scheduleExecutionJobDrain)
+      return respondWithExecutionJob(createdJob, scheduleExecutionJobDrain, true)
     } catch (error) {
       if (createdJob) {
         await repository.cancelExecutionJob({ id: createdJob.id }).catch(() => undefined)
@@ -198,7 +198,7 @@ async function postProjectWorkflowRun(
         status: "running",
         updatedAt: new Date().toISOString()
       })
-      return respondWithExecutionJob(createdJob, scheduleExecutionJobDrain)
+      return respondWithExecutionJob(createdJob, scheduleExecutionJobDrain, true)
     } catch (error) {
       if (createdJob) {
         await repository.cancelExecutionJob({ id: createdJob.id }).catch(() => undefined)
@@ -220,10 +220,11 @@ async function postProjectWorkflowRun(
 
 async function respondWithExecutionJob(
   job: ExecutionJob,
-  scheduleExecutionJobDrain: (jobId: string) => Promise<void> | void
+  scheduleExecutionJobDrain: (jobId: string) => Promise<void> | void,
+  allowDrain = false
 ) {
   const response = getExecutionJobRouteResponse(job)
-  if (response.shouldScheduleDrain) {
+  if (allowDrain && response.shouldScheduleDrain) {
     await scheduleExecutionJobDrain(job.id)
   }
   return NextResponse.json(response.body, { status: response.httpStatus })
