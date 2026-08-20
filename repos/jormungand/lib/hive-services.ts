@@ -2,7 +2,7 @@ import { agentProfiles } from "./agents"
 import type { AgentInvocationInput } from "./agent-bridge"
 import { invokeConfiguredAgent, invokeConfiguredHiveManager } from "./agent-bridge"
 import { getAgentPermissionMode } from "./agent-permissions"
-import { createConversationService, parseUnboundManagerDecision } from "./conversation"
+import { createConversationService } from "./conversation"
 import {
   buildSharedConversationHistory
 } from "./conversation-history"
@@ -20,7 +20,7 @@ import {
 import { createManagerScheduler, type ManagerSchedulerDependencies } from "./manager-scheduler"
 import { getWorkflowRun, listProjects, listWorkflowRuns, upsertWorkflowRun } from "./store"
 import type { AgentArtifactResult } from "./workflow"
-import type { AgentKind, WorkflowRun } from "./types"
+import type { AgentKind, WorkflowEventSkill, WorkflowRun } from "./types"
 import { createWorkflowRun } from "./workflow"
 
 type HiveServicesStore = {
@@ -56,8 +56,6 @@ export function createHiveServices(options: HiveServicesOptions = {}) {
   const openClawUnboundConversationSync = new ConversationHistorySync()
   const getRun = options.getRun ?? getWorkflowRun
   const saveRun = options.saveRun ?? ((run) => upsertWorkflowRun(run, { expectedVersion: run.version }))
-  const listProjectsFn = options.listProjects ?? listProjects
-  const listWorkflowRunsFn = options.listWorkflowRuns ?? listWorkflowRuns
   const invokeAgent = options.invokeAgent ?? invokeConfiguredAgent
   const invokeManager = options.invokeManager ?? invokeConfiguredHiveManager
   const dispatchWorker: NonNullable<ManagerSchedulerDependencies["dispatchWorker"]> = async ({ run, task, agentId }) => {
@@ -191,67 +189,7 @@ export function createHiveServices(options: HiveServicesOptions = {}) {
     },
     enqueueManagerWake: (input) => scheduler.enqueue(input),
     routeUnbound: async ({ conversationId, targetAgent, content, entries }) => {
-      const syntheticRun = createWorkflowRun({
-        projectId: "",
-        projectName: "Unbound conversation",
-        repository: "",
-        requirement: content,
-        selectedAgent: targetAgent,
-        designApprovalActor: "human",
-        verificationApprovalActor: "human"
-      })
-
-      if (targetAgent === "codex") {
-        const [projects, runs] = await Promise.all([listProjectsFn(), listWorkflowRunsFn()])
-        const candidateLines = projects.map((project) => {
-          const projectRuns = runs.filter((run) => run.projectId === project.id)
-          return `- ${project.name}: projectId=${project.id}; workflowRuns=${projectRuns.map((run) => `${run.id} (${run.status})`).join(", ") || "none"}`
-        })
-        const prompt = [
-          "You are the Jormungand conversation manager.",
-          "Answer the operator and decide whether this conversation clearly belongs to one existing project and workflow run.",
-          permissionText.operatorScopeLine,
-          "Use the recent conversation as continuity, explain what you did, and state any permission or project-binding blocker.",
-          "Keep it unbound when intent is general, ambiguous, or no matching workflow run exists.",
-          "Return exactly one JSON object: {\"reply\":\"...\",\"projectId\":string|null,\"workflowRunId\":string|null}.",
-          "Existing targets:",
-          ...(candidateLines.length ? candidateLines : ["- none"]),
-          "Recent conversation:",
-          ...entries.slice(-12).map((entry) => `${entry.role}: ${entry.content}`),
-          `Latest operator message: ${content}`
-        ].join("\n")
-        const result = await invokeAgent({
-          run: syntheticRun,
-          executor: "codex",
-          stage: "intake",
-          artifactType: "log",
-          title: "Route unbound conversation",
-          fallbackBody: JSON.stringify({ reply: content, projectId: null, workflowRunId: null }),
-          skill: {
-            id: "hive_manager.route_conversation",
-            eventType: "requirement_intake",
-            stage: "intake",
-            name: "Route unbound conversation",
-            purpose: prompt,
-            trigger: "The operator posted to the persistent unbound conversation.",
-            allowedActors: ["codex"],
-            inputs: ["recent conversation", "existing project and workflow targets"],
-            outputs: ["reply and optional validated binding"],
-            constraints: [
-              "Bind only when the target is unambiguous.",
-              "Never invent project or workflow identifiers.",
-              permissionText.workflowAuthorityConstraint
-            ],
-            gates: ["Jormungand validates the selected target."],
-            knowledgeSources: ["persisted conversation", "workspace index"],
-            verificationRules: ["Output exactly one JSON object matching the requested shape."]
-          }
-        })
-        if (result.status === "failed") return { status: "failed" as const, body: result.body }
-        return { status: "completed" as const, ...parseUnboundManagerDecision(result.body, runs) }
-      }
-
-      return routeOpenClawUnboundConversation({
+      return routeUnboundConversation({
         sync: openClawUnboundConversationSync,
         conversationId,
         targetAgent,
@@ -269,7 +207,25 @@ function workerHandoffArtifactId(taskId: string, attemptCount: number) {
   return `worker-handoff-${safeTaskId}-attempt-${attemptCount}`
 }
 
-export async function routeOpenClawUnboundConversation(input: {
+function createUnboundExecutionSkill(targetAgent: AgentKind): WorkflowEventSkill {
+  return {
+    id: "conversation.unbound",
+    eventType: "requirement_intake",
+    stage: "intake",
+    name: "Unbound agent execution",
+    purpose: "Execute the operator request directly without requiring project or workflow binding.",
+    trigger: "The operator posted to an unbound conversation.",
+    allowedActors: [targetAgent],
+    inputs: ["recent conversation text", "agent style guidance"],
+    outputs: ["agent response and requested execution results"],
+    constraints: ["Report execution results and side effects accurately."],
+    gates: ["Server authentication and bridge authorization remain required."],
+    knowledgeSources: ["persisted unbound conversation"],
+    verificationRules: ["Return the agent response and preserve the conversation identity."]
+  }
+}
+
+type UnboundConversationRouteInput = {
   sync: ConversationHistorySync
   conversationId: string
   targetAgent: AgentKind
@@ -278,7 +234,20 @@ export async function routeOpenClawUnboundConversation(input: {
   invokeAgent: (
     input: AgentInvocationInput
   ) => Promise<{ status: "completed" | "failed"; body: string }>
-}) {
+}
+
+export async function routeUnboundConversation(input: UnboundConversationRouteInput) {
+  return routeUnboundConversationWithHistory(input, { stripSourceLabels: true })
+}
+
+export async function routeOpenClawUnboundConversation(input: UnboundConversationRouteInput) {
+  return routeUnboundConversationWithHistory(input, { stripSourceLabels: false })
+}
+
+async function routeUnboundConversationWithHistory(
+  input: UnboundConversationRouteInput,
+  options: { stripSourceLabels: boolean }
+) {
   const syntheticRun = createWorkflowRun({
     projectId: "",
     projectName: "Unbound conversation",
@@ -296,35 +265,22 @@ export async function routeOpenClawUnboundConversation(input: {
     targetAgent: input.targetAgent,
     entries: input.entries
   })
+  const conversationHistory = options.stripSourceLabels
+    ? delta.history.map((entry) => ({
+      ...entry,
+      content: stripSharedConversationSourceLabel(entry.content)
+    }))
+    : delta.history
   const result = await input.invokeAgent({
     run: syntheticRun,
     executor: input.targetAgent,
     stage: "intake",
     artifactType: "log",
-    title: "Unbound limited conversation",
-    fallbackBody: "The requested agent can only reply in unbound conversation mode.",
+    title: "Unbound agent execution",
+    fallbackBody: "Execute the operator request and return the result.",
     conversationId: input.conversationId,
-    conversationHistory: delta.history,
-    skill: {
-      id: "conversation.unbound_limited",
-      eventType: "requirement_intake",
-      stage: "intake",
-      name: "Unbound limited conversation",
-      purpose:
-        "Respond to operator questions in safe, unbound mode without project binding, workflow mutation, or manager action.",
-      trigger: "The operator posted to the persistent unbound conversation.",
-      allowedActors: [input.targetAgent],
-      inputs: ["recent conversation text", "agent style guidance"],
-      outputs: ["final response without workflow side effects"],
-      constraints: [
-        "Do not perform project binding or manager routing.",
-        "Do not invoke external systems or irreversible actions.",
-        "Keep the answer focused on user support and guidance."
-      ],
-      gates: ["Unbound conversation is read-only and non-mutating."],
-      knowledgeSources: ["persisted unbound conversation"],
-      verificationRules: ["Return one concise text response."]
-    }
+    conversationHistory,
+    skill: createUnboundExecutionSkill(input.targetAgent)
   })
 
   if (result.status !== "failed") {
@@ -339,6 +295,10 @@ export async function routeOpenClawUnboundConversation(input: {
     status: result.status === "failed" ? "failed" as const : "completed" as const,
     body: result.body
   }
+}
+
+function stripSharedConversationSourceLabel(content: string) {
+  return content.replace(/^\[[^\]]+\]\s*/, "")
 }
 
 function isShareableConversationEntry(entry: { role: string }) {
