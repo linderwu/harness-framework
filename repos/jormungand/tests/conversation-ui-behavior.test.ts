@@ -5,7 +5,14 @@ import { createElement } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
 import test from "node:test"
 import type { AgentKind } from "../lib/types"
+import type { AgentLiveEvent } from "../lib/agent-live-events"
 import { createWorkflowRun } from "../lib/workflow"
+
+type AgentLivePreview = {
+  events: AgentLiveEvent[]
+  reasoning?: string
+  status?: string
+}
 
 async function ensureCompiledAlias() {
   const tmpRoot = join(process.cwd(), ".tmp-tests")
@@ -454,4 +461,114 @@ test("conversation manager lock state disables new conversation while running or
     isControlling: false,
     isTurnRunning: false
   }), false)
+})
+
+test("openclaw live reducer keeps status and reasoning separate from visible activity", async () => {
+  const taskConversationModule = await loadTaskConversationModule()
+  const reduceAgentLivePreview = Reflect.get(taskConversationModule, "reduceAgentLivePreview") as
+    | ((input: AgentLivePreview, event: AgentLiveEvent) => AgentLivePreview)
+    | undefined
+  const isAgentLiveTerminal = Reflect.get(taskConversationModule, "isAgentLiveTerminal") as
+    | ((event: AgentLiveEvent) => boolean)
+    | undefined
+
+  assert.equal(typeof reduceAgentLivePreview, "function")
+  assert.equal(typeof isAgentLiveTerminal, "function")
+
+  let preview: AgentLivePreview = { events: [] }
+  preview = reduceAgentLivePreview!(preview, {
+    id: "started-1",
+    sequence: 1,
+    conversationId: "conversation-1",
+    agentId: "openclaw.rowlet",
+    type: "started",
+    createdAt: "2026-08-20T00:00:01.000Z",
+    message: "OpenClaw started"
+  })
+  preview = reduceAgentLivePreview!(preview, {
+    id: "reasoning-1",
+    sequence: 2,
+    conversationId: "conversation-1",
+    agentId: "openclaw.rowlet",
+    type: "reasoning",
+    createdAt: "2026-08-20T00:00:02.000Z",
+    text: "Thinking through the repository layout"
+  })
+  preview = reduceAgentLivePreview!(preview, {
+    id: "tool-1",
+    sequence: 3,
+    conversationId: "conversation-1",
+    agentId: "openclaw.rowlet",
+    type: "tool",
+    createdAt: "2026-08-20T00:00:03.000Z",
+    message: "Running rg"
+  })
+  preview = reduceAgentLivePreview!(preview, {
+    id: "delta-1",
+    sequence: 4,
+    conversationId: "conversation-1",
+    agentId: "openclaw.rowlet",
+    type: "assistant_delta",
+    createdAt: "2026-08-20T00:00:04.000Z",
+    delta: "Partial answer"
+  })
+
+  assert.equal(preview.status, "Running rg")
+  assert.equal(preview.reasoning, "Thinking through the repository layout")
+  assert.deepEqual(preview.events.map((event) => event.type), ["started", "tool", "assistant_delta"])
+  assert.equal(isAgentLiveTerminal!({
+    id: "completed-1",
+    sequence: 5,
+    conversationId: "conversation-1",
+    agentId: "openclaw.rowlet",
+    type: "completed",
+    createdAt: "2026-08-20T00:00:05.000Z",
+    message: "done"
+  }), true)
+})
+
+test("openclaw live helpers encode the SSE path and bound preview activity", async () => {
+  const taskConversationModule = await loadTaskConversationModule()
+  const buildConversationLivePath = Reflect.get(taskConversationModule, "buildConversationLivePath") as
+    | ((conversationId: string) => string)
+    | undefined
+  const shouldOpenAgentLiveStream = Reflect.get(taskConversationModule, "shouldOpenAgentLiveStream") as
+    | ((agentId: AgentKind) => boolean)
+    | undefined
+  const reduceAgentLivePreview = Reflect.get(taskConversationModule, "reduceAgentLivePreview") as
+    | ((input: AgentLivePreview, event: AgentLiveEvent) => AgentLivePreview)
+    | undefined
+
+  assert.equal(typeof buildConversationLivePath, "function")
+  assert.equal(typeof shouldOpenAgentLiveStream, "function")
+  assert.equal(typeof reduceAgentLivePreview, "function")
+  assert.equal(buildConversationLivePath!("conversation:alpha/beta"), "/api/conversation/live?conversationId=conversation%3Aalpha%2Fbeta")
+  assert.equal(shouldOpenAgentLiveStream!("codex"), false)
+  assert.equal(shouldOpenAgentLiveStream!("openclaw.rowlet"), true)
+
+  let preview: AgentLivePreview = { events: [] }
+  for (let index = 0; index < 24; index += 1) {
+    preview = reduceAgentLivePreview!(preview, {
+      id: `delta-${index}`,
+      sequence: index,
+      conversationId: "conversation-1",
+      agentId: "openclaw.rowlet",
+      type: "assistant_delta",
+      createdAt: "2026-08-20T00:00:04.000Z",
+      delta: `delta-${index}`
+    })
+  }
+  preview = reduceAgentLivePreview!(preview, {
+    id: "reasoning-2",
+    sequence: 30,
+    conversationId: "conversation-1",
+    agentId: "openclaw.rowlet",
+    type: "reasoning",
+    createdAt: "2026-08-20T00:00:05.000Z",
+    text: "x".repeat(20_000)
+  })
+
+  assert.equal(preview.events.length, 18)
+  assert.equal(preview.events[0]?.delta, "delta-6")
+  assert.equal(preview.reasoning?.length, 8_000)
 })

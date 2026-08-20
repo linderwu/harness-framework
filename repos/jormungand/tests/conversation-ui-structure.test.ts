@@ -71,6 +71,46 @@ test("conversation header surfaces the managed title, access mode, dialog copy, 
   assert.match(taskConversation, /Delete this conversation and its Codex session\?/)
 })
 
+test("openclaw live stream state stays ephemeral and uses the conversation SSE before post dispatch", () => {
+  assert.match(taskConversation, /AgentLiveEvent/)
+  assert.match(taskConversation, /const \[agentLiveEvents, setAgentLiveEvents\] = useState<AgentLiveEvent\[\]>\(\[\]\)/)
+  assert.match(taskConversation, /const \[agentLiveReasoning, setAgentLiveReasoning\] = useState<string \| undefined>\(\)/)
+  assert.match(taskConversation, /const \[agentLiveStatus, setAgentLiveStatus\] = useState<string \| undefined>\(\)/)
+  assert.match(taskConversation, /const \[activeEventSource, setActiveEventSource\] = useState<EventSource \| undefined>\(\)/)
+  assert.match(taskConversation, /if \(shouldOpenAgentLiveStream\(targetAgent\)\)/)
+  assert.match(taskConversation, /new EventSource\(buildConversationLivePath\(activeConversationId\)\)/)
+  assert.match(taskConversation, /source\.addEventListener\("agent-live", handleAgentLiveEvent\)/)
+  assert.match(taskConversation, /source\.addEventListener\("error", handleAgentLiveError\)/)
+  assert.match(taskConversation, /const response = await fetch\(conversationPath, \{/)
+
+  const startStreamIndex = taskConversation.indexOf('new EventSource(buildConversationLivePath(activeConversationId))')
+  const postIndex = taskConversation.indexOf("const response = await fetch(conversationPath, {")
+  assert.notEqual(startStreamIndex, -1)
+  assert.notEqual(postIndex, -1)
+  assert.ok(startStreamIndex < postIndex, "live SSE must be opened before the POST request is dispatched")
+})
+
+test("openclaw live stream cleanup closes listeners on terminal events and request lifecycle changes", () => {
+  assert.match(taskConversation, /source\.removeEventListener\("agent-live", handleAgentLiveEvent\)/)
+  assert.match(taskConversation, /source\.removeEventListener\("error", handleAgentLiveError\)/)
+  assert.match(taskConversation, /source\.close\(\)/)
+  assert.match(taskConversation, /if \(event\.type === "completed" \|\| event\.type === "failed"\) \{[\s\S]*closeAgentLiveSource\(\)/)
+  assert.match(taskConversation, /function invalidateConversationRequests\(\) \{[\s\S]*closeAgentLiveSource\(\)/)
+  assert.match(taskConversation, /useEffect\(\(\) => \(\) => \{[\s\S]*closeAgentLiveSource\(\)[\s\S]*\}, \[\]\)/)
+})
+
+test("activity panel renders live agent preview details without changing codex controls", () => {
+  assert.match(taskConversation, /Live Agent session/)
+  assert.match(taskConversation, /Reasoning preview/)
+  assert.match(taskConversation, /<details>/)
+  assert.match(taskConversation, /<summary>Reasoning preview<\/summary>/)
+  assert.match(taskConversation, /<pre className="codexLiveResponse" aria-live="polite">\{agentLiveReasoning\}<\/pre>/)
+  assert.match(taskConversation, /selectedAgentLabel/)
+  assert.match(taskConversation, />Pause<\/button>/)
+  assert.match(taskConversation, />Continue<\/button>/)
+  assert.match(taskConversation, />Stop<\/button>/)
+})
+
 test("rename action opens a visible native dialog for the title input", () => {
   assert.match(taskConversation, /const renameDialogRef = useRef<HTMLDialogElement>\(null\)/)
   assert.match(taskConversation, /function openRenameDialog\(\) \{[\s\S]*dialog\.showModal\(\)/)
