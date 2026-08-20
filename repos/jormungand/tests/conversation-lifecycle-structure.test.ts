@@ -67,7 +67,7 @@ async function repositoryFixture(t: test.TestContext) {
     database.close()
     await rm(dataDir, { recursive: true, force: true })
   })
-  return { repository }
+  return { database, repository }
 }
 
 async function conversationFixture(t: test.TestContext) {
@@ -648,9 +648,10 @@ test("Codex cursor updates stay monotonic and state exposes the persisted effect
 })
 
 test("unbound Codex routing dispatches directly to Codex with unrestricted conversation skill context", async (t) => {
-  const { repository } = await repositoryFixture(t)
+  const { database, repository } = await repositoryFixture(t)
   const capturedInputs: AgentInvocationInput[] = []
   const services = createHiveServices({
+    database,
     repository,
     listProjects: async () => {
       throw new Error("listProjects should not be called for unbound Codex conversations")
@@ -699,7 +700,7 @@ test("OpenClaw bridge session identity is derived from stable conversation input
 
 test("unbound OpenClaw routing preserves conversation and agent identity at the bridge boundary", { concurrency: false }, async (t) => {
   await ensureCompiledAlias()
-  const { repository } = await repositoryFixture(t)
+  const { database, repository } = await repositoryFixture(t)
   for (const key of [
     "OPENCLAW_BRIDGE_URL",
     "OPENCLAW_BRIDGE_TOKEN",
@@ -731,10 +732,7 @@ test("unbound OpenClaw routing preserves conversation and agent identity at the 
     })
   })
 
-  const services = createHiveServices({ repository })
-  t.after(() => {
-    services.database.close()
-  })
+  const services = createHiveServices({ database, repository })
 
   const post = (conversationId: string, targetAgent: AgentKind, sequence: number) =>
     services.conversation.postUnboundMessage({
