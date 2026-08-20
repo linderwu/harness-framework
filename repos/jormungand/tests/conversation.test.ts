@@ -26,6 +26,7 @@ async function fixture(t: test.TestContext, options: {
   run?: WorkflowRun
   health?: Record<string, "online" | "busy" | "offline" | "disabled">
   failContext?: boolean
+  invokeBody?: string
 } = {}) {
   const dataDir = await mkdtemp(join(tmpdir(), "jormungand-conversation-"))
   const database = openHiveDatabase({ dataDir })
@@ -43,7 +44,7 @@ async function fixture(t: test.TestContext, options: {
     invokeAgent: async () => {
       invocations += 1
       assert.equal(repository.listConversation(run.id)[0]?.status, "running")
-      return { status: "completed", body: "Isolation verified.\n\nraw evidence" }
+      return { status: "completed", body: options.invokeBody ?? "Isolation verified.\n\nraw evidence" }
     },
     persistRawArtifact: async () => "artifact-1",
     enqueueManagerWake: (input) => repository.enqueueManagerWake(input),
@@ -76,6 +77,29 @@ test("conversation persists before dispatch and retries produce one response", a
   assert.equal(retry.duplicate, true)
   assert.equal(invocations(), 1)
   assert.equal(repository.listConversation(run.id).length, 2)
+})
+
+test("conversation service preserves exact assistant response whitespace in persisted entries", async (t) => {
+  const { run, service } = await fixture(t, { invokeBody: " hello \n" })
+
+  const result = await service.postMessage({
+    workflowRunId: run.id,
+    targetAgent: "codex",
+    content: "Keep exact assistant output.",
+    idempotencyKey: "message-exact-response"
+  })
+
+  assert.equal(result.responseEntry?.content, " hello \n")
+
+  const whitespaceOnly = await fixture(t, { invokeBody: " \n" })
+  const whitespaceOnlyResult = await whitespaceOnly.service.postMessage({
+    workflowRunId: whitespaceOnly.run.id,
+    targetAgent: "codex",
+    content: "Keep whitespace-only assistant output.",
+    idempotencyKey: "message-whitespace-only-response"
+  })
+
+  assert.equal(whitespaceOnlyResult.responseEntry?.content, " \n")
 })
 
 test("busy Hive worker remains queued and is visible to the manager", async (t) => {

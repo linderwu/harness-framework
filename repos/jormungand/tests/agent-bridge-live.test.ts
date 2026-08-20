@@ -684,3 +684,35 @@ test("preserves exact bridge output whitespace in the final result body", { conc
   assert.equal(result.status, "completed")
   assert.equal(result.body, " hello \n")
 })
+
+test("falls back to stderr when the bridge output is exactly empty", { concurrency: false }, async (t) => {
+  restoreEnv(t, "OPENCLAW_BRIDGE_URL")
+  process.env.OPENCLAW_BRIDGE_URL = "http://openclaw.test"
+
+  installLiveHooks(t)
+
+  __setAgentBridgeTestHooks({
+    fetch: async () =>
+      jsonResponse({
+        id: "bridge-run-empty-output",
+        status: "failed",
+        output: "",
+        stderr: "Actionable stderr",
+        statusMessage: "OpenClaw failed."
+      })
+  })
+
+  const result = await invokeConfiguredAgent({
+    run: createOpenClawRun(),
+    executor: "openclaw.rowlet",
+    stage: "implementation",
+    artifactType: "log",
+    title: "Prefer stderr when output is empty",
+    fallbackBody: "fallback",
+    skill: liveSkill,
+    conversationId: "conversation:empty-output"
+  })
+
+  assert.equal(result.status, "failed")
+  assert.equal(result.body, "Actionable stderr")
+})

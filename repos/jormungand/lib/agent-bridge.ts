@@ -329,7 +329,7 @@ function bridgeResponseToAgentResult(
   idempotencyKey: string
 ): AgentArtifactResult {
   const output =
-    typeof data.output === "string"
+    typeof data.output === "string" && data.output !== ""
       ? data.output
       : data.error ||
         data.stderr ||
