@@ -445,7 +445,7 @@ async function runOpenClawAgent({
   return {
     status: journal.status,
     output:
-      extractOpenClawText(stdout, structuredRecords, assistantFragments).trim() ||
+      extractOpenClawText(stdout, structuredRecords, assistantFragments) ??
       tail(stdout, 8000),
     stderr: tail(stderr, 8000),
     statusMessage:
@@ -1188,7 +1188,9 @@ function extractAssistantDelta(record) {
     return explicitDelta
   }
 
-  const explicitText = normalizeBoundedText(stripThinkBlocks(record.text))
+  const explicitText = normalizeBoundedStructuredText(
+    stripThinkBlocks(record.text)
+  )
   if (explicitText) {
     return explicitText
   }
@@ -1202,13 +1204,13 @@ function stripThinkBlocks(value) {
   }
 
   const withoutThink = value.replace(/<think>[\s\S]*?<\/think>/gi, "")
-  return withoutThink.trim() ? withoutThink : undefined
+  return withoutThink.length > 0 ? withoutThink : undefined
 }
 
 function extractStructuredPayloadText(record) {
   return Array.isArray(record?.result?.payloads)
     ? record.result.payloads
-        .map((payload) => normalizeBoundedText(payload?.text))
+        .map((payload) => normalizeBoundedStructuredText(payload?.text))
         .filter(Boolean)
         .join("\n")
     : undefined
@@ -1268,6 +1270,14 @@ function normalizeBoundedText(value) {
 
   const text = value.trim()
   return text ? text.slice(0, maxAgentLiveText) : undefined
+}
+
+function normalizeBoundedStructuredText(value) {
+  if (typeof value !== "string" || value.length === 0) {
+    return undefined
+  }
+
+  return value.slice(0, maxAgentLiveText)
 }
 
 function normalizeBoundedDelta(value) {

@@ -54,8 +54,9 @@ not replayed beyond that bounded window.
 The bridge `live-events` capability is optional. If the configured OpenClaw
 bridge, provider channel, or deployment does not expose live events, Jormungand
 still runs the request and falls back to safe status activity instead of a hard
-failure. Expect lifecycle updates such as started, working, completed, and
-failed even when no richer provider stream is available.
+failure. In that fallback mode, the UI still receives a started update plus the
+terminal completed or failed update even when no richer provider stream is
+available.
 
 `Reasoning preview` is also optional. The UI shows explicit provider-emitted
 progress or reasoning previews only when the selected OpenClaw model and

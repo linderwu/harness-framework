@@ -218,6 +218,16 @@ async function createFakeDocker(t: TestContext) {
       '  writeLine({ text: "<think>private analysis</think>Visible assistant answer" })',
       "}",
       "",
+      "async function runStructuredLeadingTrailingText() {",
+      '  writeLine({ text: "<think>private analysis</think> hello \\n" })',
+      "}",
+      "",
+      "async function runStructuredWhitespaceOnlyText() {",
+      '  writeLine({ reasoning_content: "private reasoning" })',
+      '  writeLine({ request: { prompt: "do not leak this request" }, toolArgs: { command: "do not leak this tool" } })',
+      '  writeLine({ text: "<think>private analysis</think> \\n\\t " })',
+      "}",
+      "",
       "async function runPlainText() {",
       '  writeStdout("Plain text final output")',
       "}",
@@ -251,6 +261,16 @@ async function createFakeDocker(t: TestContext) {
       "",
       '  if (mode === "assistant-fragments-no-final-payload") {',
       "    await runAssistantFragmentsNoFinalPayload()",
+      "    return",
+      "  }",
+      "",
+      '  if (mode === "structured-leading-trailing-text") {',
+      "    await runStructuredLeadingTrailingText()",
+      "    return",
+      "  }",
+      "",
+      '  if (mode === "structured-whitespace-only-text") {',
+      "    await runStructuredWhitespaceOnlyText()",
       "    return",
       "  }",
       "",
@@ -588,6 +608,83 @@ test("OpenClaw bridge falls back to sanitized assistant fragments when structure
   assert.equal(completedRun.output.includes("private analysis"), false)
   assert.equal(completedRun.output.includes("do not leak this request"), false)
   assert.equal(completedRun.output.includes("do not leak this tool"), false)
+})
+
+test("OpenClaw bridge preserves exact leading and trailing whitespace for structured assistant text", { concurrency: false }, async (t) => {
+  const { commandDir, fixturePath } = await createFakeDocker(t)
+  const commandPath = `${commandDir};${process.env.Path ?? process.env.PATH ?? ""}`
+  const { baseUrl } = await startBridge(t, {
+    PATH: commandPath,
+    Path: commandPath,
+    FAKE_DOCKER_MODE: "structured-leading-trailing-text",
+    OPENCLAW_DOCKER_COMMAND: JSON.stringify([process.execPath, fixturePath])
+  })
+
+  const runResponse = await postRun(baseUrl, {
+    protocolVersion: "harness-agent-bridge/v0.3",
+    idempotencyKey: "structured-leading-trailing-text",
+    workflowRunId: "workflow-structured-leading-trailing-text",
+    executor: "openclaw.rowlet",
+    title: "Structured assistant text with preserved whitespace",
+    requirement: "Verify structured assistant text keeps leading and trailing whitespace exactly."
+  })
+
+  assert.equal(runResponse.status, 200)
+  const completedRun = await runResponse.json()
+  assert.equal(completedRun.status, "completed")
+  assert.equal(completedRun.output, " hello \n")
+
+  const eventsResponse = await getJson(
+    baseUrl,
+    "/agent-runs/by-idempotency/structured-leading-trailing-text/events?after=0"
+  )
+  assert.equal(eventsResponse.status, 200)
+  assert.ok(
+    eventsResponse.body.events.some(
+      (event: { type?: string; delta?: string }) =>
+        event.type === "assistant_delta" && event.delta === " hello \n"
+    )
+  )
+})
+
+test("OpenClaw bridge keeps whitespace-only structured assistant text without falling back to raw private JSON", { concurrency: false }, async (t) => {
+  const { commandDir, fixturePath } = await createFakeDocker(t)
+  const commandPath = `${commandDir};${process.env.Path ?? process.env.PATH ?? ""}`
+  const { baseUrl } = await startBridge(t, {
+    PATH: commandPath,
+    Path: commandPath,
+    FAKE_DOCKER_MODE: "structured-whitespace-only-text",
+    OPENCLAW_DOCKER_COMMAND: JSON.stringify([process.execPath, fixturePath])
+  })
+
+  const runResponse = await postRun(baseUrl, {
+    protocolVersion: "harness-agent-bridge/v0.3",
+    idempotencyKey: "structured-whitespace-only-text",
+    workflowRunId: "workflow-structured-whitespace-only-text",
+    executor: "openclaw.rowlet",
+    title: "Whitespace-only structured assistant text",
+    requirement: "Verify whitespace-only structured assistant text survives sanitization without leaking raw stdout."
+  })
+
+  assert.equal(runResponse.status, 200)
+  const completedRun = await runResponse.json()
+  assert.equal(completedRun.status, "completed")
+  assert.equal(completedRun.output, " \n\t ")
+  assert.equal(completedRun.output.includes("private reasoning"), false)
+  assert.equal(completedRun.output.includes("do not leak this request"), false)
+  assert.equal(completedRun.output.includes("do not leak this tool"), false)
+
+  const eventsResponse = await getJson(
+    baseUrl,
+    "/agent-runs/by-idempotency/structured-whitespace-only-text/events?after=0"
+  )
+  assert.equal(eventsResponse.status, 200)
+  assert.ok(
+    eventsResponse.body.events.some(
+      (event: { type?: string; delta?: string }) =>
+        event.type === "assistant_delta" && event.delta === " \n\t "
+    )
+  )
 })
 
 test("OpenClaw bridge preserves plain-text final output compatibility", { concurrency: false }, async (t) => {
