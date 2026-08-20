@@ -4,7 +4,7 @@ import { publishAgentTaskResponseRecord } from "@/lib/agent-response-records"
 import { invokeConfiguredAgent } from "@/lib/agent-bridge"
 import { getAgentPermissionMode, type AgentPermissionMode } from "@/lib/agent-permissions"
 import { defaultAgentKind, normalizeAgentKind } from "@/lib/agents"
-import { runNextExecutionJob } from "@/lib/execution-job-runner"
+import { getExecutionJobRouteResponse, runNextExecutionJob } from "@/lib/execution-job-runner"
 import { createRuntimeSkillResolver } from "@/lib/runtime-skills"
 import { getProject, getWorkflowRun, upsertWorkflowRun } from "@/lib/store"
 import { advanceWorkflow, createWorkflowRun } from "@/lib/workflow"
@@ -16,6 +16,7 @@ import type {
 } from "@/lib/types"
 import { getDefaultHiveServices } from "@/lib/hive-services"
 import { getSuperpowersCatalog } from "@/lib/superpowers-catalog"
+import type { ExecutionJob } from "@/lib/hive-memory/types"
 
 type DefaultHiveServices = ReturnType<typeof getDefaultHiveServices>
 
@@ -110,16 +111,19 @@ async function postProjectWorkflowRun(
     const executionJobIdempotencyKey = `mission-created:${managedRun.id}`
     const existingJob = repository.getExecutionJobByIdempotencyKey(executionJobIdempotencyKey)
     if (existingJob) {
-      return NextResponse.json({ status: "queued", jobId: existingJob.id }, { status: 202 })
+      return respondWithExecutionJob(existingJob, scheduleExecutionJobDrain)
     }
 
     try {
-      const { job } = await repository.createExecutionJob({
+      const { job, inserted } = await repository.createExecutionJob({
         kind: "workflow_run_start",
         workflowRunId: managedRun.id,
         payload: { reason: "mission_created" },
         idempotencyKey: executionJobIdempotencyKey
       })
+      if (!inserted) {
+        return respondWithExecutionJob(job, scheduleExecutionJobDrain)
+      }
       const runningRun = await upsertWorkflowRun({
         ...managedRun,
         status: "running",
@@ -138,8 +142,7 @@ async function postProjectWorkflowRun(
         reason: "mission_created",
         idempotencyKey: executionJobIdempotencyKey
       })
-      await scheduleExecutionJobDrain(job.id)
-      return NextResponse.json({ status: "queued", jobId: job.id }, { status: 202 })
+      return respondWithExecutionJob(job, scheduleExecutionJobDrain)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       const failedRun = await upsertWorkflowRun({
@@ -168,7 +171,7 @@ async function postProjectWorkflowRun(
     const executionJobIdempotencyKey = `agent-task-advance:${agentTaskRun.id}`
     const existingJob = repository.getExecutionJobByIdempotencyKey(executionJobIdempotencyKey)
     if (existingJob) {
-      return NextResponse.json({ status: "queued", jobId: existingJob.id }, { status: 202 })
+      return respondWithExecutionJob(existingJob, scheduleExecutionJobDrain)
     }
 
     const runningRun = await upsertWorkflowRun({
@@ -177,15 +180,16 @@ async function postProjectWorkflowRun(
       updatedAt: new Date().toISOString()
     })
 
-    const { job } = await repository.createExecutionJob({
+    const { job, inserted } = await repository.createExecutionJob({
       kind: "agent_task_advance",
       workflowRunId: runningRun.id,
       payload: { version: runningRun.version },
       idempotencyKey: executionJobIdempotencyKey
     })
-    await scheduleExecutionJobDrain(job.id)
-
-    return NextResponse.json({ status: "queued", jobId: job.id }, { status: 202 })
+    if (!inserted) {
+      return respondWithExecutionJob(job, scheduleExecutionJobDrain)
+    }
+    return respondWithExecutionJob(job, scheduleExecutionJobDrain)
   }
 
   const intakeRun = await advanceWorkflow(run, {
@@ -197,6 +201,17 @@ async function postProjectWorkflowRun(
 
   await upsertWorkflowRun(intakeRun)
   return NextResponse.json(intakeRun, { status: 201 })
+}
+
+async function respondWithExecutionJob(
+  job: ExecutionJob,
+  scheduleExecutionJobDrain: (jobId: string) => Promise<void> | void
+) {
+  const response = getExecutionJobRouteResponse(job)
+  if (response.shouldScheduleDrain) {
+    await scheduleExecutionJobDrain(job.id)
+  }
+  return NextResponse.json(response.body, { status: response.httpStatus })
 }
 
 async function advanceAgentTaskRun(

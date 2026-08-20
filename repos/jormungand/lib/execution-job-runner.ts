@@ -3,8 +3,38 @@ import type { HiveMemoryRepository } from "./hive-memory/repository"
 
 export type ExecutionJobRunnerRepository = Pick<
   HiveMemoryRepository,
-  "getExecutionJob" | "claimNextExecutionJob" | "completeExecutionJob" | "failExecutionJob"
+  "getExecutionJob" | "claimExecutionJob" | "completeExecutionJob" | "failExecutionJob"
 >
+
+export type ExecutionJobRouteResponse = {
+  body: {
+    status: "queued" | "completed" | "failed" | "canceled"
+    jobId: string
+    error?: string
+  }
+  httpStatus: 202 | 200 | 500 | 409
+  shouldScheduleDrain: boolean
+}
+
+export function getExecutionJobRouteResponse(job: ExecutionJob): ExecutionJobRouteResponse {
+  if (job.status === "queued") {
+    return { body: { status: "queued", jobId: job.id }, httpStatus: 202, shouldScheduleDrain: true }
+  }
+  if (job.status === "running") {
+    return { body: { status: "queued", jobId: job.id }, httpStatus: 202, shouldScheduleDrain: false }
+  }
+  if (job.status === "completed") {
+    return { body: { status: "completed", jobId: job.id }, httpStatus: 200, shouldScheduleDrain: false }
+  }
+  if (job.status === "failed") {
+    return {
+      body: { status: "failed", jobId: job.id, error: job.lastError ?? "Execution job failed." },
+      httpStatus: 500,
+      shouldScheduleDrain: false
+    }
+  }
+  return { body: { status: "canceled", jobId: job.id }, httpStatus: 409, shouldScheduleDrain: false }
+}
 
 export async function runNextExecutionJob(input: {
   repository: ExecutionJobRunnerRepository
@@ -18,11 +48,10 @@ export async function runNextExecutionJob(input: {
     return target
   }
 
-  const claimed = await input.repository.claimNextExecutionJob({
+  const claimed = await input.repository.claimExecutionJob({
+    id: target.id,
     leaseOwner: input.leaseOwner,
     leaseDurationMs: input.leaseDurationMs,
-    kind: target.kind,
-    workflowRunId: target.workflowRunId
   })
   if (!claimed) return undefined
 

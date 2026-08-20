@@ -21,6 +21,7 @@ import type {
   MemorySearchInput,
   MemoryTransitionInput,
   RecordMemoryUseInput,
+  ClaimExecutionJobInput,
   ClaimNextExecutionJobInput,
   CompleteExecutionJobInput,
   CancelExecutionJobInput,
@@ -1523,6 +1524,52 @@ export class HiveMemoryRepository {
         input.workflowRunId ?? null,
         input.workflowRunId ?? null
       ) as ExecutionJobRow | undefined
+
+      if (!row) {
+        return undefined
+      }
+
+      const next = claimQueuedExecutionJob(executionJobFromRow(row), { ...input, now })
+      const result = connection.prepare(`
+        UPDATE execution_jobs SET
+          status = ?,
+          attempt_count = ?,
+          available_at = ?,
+          lease_owner = ?,
+          lease_expires_at = ?,
+          result_json = ?,
+          last_error = ?,
+          updated_at = ?
+        WHERE id = ? AND status = 'queued'
+      `).run(
+        next.status,
+        next.attemptCount,
+        next.availableAt,
+        next.leaseOwner ?? null,
+        next.leaseExpiresAt ?? null,
+        next.resultJson ?? null,
+        next.lastError ?? null,
+        next.updatedAt,
+        next.id
+      )
+
+      if (result.changes === 0) {
+        throw new Error(`Execution job ${next.id} was not claimable.`)
+      }
+
+      return next
+    })
+  }
+
+  async claimExecutionJob(input: ClaimExecutionJobInput) {
+    const now = input.now ?? new Date().toISOString()
+    return this.database.transaction((connection) => {
+      const row = connection.prepare(`
+        SELECT * FROM execution_jobs
+        WHERE id = ?
+          AND status = 'queued'
+          AND available_at <= ?
+      `).get(input.id, now) as ExecutionJobRow | undefined
 
       if (!row) {
         return undefined

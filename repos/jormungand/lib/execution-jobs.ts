@@ -13,6 +13,7 @@ import type {
 
 export type {
   CancelExecutionJobInput,
+  ClaimExecutionJobInput,
   ClaimNextExecutionJobInput,
   CompleteExecutionJobInput,
   CreateExecutionJobInput,

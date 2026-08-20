@@ -7,6 +7,7 @@ import type { TestContext } from "node:test"
 
 import { openHiveDatabase } from "../lib/hive-memory/database"
 import { createHiveMemoryRepository } from "../lib/hive-memory/repository"
+import { runNextExecutionJob } from "../lib/execution-job-runner"
 import { createProject } from "../lib/workspace"
 import { createWorkflowRun } from "../lib/workflow"
 import type { ManagedProjectConfig, Project, WorkflowRun } from "../lib/types"
@@ -96,6 +97,42 @@ async function openRepository(t: TestContext) {
 
   return { repository }
 }
+
+test("execution job drain claims the requested job when same-run jobs are queued", async (t) => {
+  const { repository } = await openRepository(t)
+  const first = await repository.createExecutionJob({
+    kind: "manager_wake",
+    workflowRunId: "same-run",
+    payload: { label: "first" },
+    idempotencyKey: "runner-first"
+  })
+  const second = await repository.createExecutionJob({
+    kind: "manager_wake",
+    workflowRunId: "same-run",
+    payload: { label: "second" },
+    idempotencyKey: "runner-second"
+  })
+  const handledJobIds: string[] = []
+
+  const completed = await runNextExecutionJob({
+    repository,
+    jobId: second.job.id,
+    leaseOwner: "runner-test",
+    leaseDurationMs: 30_000,
+    handlers: {
+      manager_wake: async (job) => {
+        handledJobIds.push(job.id)
+        return { handled: job.id }
+      }
+    }
+  })
+
+  assert.deepEqual(handledJobIds, [second.job.id])
+  assert.equal(completed?.id, second.job.id)
+  assert.equal(completed?.status, "completed")
+  assert.equal(repository.getExecutionJob(first.job.id)?.status, "queued")
+  assert.equal(repository.getExecutionJob(second.job.id)?.status, "completed")
+})
 
 function makeExecutionJobCreationFail(repository: ReturnType<typeof createHiveMemoryRepository>) {
   repository.createExecutionJob = async () => {
@@ -214,6 +251,58 @@ test("managed workflow run creation enqueues a durable execution job and returns
   assert.equal(duplicateResponse.status, 202)
   assert.equal(duplicateBody.jobId, body.jobId)
   assert.equal(repository.getExecutionJob(body.jobId ?? "")?.id, body.jobId)
+  assert.deepEqual(drainCalls, [body.jobId, body.jobId])
+})
+
+test("managed workflow duplicate reports a completed execution job", async (t) => {
+  const { repository } = await openRepository(t)
+  const project = createProject({
+    name: "Completed launch",
+    type: "hive_mission",
+    goal: "Return truthful idempotent completion status.",
+    repository: "github.com/acme/completed-launch",
+    source: "dashboard",
+    managedConfig: createManagedProjectConfig()
+  })
+  const routeModule = await importProjectWorkflowRunsRoute()
+  const handlers = routeModule.createProjectWorkflowRunsRouteHandlers?.({
+    getProject: async (id) => (id === project.id ? project : undefined),
+    repository,
+    scheduleExecutionJobDrain: async () => undefined
+  }) ?? routeModule
+
+  const request = () => handlers.POST(
+    new Request(`https://jormungand.test/api/projects/${project.id}/workflow-runs`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": "completed-run-request"
+      },
+      body: JSON.stringify({ selectedAgent: "codex" })
+    }),
+    { params: Promise.resolve({ id: project.id }) }
+  )
+
+  const initialResponse = await request()
+  const initialBody = await initialResponse.json() as { jobId?: string }
+  assert.ok(initialBody.jobId)
+  const claimed = await repository.claimNextExecutionJob({
+    leaseOwner: "completion-test",
+    leaseDurationMs: 30_000
+  })
+  assert.equal(claimed?.id, initialBody.jobId)
+  await repository.completeExecutionJob({
+    id: initialBody.jobId,
+    leaseOwner: "completion-test",
+    result: { status: "done" }
+  })
+
+  const duplicateResponse = await request()
+  const duplicateBody = await duplicateResponse.json() as { status?: string; jobId?: string }
+
+  assert.equal(duplicateResponse.status, 200)
+  assert.equal(duplicateBody.status, "completed")
+  assert.equal(duplicateBody.jobId, initialBody.jobId)
 })
 
 test("managed workflow creation does not enqueue manager work when execution job creation fails", async (t) => {
@@ -341,6 +430,7 @@ test("manager wake and message mutations queue durable execution jobs without dr
 
   assert.equal(duplicateWakeResponse.status, 202)
   assert.equal(duplicateWakeBody.jobId, wakeBody.jobId)
+  assert.equal(drainCalls.length, 3)
 
   const duplicateMessageResponse = await messageHandlers.POST(
     new Request(`https://jormungand.test/api/workflow-runs/${managedRun.id}/manager/message`, {
@@ -357,7 +447,7 @@ test("manager wake and message mutations queue durable execution jobs without dr
 
   assert.equal(duplicateMessageResponse.status, 202)
   assert.equal(duplicateMessageBody.jobId, messageBody.jobId)
-  assert.equal(drainCalls.length, 2)
+  assert.equal(drainCalls.length, 4)
 
   const missingRunResponse = await wakeHandlers.POST(
     new Request("https://jormungand.test/api/workflow-runs/missing/manager/wake", {
@@ -503,5 +593,50 @@ test("agent task workflow runs enqueue a durable advance job before returning", 
 
   assert.equal(duplicateResponse.status, 202)
   assert.equal(duplicateBody.jobId, body.jobId)
-  assert.deepEqual(drainCalls, [job?.id])
+  assert.deepEqual(drainCalls, [job?.id, job?.id])
+})
+
+test("manager message duplicate reports a failed execution job", async (t) => {
+  const { repository } = await openRepository(t)
+  const managedRun = createManagedRun()
+  const routeModule = await importWorkflowRunManagerMessageRoute()
+  const handlers = routeModule.createWorkflowRunManagerMessageRouteHandlers?.({
+    getWorkflowRun: async (id) => (id === managedRun.id ? managedRun : undefined),
+    repository,
+    scheduleExecutionJobDrain: async () => undefined
+  }) ?? routeModule
+
+  const request = () => handlers.POST(
+    new Request(`https://jormungand.test/api/workflow-runs/${managedRun.id}/manager/message`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        content: "Please retry the manager action.",
+        idempotencyKey: "failed-message-request"
+      })
+    }),
+    { params: Promise.resolve({ id: managedRun.id }) }
+  )
+
+  const initialResponse = await request()
+  const initialBody = await initialResponse.json() as { jobId?: string }
+  assert.ok(initialBody.jobId)
+  const claimed = await repository.claimNextExecutionJob({
+    leaseOwner: "failure-test",
+    leaseDurationMs: 30_000
+  })
+  assert.equal(claimed?.id, initialBody.jobId)
+  await repository.failExecutionJob({
+    id: initialBody.jobId,
+    leaseOwner: "failure-test",
+    error: "manager execution failed"
+  })
+
+  const duplicateResponse = await request()
+  const duplicateBody = await duplicateResponse.json() as { status?: string; jobId?: string; error?: string }
+
+  assert.equal(duplicateResponse.status, 500)
+  assert.equal(duplicateBody.status, "failed")
+  assert.equal(duplicateBody.jobId, initialBody.jobId)
+  assert.equal(duplicateBody.error, "manager execution failed")
 })

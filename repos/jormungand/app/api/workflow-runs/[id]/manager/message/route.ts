@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
-import { runNextExecutionJob } from "@/lib/execution-job-runner"
+import { getExecutionJobRouteResponse, runNextExecutionJob } from "@/lib/execution-job-runner"
 import { getDefaultHiveServices } from "@/lib/hive-services"
+import type { ExecutionJob } from "@/lib/hive-memory/types"
 import { getWorkflowRun } from "@/lib/store"
 import type { WorkflowRun } from "@/lib/types"
 
@@ -48,26 +49,39 @@ async function postManagerMessage(
   }
   const idempotencyKey = body.idempotencyKey.trim()
   const executionJobIdempotencyKey = `workflow-run-manager-message:${id}:${idempotencyKey}`
+  const scheduleExecutionJobDrain = dependencies.scheduleExecutionJobDrain ??
+    createDefaultExecutionJobDrain({ repository, scheduler })
   const existingJob = repository.getExecutionJobByIdempotencyKey(executionJobIdempotencyKey)
   if (existingJob) {
-    return NextResponse.json({ status: "queued", jobId: existingJob.id }, { status: 202 })
+    return respondWithExecutionJob(existingJob, scheduleExecutionJobDrain)
   }
 
-  const { job } = await repository.createExecutionJob({
+  const { job, inserted } = await repository.createExecutionJob({
     kind: "manager_message",
     workflowRunId: id,
     payload: { eventType: "manager_operator_message" },
     idempotencyKey: executionJobIdempotencyKey
   })
+  if (!inserted) {
+    return respondWithExecutionJob(job, scheduleExecutionJobDrain)
+  }
   await repository.appendEvent({
     eventType: "manager_operator_message", actor: "human", workflowRunId: id,
     payload: { content: body.content.trim() }, idempotencyKey
   })
   await scheduler.enqueue({ workflowRunId: id, reason: "operator_message", idempotencyKey: `wake:${idempotencyKey}` })
-  const scheduleExecutionJobDrain = dependencies.scheduleExecutionJobDrain ??
-    createDefaultExecutionJobDrain({ repository, scheduler })
-  await scheduleExecutionJobDrain(job.id)
-  return NextResponse.json({ status: "queued", jobId: job.id }, { status: 202 })
+  return respondWithExecutionJob(job, scheduleExecutionJobDrain)
+}
+
+async function respondWithExecutionJob(
+  job: ExecutionJob,
+  scheduleExecutionJobDrain: (jobId: string) => Promise<void> | void
+) {
+  const response = getExecutionJobRouteResponse(job)
+  if (response.shouldScheduleDrain) {
+    await scheduleExecutionJobDrain(job.id)
+  }
+  return NextResponse.json(response.body, { status: response.httpStatus })
 }
 
 function createDefaultExecutionJobDrain(input: {

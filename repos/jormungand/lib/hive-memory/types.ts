@@ -279,6 +279,13 @@ export interface ClaimNextExecutionJobInput {
   workflowRunId?: string
 }
 
+export interface ClaimExecutionJobInput {
+  id: string
+  leaseOwner: string
+  leaseDurationMs: number
+  now?: string
+}
+
 export interface CompleteExecutionJobInput {
   id: string
   leaseOwner: string
