@@ -542,6 +542,46 @@ test("openclaw live reducer keeps reasoning opt-in while status and tool activit
   }), true)
 })
 
+test("assistant delta aggregation preserves exact whitespace, including whitespace-only chunks", async () => {
+  const taskConversationModule = await loadTaskConversationModule()
+  const collectAgentLiveAssistantText = Reflect.get(taskConversationModule, "collectAgentLiveAssistantText") as
+    | ((events: AgentLiveEvent[]) => string | undefined)
+    | undefined
+
+  assert.equal(typeof collectAgentLiveAssistantText, "function")
+  assert.equal(collectAgentLiveAssistantText!([
+    {
+      id: "delta-blank",
+      sequence: 1,
+      conversationId: "conversation-1",
+      agentId: "openclaw.rowlet",
+      type: "assistant_delta",
+      createdAt: "2026-08-20T00:00:01.000Z",
+      delta: " \n"
+    }
+  ]), " \n")
+  assert.equal(collectAgentLiveAssistantText!([
+    {
+      id: "delta-leading",
+      sequence: 1,
+      conversationId: "conversation-1",
+      agentId: "openclaw.rowlet",
+      type: "assistant_delta",
+      createdAt: "2026-08-20T00:00:01.000Z",
+      delta: " hello"
+    },
+    {
+      id: "delta-trailing",
+      sequence: 2,
+      conversationId: "conversation-1",
+      agentId: "openclaw.rowlet",
+      type: "assistant_delta",
+      createdAt: "2026-08-20T00:00:02.000Z",
+      text: " \n"
+    }
+  ]), " hello \n")
+})
+
 test("openclaw live submission lifecycle defers replayed terminal frames until the current POST settles", async () => {
   const taskConversationModule = await loadTaskConversationModule()
   const startAgentLiveSubmissionLifecycle = Reflect.get(taskConversationModule, "startAgentLiveSubmissionLifecycle") as
@@ -709,6 +749,68 @@ test("openclaw live source errors are ignored after a terminal frame until the P
   assert.equal(settledOutcome.shouldCloseSource, true)
   assert.equal(settledOutcome.lifecycle, undefined)
   assert.equal(shouldIgnoreAgentLiveSourceError!(settledOutcome.lifecycle), false)
+})
+
+test("codex controls remain available while an OpenClaw preview is active for the same conversation", async () => {
+  const taskConversationModule = await loadTaskConversationModule()
+  const getAgentLivePanelState = Reflect.get(taskConversationModule, "getAgentLivePanelState") as
+    | ((input: {
+        targetAgent: AgentKind
+        liveSourceAgentId?: AgentKind
+        liveEventAgentId?: AgentKind
+        hasActiveSource: boolean
+        hasActiveSubmission: boolean
+        status?: string
+        reasoning?: string
+        eventCount: number
+      }) => {
+        visible: boolean
+        agentId?: AgentKind
+      })
+    | undefined
+  const shouldShowCodexControls = Reflect.get(taskConversationModule, "shouldShowCodexControls") as
+    | ((input: {
+        hasCodexSession: boolean
+        isTurnRunning: boolean
+        isPaused: boolean
+        sessionStatus?: "idle" | "running" | "paused" | "stopped" | "failed"
+      }) => boolean)
+    | undefined
+
+  assert.equal(typeof getAgentLivePanelState, "function")
+  assert.equal(typeof shouldShowCodexControls, "function")
+
+  const panel = getAgentLivePanelState!({
+    targetAgent: "openclaw.rowlet",
+    liveSourceAgentId: "openclaw.rowlet",
+    hasActiveSource: true,
+    hasActiveSubmission: true,
+    status: "Working",
+    eventCount: 1
+  })
+
+  assert.deepEqual(panel, {
+    visible: true,
+    agentId: "openclaw.rowlet"
+  })
+  assert.equal(shouldShowCodexControls!({
+    hasCodexSession: true,
+    isTurnRunning: true,
+    isPaused: false,
+    sessionStatus: "running"
+  }), true)
+  assert.equal(shouldShowCodexControls!({
+    hasCodexSession: true,
+    isTurnRunning: false,
+    isPaused: true,
+    sessionStatus: "paused"
+  }), true)
+  assert.equal(shouldShowCodexControls!({
+    hasCodexSession: true,
+    isTurnRunning: true,
+    isPaused: false,
+    sessionStatus: "failed"
+  }), false)
 })
 
 test("agent live panel state follows the active live stream instead of the target selector", async () => {

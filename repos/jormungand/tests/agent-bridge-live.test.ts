@@ -403,6 +403,99 @@ test("does not duplicate the terminal live event when the bridge already supplie
   assert.equal(terminalEvents.length, 1)
 })
 
+test("treats back-to-back submissions in the same workflow run as distinct live lifecycles", { concurrency: false }, async (t) => {
+  restoreEnv(t, "OPENCLAW_BRIDGE_URL")
+  process.env.OPENCLAW_BRIDGE_URL = "http://openclaw.test"
+
+  const bus = installLiveHooks(t)
+  const secondPostResponse = createDeferred<Response>()
+  const run = createOpenClawRun()
+  let submissionCount = 0
+
+  __setAgentBridgeTestHooks({
+    fetch: async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url === "http://openclaw.test/agent-runs") {
+        submissionCount += 1
+        if (submissionCount === 1) {
+          return jsonResponse({
+            id: "bridge-run-first",
+            status: "completed",
+            output: "First answer"
+          })
+        }
+
+        return secondPostResponse.promise
+      }
+
+      return jsonResponse({ error: "not found" }, 404)
+    }
+  })
+
+  const firstResult = await invokeConfiguredAgent({
+    run,
+    executor: "openclaw.rowlet",
+    stage: "implementation",
+    artifactType: "log",
+    title: "Repeat live bridge events",
+    fallbackBody: "fallback",
+    skill: liveSkill,
+    conversationId: "conversation:distinct-lifecycles"
+  })
+
+  assert.equal(firstResult.status, "completed")
+  assert.equal(
+    bus.getSnapshot("conversation:distinct-lifecycles").terminal,
+    true
+  )
+
+  const secondInvokePromise = invokeConfiguredAgent({
+    run,
+    executor: "openclaw.rowlet",
+    stage: "implementation",
+    artifactType: "log",
+    title: "Repeat live bridge events",
+    fallbackBody: "fallback",
+    skill: liveSkill,
+    conversationId: "conversation:distinct-lifecycles"
+  })
+
+  await waitFor(() => {
+    const snapshot = bus.getSnapshot("conversation:distinct-lifecycles")
+    return snapshot.events.filter((event) => event.type === "started").length === 2
+  })
+
+  const inFlightSnapshot = bus.getSnapshot("conversation:distinct-lifecycles")
+  assert.equal(inFlightSnapshot.terminal, false)
+  assert.deepEqual(
+    inFlightSnapshot.events.map((event) => event.type),
+    ["started", "completed", "started"]
+  )
+  assert.equal(
+    new Set(
+      inFlightSnapshot.events
+        .filter((event) => event.type === "started")
+        .map((event) => event.metadata?.runId)
+    ).size,
+    2
+  )
+
+  secondPostResponse.resolve(
+    jsonResponse({
+      id: "bridge-run-second",
+      status: "completed",
+      output: "Second answer"
+    })
+  )
+
+  const secondResult = await secondInvokePromise
+  assert.equal(secondResult.status, "completed")
+  assert.deepEqual(
+    bus.getSnapshot("conversation:distinct-lifecycles").events.map((event) => event.type),
+    ["started", "completed", "started", "completed"]
+  )
+})
+
 test("ignores a late in-flight events response after the final POST completes and aborts the poll when possible", { concurrency: false }, async (t) => {
   restoreEnv(t, "OPENCLAW_BRIDGE_URL")
   process.env.OPENCLAW_BRIDGE_URL = "http://openclaw.test"

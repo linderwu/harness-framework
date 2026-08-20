@@ -174,6 +174,27 @@ export function getAgentLivePanelState(input: {
   }
 }
 
+export function collectAgentLiveAssistantText(events: AgentLiveEvent[]) {
+  const text = events
+    .filter((event) => event.type === "assistant_delta")
+    .map((event) => event.delta ?? event.text ?? event.message ?? "")
+    .join("")
+
+  return text.length ? text : undefined
+}
+
+export function shouldShowCodexControls(input: {
+  hasCodexSession: boolean
+  isTurnRunning: boolean
+  isPaused: boolean
+  sessionStatus?: string
+}) {
+  return input.hasCodexSession
+    && input.sessionStatus !== "stopped"
+    && input.sessionStatus !== "failed"
+    && (input.isTurnRunning || input.isPaused)
+}
+
 export function TaskConversation(props: {
   run?: WorkflowRun
   initialEntries: ConversationEntry[]
@@ -828,11 +849,7 @@ export function TaskConversation(props: {
     .slice(-18)
   const liveAssistantText = session?.liveText?.trim()
   const hasCodexSession = isUnbound && !!session
-  const agentLiveAssistantText = agentLiveEvents
-    .filter((event) => event.type === "assistant_delta")
-    .map((event) => event.delta ?? event.text ?? event.message ?? "")
-    .join("")
-    .trim()
+  const agentLiveAssistantText = collectAgentLiveAssistantText(agentLiveEvents)
   const agentLiveVisibleEvents = agentLiveEvents
     .filter((event) => event.type !== "assistant_delta")
     .map((event) => ({
@@ -852,6 +869,12 @@ export function TaskConversation(props: {
   })
   const hasAgentLiveActivity = agentLivePanelState.visible
   const showsCodexSession = hasCodexSession && !hasAgentLiveActivity
+  const showsCodexControls = shouldShowCodexControls({
+    hasCodexSession,
+    isTurnRunning,
+    isPaused,
+    sessionStatus: session?.status
+  })
   const selectedAgentLabel = getAgentLabel(
     hasAgentLiveActivity
       ? agentLivePanelState.agentId ?? targetAgent
@@ -1043,9 +1066,9 @@ export function TaskConversation(props: {
               <p>{selectedAgentLabel}</p>
             </div>
             <div className="codexActivityActions">
-              {isTurnRunning ? <button className="compactPanelButton" disabled={isControlling} onClick={() => void control("interrupt")} type="button">Pause</button> : null}
-              {isPaused ? <button className="compactPanelButton" disabled={isControlling} onClick={() => void control("resume")} type="button">Continue</button> : null}
-              {showsCodexSession && session.status !== "stopped" && session.status !== "failed" && (isTurnRunning || isPaused) ? <button className="compactPanelButton danger" disabled={isControlling} onClick={() => void control("stop")} type="button">Stop</button> : null}
+              {showsCodexControls && isTurnRunning ? <button className="compactPanelButton" disabled={isControlling} onClick={() => void control("interrupt")} type="button">Pause</button> : null}
+              {showsCodexControls && isPaused ? <button className="compactPanelButton" disabled={isControlling} onClick={() => void control("resume")} type="button">Continue</button> : null}
+              {showsCodexControls && session && session.status !== "stopped" && session.status !== "failed" && (isTurnRunning || isPaused) ? <button className="compactPanelButton danger" disabled={isControlling} onClick={() => void control("stop")} type="button">Stop</button> : null}
             </div>
           </div>
           {showsCodexSession && visibleActivityEvents.length ? (

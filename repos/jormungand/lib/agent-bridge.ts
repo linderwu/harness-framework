@@ -134,6 +134,7 @@ export async function invokeConfiguredAgent(
   }
 
   const idempotencyKey = createIdempotencyKey(input)
+  const liveRunId = createLiveSubmissionRunId(idempotencyKey)
   const a2aCommand = getOpenClawA2ACommand(input.executor)
 
   if (a2aCommand) {
@@ -153,6 +154,7 @@ export async function invokeConfiguredAgent(
     bridgeUrl,
     source,
     idempotencyKey,
+    liveRunId,
     runtime
   )
 
@@ -375,6 +377,7 @@ function createOpenClawLiveRelay(
   bridgeUrl: string,
   source: AgentArtifactResult["source"],
   idempotencyKey: string,
+  liveRunId: string,
   runtime: AgentBridgeRuntime
 ): OpenClawLiveRelay | undefined {
   const conversationId = input.conversationId?.trim()
@@ -386,7 +389,7 @@ function createOpenClawLiveRelay(
   const liveConversationId = conversationId
   const baseSequence = Math.max(runtime.getLastLiveSequence(liveConversationId) + 1, 0)
   const metadata = {
-    runId: input.run.id,
+    runId: liveRunId,
     source,
     phase: input.stage
   }
@@ -859,6 +862,14 @@ function createIdempotencyKey(input: AgentInvocationInput) {
   ]
     .join(":")
     .replaceAll(/\s+/g, "-")
+}
+
+function createLiveSubmissionRunId(idempotencyKey: string) {
+  try {
+    return `${idempotencyKey}:${crypto.randomUUID()}`
+  } catch {
+    return `${idempotencyKey}:${Date.now()}:${Math.random().toString(36).slice(2)}`
+  }
 }
 
 function createBridgeHeaders(agent: AgentKind = "codex", idempotencyKey?: string) {

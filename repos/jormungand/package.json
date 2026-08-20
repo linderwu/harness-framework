@@ -13,7 +13,7 @@
     "start": "next start",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "test": "node -e \"require('fs').rmSync('.tmp-tests',{recursive:true,force:true})\" && tsc -p tsconfig.tests.json && node --test .tmp-tests/tests"
+    "test": "node -e \"require('fs').rmSync('.tmp-tests',{recursive:true,force:true})\" && tsc -p tsconfig.tests.json && node --test \".tmp-tests/tests/**/*.test.js\""
   },
   "dependencies": {
     "better-sqlite3": "^12.11.1",
