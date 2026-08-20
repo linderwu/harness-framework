@@ -1,11 +1,12 @@
 import { promises as fs } from "fs"
 import path from "path"
-import type { HarnessState, Project, WorkflowRun } from "@/lib/types"
-import { normalizeAgentKind } from "@/lib/agents"
-import { createDefaultEventSkills, getDefaultSkillExecutor } from "@/lib/workflow"
-import { normalizeWorkspace, refreshProjectAfterRun } from "@/lib/workspace"
+import { getLegacyWorkflowStatePath, getWorkflowStatePath } from "./data-paths"
+import type { HarnessState, Project, WorkflowRun } from "./types"
+import { normalizeAgentKind } from "./agents"
+import { createDefaultEventSkills, getDefaultSkillExecutor } from "./workflow"
+import { normalizeWorkspace, refreshProjectAfterRun } from "./workspace"
 
-const statePath = path.join(process.cwd(), "data", "harness-state.json")
+const statePath = getWorkflowStatePath()
 let stateWriteQueue = Promise.resolve()
 const workflowRunQueues = new Map<string, Promise<unknown>>()
 
@@ -24,16 +25,35 @@ async function ensureStateFile() {
 
   try {
     await fs.access(statePath)
-  } catch {
-    await fs.writeFile(
-      statePath,
-      JSON.stringify(
-        { schemaVersion: 3, projects: [], workflowRuns: [] } satisfies HarnessState,
-        null,
-        2
-      )
-    )
+    return
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      throw error
+    }
   }
+
+  const legacyStatePath = getLegacyWorkflowStatePath()
+
+  if (statePath !== legacyStatePath) {
+    try {
+      await fs.access(legacyStatePath)
+      await fs.copyFile(legacyStatePath, statePath)
+      return
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        throw error
+      }
+    }
+  }
+
+  await fs.writeFile(
+    statePath,
+    JSON.stringify(
+      { schemaVersion: 3, projects: [], workflowRuns: [] } satisfies HarnessState,
+      null,
+      2
+    )
+  )
 }
 
 export async function readState(): Promise<HarnessState> {

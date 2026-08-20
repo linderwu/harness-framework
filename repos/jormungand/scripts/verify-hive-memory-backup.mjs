@@ -1,4 +1,4 @@
-import { cp, mkdtemp, rm } from "node:fs/promises"
+import { cp, mkdtemp, readFile, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { basename, join, resolve } from "node:path"
 import Database from "better-sqlite3"
@@ -6,13 +6,18 @@ import Database from "better-sqlite3"
 const requestedPath = process.argv[2]
 if (!requestedPath) throw new Error("Usage: npm run memory:verify-backup -- <backup.sqlite>")
 const sourcePath = resolve(requestedPath)
+if (!sourcePath.endsWith(".sqlite")) throw new Error("Usage: npm run memory:verify-backup -- <backup.sqlite>")
+const sourceStatePath = sourcePath.replace(/\.sqlite$/, ".state.json")
 const restoreDir = await mkdtemp(join(tmpdir(), "jormungand-hive-restore-"))
 const restoredPath = join(restoreDir, basename(sourcePath))
+const restoredStatePath = join(restoreDir, basename(sourceStatePath))
 
 try {
   await cp(sourcePath, restoredPath, { errorOnExist: true })
+  await cp(sourceStatePath, restoredStatePath, { errorOnExist: true })
   const source = inspect(sourcePath)
   const restored = inspect(restoredPath)
+  await inspectState(restoredStatePath)
   if (source.schemaVersion !== restored.schemaVersion) throw new Error("Restored schema version differs from backup.")
   for (const table of Object.keys(source.counts)) {
     if (source.counts[table] !== restored.counts[table]) throw new Error(`Restored row count differs for ${table}.`)
@@ -37,4 +42,9 @@ function inspect(path) {
   } finally {
     database.close()
   }
+}
+
+async function inspectState(path) {
+  const contents = await readFile(path, "utf8")
+  JSON.parse(contents)
 }

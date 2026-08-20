@@ -8,10 +8,10 @@ import {
 } from "../lib/data-paths"
 
 test("data path helpers resolve every runtime file under the injected data root", () => {
-  const defaultEnv = {} satisfies NodeJS.ProcessEnv
+  const defaultEnv = {} as unknown as NodeJS.ProcessEnv
   const env = {
     JORMUNGAND_DATA_DIR: resolve(process.cwd(), ".tmp-tests", "runtime-boundary-root")
-  } satisfies NodeJS.ProcessEnv
+  } as unknown as NodeJS.ProcessEnv
 
   assert.equal(getConfiguredDataDir(defaultEnv), resolve(process.cwd(), "data"))
   assert.equal(getWorkflowStatePath(defaultEnv), join(resolve(process.cwd(), "data"), "harness-state.json"))

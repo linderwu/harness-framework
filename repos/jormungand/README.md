@@ -240,8 +240,9 @@ JORMUNGAND_DATA_DIR=/data
 
 Mount a provider-managed persistent volume at that directory. The Docker
 `VOLUME` declaration documents the mount point but does not itself provide
-durable storage. The JSON workflow state remains in the same configured data
-directory and must be included in volume-level backups.
+durable storage. The JSON workflow state and the Hive SQLite database both live
+under the same configured data directory, so volume-level backups need to carry
+the pair together.
 
 The Superpowers skill catalog is loaded from the private
 `linderwu/jormungand_skill` repository at runtime. Configure
@@ -249,17 +250,22 @@ The Superpowers skill catalog is loaded from the private
 read-only access to that repository. The token is passed to Git through an
 authorization header and is never embedded in the repository URL.
 
-Schedule `npm run memory:backup` daily. It creates an online SQLite backup in
-`$JORMUNGAND_DATA_DIR/backups`, checks its integrity, and retains the latest 14
-timestamped backups. In an isolated verification environment, run this weekly:
+Schedule `npm run memory:backup` daily. It creates paired SQLite and workflow
+state backups in `$JORMUNGAND_DATA_DIR/backups`, checks the SQLite integrity,
+parses the JSON state copy, and retains the latest 14 timestamped backup pairs.
+The paired state file uses the `.state.json` suffix alongside the SQLite
+backup.
+In an isolated verification environment, run this weekly:
 
 ```powershell
-npm run memory:verify-backup -- data/backups/hive-memory-YYYYMMDD-HHmmss.sqlite
+npm run memory:verify-backup -- "$JORMUNGAND_DATA_DIR/backups/hive-memory-YYYYMMDD-HHmmss.sqlite"
 ```
 
-The verifier copies the backup to a temporary directory and never overwrites
-the live database. Check `/api/hive-memory/health` for schema version, database
-location, latest backup time, and the latest integrity result. If startup or
-health reports `unavailable`, stop autonomous managed work, preserve both the
-SQLite files and JSON workflow state, verify the newest backup, and restore only
-in a separate recovery procedure before resuming manager wakes.
+The verifier copies the SQLite backup and its paired workflow-state JSON to a
+temporary directory and never overwrites the live database. Check
+`/api/hive-memory/health` for schema version, database location, workflow state
+status, latest backup time, and the latest integrity result. If startup or
+health reports `unavailable`, stop autonomous managed work, preserve the SQLite
+database and JSON workflow state together, verify the newest backup pair, and
+restore both artifacts only in a separate recovery procedure before resuming
+manager wakes.

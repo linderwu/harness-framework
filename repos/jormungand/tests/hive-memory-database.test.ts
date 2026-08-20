@@ -42,6 +42,27 @@ test("database opening with an explicit data directory does not mutate process-g
   database.close()
 })
 
+test("database without an explicit directory uses the configured env root", async (t) => {
+  const dataDir = await mkdtemp(join(tmpdir(), "jormungand-memory-"))
+  t.after(() => rm(dataDir, { recursive: true, force: true }))
+
+  const previousDataDir = process.env.JORMUNGAND_DATA_DIR
+  process.env.JORMUNGAND_DATA_DIR = dataDir
+  t.after(() => {
+    if (previousDataDir === undefined) {
+      delete process.env.JORMUNGAND_DATA_DIR
+      return
+    }
+
+    process.env.JORMUNGAND_DATA_DIR = previousDataDir
+  })
+
+  const database = openHiveDatabase()
+  assert.equal(database.health().status, "ready")
+  assert.equal(database.health().path, join(dataDir, "hive-memory.sqlite"))
+  database.close()
+})
+
 test("database serializes writes", async (t) => {
   const dataDir = await mkdtemp(join(tmpdir(), "jormungand-memory-"))
   const database = openHiveDatabase({ dataDir })

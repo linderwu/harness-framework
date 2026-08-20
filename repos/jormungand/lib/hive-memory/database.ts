@@ -1,6 +1,7 @@
 import { mkdirSync } from "node:fs"
 import { resolve } from "node:path"
 import Database from "better-sqlite3"
+import { getConfiguredDataDir, getHiveDatabasePath } from "../data-paths"
 import { hiveSchemaVersion, migrateHiveSchema } from "./schema"
 
 export type HiveDatabaseHealth =
@@ -21,12 +22,12 @@ export interface HiveDatabase {
 let writeQueue = Promise.resolve()
 
 export function getHiveDataDir() {
-  return resolve(/* turbopackIgnore: true */ process.env.JORMUNGAND_DATA_DIR?.trim() || resolve(process.cwd(), "data"))
+  return getConfiguredDataDir()
 }
 
 export function openHiveDatabase(options: { dataDir?: string } = {}): HiveDatabase {
-  const dataDir = resolve(/* turbopackIgnore: true */ options.dataDir ?? getHiveDataDir())
-  const databasePath = resolve(dataDir, "hive-memory.sqlite")
+  const dataDir = resolve(options.dataDir ?? getConfiguredDataDir())
+  const databasePath = options.dataDir ? resolve(dataDir, "hive-memory.sqlite") : getHiveDatabasePath()
   let connection: Database.Database | undefined
   let currentHealth: HiveDatabaseHealth
 
