@@ -36,6 +36,15 @@ const codexSessions = new Map()
 const completedAgentRunTtlMs = Number(
   process.env.CODEX_BRIDGE_COMPLETED_RUN_TTL_MS ?? 3600000
 )
+const luckyQuotaWindowSeconds = Number(
+  process.env.LUCKY_QUOTA_WINDOW_SECONDS ?? 5 * 3600
+)
+const luckyState = {
+  windowStartedAt: null,
+  totalUsedSeconds: 0,
+  activeRunId: null,
+  activeRunStart: null
+}
 const ouroborosAgentContract = `Ouroboros Knowledge Protocol:
 - Before substantial work, count important source files and choose an operating level.
 - S (<5 important source files): do not activate full Ouroboros; read code directly.
@@ -64,7 +73,12 @@ const server = http.createServer(async (request, response) => {
     }
 
     if (request.method === "GET" && requestUrl.pathname === "/agent-quota") {
-      sendJson(response, 200, await readCodexQuota())
+      const quotaExecutor = requestUrl.searchParams.get("executor") ?? "codex"
+      if (quotaExecutor === "mavis") {
+        sendJson(response, 200, readLuckyQuota())
+      } else {
+        sendJson(response, 200, await readCodexQuota())
+      }
       return
     }
 
@@ -499,6 +513,7 @@ async function runMinimaxAgent(
   if (workflowRunId) {
     activeWorkflowRuns.set(workflowRunId, id)
   }
+  startLuckyRun(id)
 
   try {
     if (backendUrl) {
@@ -617,6 +632,78 @@ async function runMinimaxAgent(
     ) {
       activeWorkflowRuns.delete(workflowRunId)
     }
+    endLuckyRun(id)
+  }
+}
+
+function startLuckyRun(id) {
+  luckyState.activeRunId = id
+  luckyState.activeRunStart = Date.now()
+}
+
+function endLuckyRun(id) {
+  if (luckyState.activeRunId === id && luckyState.activeRunStart) {
+    const durationSeconds = Math.max(
+      0,
+      Math.floor((Date.now() - luckyState.activeRunStart) / 1000)
+    )
+    luckyState.totalUsedSeconds += durationSeconds
+    luckyState.activeRunId = null
+    luckyState.activeRunStart = null
+  }
+}
+
+function getLuckyQuotaWindow(nowMs = Date.now()) {
+  if (!luckyState.windowStartedAt) {
+    luckyState.windowStartedAt = new Date(nowMs).toISOString()
+  }
+  const startMs = Date.parse(luckyState.windowStartedAt)
+  const endMs = startMs + luckyQuotaWindowSeconds * 1000
+
+  if (nowMs >= endMs) {
+    luckyState.windowStartedAt = new Date(nowMs).toISOString()
+    luckyState.totalUsedSeconds = 0
+    return {
+      startMs: nowMs,
+      endMs: nowMs + luckyQuotaWindowSeconds * 1000,
+      usedSeconds: 0
+    }
+  }
+
+  return {
+    startMs,
+    endMs,
+    usedSeconds: luckyState.totalUsedSeconds
+  }
+}
+
+function readLuckyQuota() {
+  const window = getLuckyQuotaWindow()
+  const limit = luckyQuotaWindowSeconds
+  const remaining = Math.max(0, limit - window.usedSeconds)
+  const remainingPercent =
+    limit > 0
+      ? Math.min(100, Math.max(0, (remaining / limit) * 100))
+      : 0
+
+  let status = "healthy"
+  if (remaining === 0) status = "exhausted"
+  else if (remainingPercent < 20) status = "critical"
+  else if (remainingPercent <= 50) status = "warning"
+
+  return {
+    agentId: "mavis",
+    provider: "minimax",
+    model:
+      process.env.MINIMAX_BACKEND_MODEL ?? "minimax/MiniMax-M3",
+    weeklyLimit: limit,
+    weeklyUsed: window.usedSeconds,
+    weeklyRemaining: remaining,
+    remainingPercent,
+    unit: "seconds",
+    resetAt: new Date(window.endMs).toISOString(),
+    updatedAt: new Date().toISOString(),
+    status
   }
 }
 

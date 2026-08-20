@@ -31,7 +31,11 @@ export function listAllowedAgents(
   health: AgentHealth = {}
 ) {
   if (projectType === "arceus_maintenance") {
-    return health.codex === "offline" || health.codex === "disabled" ? [] : ["codex"] satisfies AgentKind[]
+    return (
+      health.codex === "offline" || health.codex === "disabled"
+        ? []
+        : (["codex"] as AgentKind[])
+    )
   }
 
   return agentProfiles

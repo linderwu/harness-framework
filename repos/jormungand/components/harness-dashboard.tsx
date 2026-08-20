@@ -2084,7 +2084,9 @@ function BridgeStatusPanel({
   const [health, setHealth] = useState<Partial<Record<BridgeId, BridgeHealth>>>(
     {}
   )
-  const [codexQuota, setCodexQuota] = useState<AgentQuota | undefined>()
+  const [quotas, setQuotas] = useState<Partial<Record<AgentKind, AgentQuota>>>(
+    {}
+  )
   const [isChecking, setIsChecking] = useState(false)
   const [failureCount, setFailureCount] = useState(0)
   const [lastSuccessAt, setLastSuccessAt] = useState<string | undefined>()
@@ -2121,11 +2123,14 @@ function BridgeStatusPanel({
       const response = await fetch("/api/agent-quotas", { cache: "no-store" })
       if (!response.ok) throw new Error("Agent quota request failed")
 
-      const quotas = (await response.json()) as AgentQuota[]
-      const quota = quotas.find((entry) => entry.agentId === "codex")
-      setCodexQuota(quota)
+      const list = (await response.json()) as AgentQuota[]
+      const next: Partial<Record<AgentKind, AgentQuota>> = {}
+      for (const quota of list) {
+        next[quota.agentId] = quota
+      }
+      setQuotas(next)
     } catch {
-      setCodexQuota(undefined)
+      setQuotas({})
     }
   }
 
@@ -2192,7 +2197,7 @@ function BridgeStatusPanel({
               agents={getBridgeAgents(bridge.id)}
               failureCount={failureCount}
               health={bridge}
-              quota={bridge.id === "codex-bridge" ? codexQuota : undefined}
+              quotas={quotas}
               isChecking={isChecking}
               isStale={Boolean(isStale)}
               key={bridge.id}
@@ -2211,7 +2216,7 @@ function BridgeStatusCard({
   agents,
   failureCount,
   health,
-  quota,
+  quotas,
   isChecking,
   isStale,
   lastSuccessAt,
@@ -2222,7 +2227,7 @@ function BridgeStatusCard({
   agents: AgentKind[]
   failureCount: number
   health: BridgeHealth
-  quota?: AgentQuota
+  quotas: Partial<Record<AgentKind, AgentQuota>>
   isChecking: boolean
   isStale: boolean
   lastSuccessAt?: string
@@ -2262,7 +2267,7 @@ function BridgeStatusCard({
           <AgentBridgeRow
             agent={agent}
             key={agent}
-            quota={agent === "codex" ? quota : undefined}
+            quota={quotas[agent]}
             run={run}
             onCodexProfileChange={onCodexProfileChange}
           />
@@ -2374,7 +2379,7 @@ function AgentBridgeRow({
           </label>
         </div>
       ) : null}
-      {agent === "codex" ? <AgentQuotaBar quota={quota} /> : null}
+      {agent === "codex" || agent === "mavis" ? <AgentQuotaBar quota={quota} /> : null}
     </div>
   )
 }
@@ -2411,11 +2416,11 @@ function AgentQuotaBar({ quota }: { quota?: AgentQuota }) {
 
 function getBridgeAgents(bridgeId: BridgeId): AgentKind[] {
   if (bridgeId === "codex-bridge") {
-    return ["codex"]
+    return ["codex", "mavis"]
   }
 
   if (bridgeId === "minimax-bridge") {
-    return ["minimax", "mavis"]
+    return ["mavis"]
   }
 
   return [

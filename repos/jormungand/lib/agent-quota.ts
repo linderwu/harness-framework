@@ -1,6 +1,11 @@
 import type { AgentKind } from "@/lib/types"
 
-export type AgentQuotaUnit = "tokens" | "requests" | "credits" | "percent"
+export type AgentQuotaUnit =
+  | "tokens"
+  | "requests"
+  | "credits"
+  | "percent"
+  | "seconds"
 
 export type AgentQuotaStatus =
   | "healthy"
