@@ -2165,7 +2165,9 @@ function BridgeStatusPanel({
     isChecking,
     isStale: Boolean(isStale)
   })
-  const visibleBridges = Object.values(health)
+  const visibleBridges = Object.values(health).filter(
+    (bridge) => bridge.id !== "minimax-bridge"
+  )
 
   return (
     <aside className="bridgeStatusPanel" aria-label="Agent bridge status">
