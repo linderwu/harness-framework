@@ -21,6 +21,14 @@ const dockerCommand = resolveCommandOverride(
   process.env.OPENCLAW_DOCKER_COMMAND,
   "docker"
 )
+const runtimeSkillTarCommand = resolveCommandOverride(
+  process.env.OPENCLAW_RUNTIME_SKILL_TAR_COMMAND,
+  "tar"
+)
+const runtimeSkillDockerCommand = resolveCommandOverride(
+  process.env.OPENCLAW_RUNTIME_SKILL_DOCKER_COMMAND,
+  "docker"
+)
 const defaultModel =
   process.env.OPENCLAW_A2A_MODEL ?? "minimax-portal/MiniMax-M2.7"
 const protocolVersion = "harness-agent-bridge/v0.3"
@@ -530,21 +538,35 @@ async function installRuntimeSkillBundle(bundle, activeRun) {
     await fs.rm(installPath, { recursive: true, force: true })
     await fs.mkdir(installPath, { recursive: true })
     throwIfRunCancelled(activeRun)
-    await runProcess("tar", ["-xzf", archivePath, "-C", installPath])
+    await runProcess(
+      runtimeSkillTarCommand.command,
+      [...runtimeSkillTarCommand.args, "-xzf", archivePath, "-C", installPath],
+      { signal: activeRun?.signal }
+    )
     throwIfRunCancelled(activeRun)
-    await runProcess("docker", [
-      "exec",
-      container,
-      "mkdir",
-      "-p",
-      containerInstallPath
-    ])
+    await runProcess(
+      runtimeSkillDockerCommand.command,
+      [
+        ...runtimeSkillDockerCommand.args,
+        "exec",
+        container,
+        "mkdir",
+        "-p",
+        containerInstallPath
+      ],
+      { signal: activeRun?.signal }
+    )
     throwIfRunCancelled(activeRun)
-    await runProcess("docker", [
-      "cp",
-      `${installPath}/.`,
-      `${container}:${containerInstallPath}`
-    ])
+    await runProcess(
+      runtimeSkillDockerCommand.command,
+      [
+        ...runtimeSkillDockerCommand.args,
+        "cp",
+        `${installPath}/.`,
+        `${container}:${containerInstallPath}`
+      ],
+      { signal: activeRun?.signal }
+    )
     throwIfRunCancelled(activeRun)
 
     return {
@@ -631,24 +653,71 @@ async function sha256File(filePath) {
   return hash.digest("hex")
 }
 
-async function runProcess(command, args) {
+async function runProcess(command, args, { signal } = {}) {
+  if (signal?.aborted) {
+    throw signal.reason ?? createRunCancellationError()
+  }
+
   const child = spawn(command, args, {
     stdio: ["ignore", "pipe", "pipe"]
   })
   let stderr = ""
+  let abortError
+
+  const onAbort = () => {
+    abortError = signal.reason ?? createRunCancellationError()
+    terminateProcessTree(child)
+  }
+
+  signal?.addEventListener("abort", onAbort, { once: true })
 
   child.stderr.on("data", (chunk) => {
     stderr += chunk.toString()
   })
 
-  const exitCode = await new Promise((resolve, reject) => {
-    child.on("error", reject)
-    child.on("close", (code) => resolve(code ?? 1))
-  })
+  try {
+    const exitCode = await new Promise((resolve, reject) => {
+      child.on("error", reject)
+      child.on("close", (code) => resolve(code ?? 1))
+    })
 
-  if (exitCode !== 0) {
-    throw new Error(stderr.trim() || `${command} exited with ${exitCode}`)
+    if (abortError || signal?.aborted) {
+      throw abortError ?? signal.reason ?? createRunCancellationError()
+    }
+
+    if (exitCode !== 0) {
+      throw new Error(stderr.trim() || `${command} exited with ${exitCode}`)
+    }
+  } finally {
+    signal?.removeEventListener("abort", onAbort)
   }
+}
+
+function terminateProcessTree(child) {
+  if (child.exitCode !== null || child.killed) {
+    return
+  }
+
+  if (process.platform === "win32" && child.pid) {
+    const killer = spawn("taskkill", ["/PID", String(child.pid), "/T", "/F"], {
+      stdio: "ignore",
+      windowsHide: true
+    })
+
+    killer.on("error", () => {
+      if (child.exitCode === null && !child.killed) {
+        child.kill("SIGTERM")
+      }
+    })
+    killer.on("close", () => {
+      if (child.exitCode === null && !child.killed) {
+        child.kill("SIGTERM")
+      }
+    })
+    return
+  }
+
+  child.kill("SIGTERM")
 }
 
 async function fileExists(filePath) {

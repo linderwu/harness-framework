@@ -1,10 +1,11 @@
 import assert from "node:assert/strict"
 import http from "node:http"
-import { mkdtemp, rm, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { createServer as createNetServer } from "node:net"
 import { spawn, type ChildProcess } from "node:child_process"
+import { createHash } from "node:crypto"
 import test from "node:test"
 import type { TestContext } from "node:test"
 
@@ -59,7 +60,7 @@ async function createRuntimeSkillLock(
 
 async function createBundleServer(
   t: TestContext,
-  options: { delayMs: number; body: string }
+  options: { delayMs: number; body: Buffer | string }
 ) {
   let requestCount = 0
   const server = http.createServer((request, response) => {
@@ -110,6 +111,60 @@ async function waitFor(
   throw new Error(`Timed out after ${timeoutMs}ms`)
 }
 
+function isProcessRunning(pid: number) {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
+}
+
+async function runCommand(
+  command: string,
+  args: string[],
+  options: { cwd?: string } = {}
+) {
+  const child = spawn(command, args, {
+    cwd: options.cwd,
+    stdio: ["ignore", "ignore", "pipe"]
+  })
+  let stderr = ""
+
+  child.stderr?.on("data", (chunk) => {
+    stderr += chunk.toString()
+  })
+
+  const exitCode = await new Promise<number>((resolve, reject) => {
+    child.once("error", reject)
+    child.once("close", (code) => resolve(code ?? 1))
+  })
+
+  if (exitCode !== 0) {
+    throw new Error(stderr.trim() || `${command} exited with ${exitCode}`)
+  }
+}
+
+async function createRuntimeSkillBundleArchive(t: TestContext) {
+  const archiveDir = await mkdtemp(
+    join(tmpdir(), "jormungand-openclaw-runtime-bundle-")
+  )
+  const bundleDir = join(archiveDir, "bundle")
+  const archivePath = join(archiveDir, "bundle.tgz")
+
+  t.after(async () => {
+    await rm(archiveDir, { recursive: true, force: true })
+  })
+
+  await mkdir(bundleDir, { recursive: true })
+  await writeFile(join(bundleDir, "SKILL.md"), "# runtime skill test\n", "utf8")
+  await runCommand("tar", ["-czf", archivePath, "-C", bundleDir, "."], {
+    cwd: archiveDir
+  })
+
+  return readFile(archivePath)
+}
+
 async function createFakeDocker(t: TestContext) {
   const commandDir = await mkdtemp(join(tmpdir(), "jormungand-openclaw-live-"))
   const fixturePath = join(commandDir, "docker-fixture.mjs")
@@ -121,6 +176,7 @@ async function createFakeDocker(t: TestContext) {
   await writeFile(
     fixturePath,
     [
+      'import { writeFileSync } from "node:fs"',
       'const mode = process.env.FAKE_DOCKER_MODE ?? "structured"',
       "const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))",
       "const writeStdout = (value) => process.stdout.write(value)",
@@ -153,7 +209,22 @@ async function createFakeDocker(t: TestContext) {
       '  writeLine({ result: { payloads: [{ text: "Stopped later" }] } })',
       "}",
       "",
+      "async function runRuntimeSkillDocker() {",
+      "  if (process.env.FAKE_RUNTIME_SKILL_DOCKER_PID_PATH) {",
+      '    writeFileSync(process.env.FAKE_RUNTIME_SKILL_DOCKER_PID_PATH, String(process.pid), "utf8")',
+      "  }",
+      "  if (process.env.FAKE_RUNTIME_SKILL_DOCKER_STARTED_PATH) {",
+      '    writeFileSync(process.env.FAKE_RUNTIME_SKILL_DOCKER_STARTED_PATH, "started", "utf8")',
+      "  }",
+      '  await sleep(Number(process.env.FAKE_RUNTIME_SKILL_DOCKER_DELAY_MS ?? 5_000))',
+      "}",
+      "",
       "const main = async () => {",
+      '  if (process.argv[2] === "runtime-skill-docker") {',
+      "    await runRuntimeSkillDocker()",
+      "    return",
+      "  }",
+      "",
       '  if (mode === "slow-stop") {',
       "    await runSlowStop()",
       "    return",
@@ -687,6 +758,106 @@ test("OpenClaw bridge stop is effective during delayed runtime-skill setup", { c
   const eventsResponse = await getJson(
     baseUrl,
     "/agent-runs/by-idempotency/runtime-skill-setup-stop/events?after=0"
+  )
+  assert.equal(eventsResponse.status, 200)
+  assert.equal(eventsResponse.body.status, "failed")
+  assert.equal(eventsResponse.body.events.at(-1)?.type, "failed")
+})
+
+test("OpenClaw bridge stop interrupts an in-flight runtime-skill docker exec subprocess", { concurrency: false }, async (t) => {
+  const bundleBody = await createRuntimeSkillBundleArchive(t)
+  const bundleChecksum = createHash("sha256").update(bundleBody).digest("hex")
+  const bundleServer = await createBundleServer(t, {
+    delayMs: 50,
+    body: bundleBody
+  })
+  const runtimeSkillBundle = {
+    id: "slow-tar-stop-bundle",
+    version: "1.0.0",
+    sourceUrl: bundleServer.url,
+    checksum: {
+      algorithm: "sha256",
+      value: bundleChecksum
+    }
+  }
+  const lockPath = await createRuntimeSkillLock(t, [runtimeSkillBundle])
+  const { fixturePath } = await createFakeDocker(t)
+  const runtimeSkillCache = await mkdtemp(
+    join(tmpdir(), "jormungand-openclaw-runtime-cache-")
+  )
+  const dockerStartedPath = join(runtimeSkillCache, "runtime-skill-docker.started")
+  const dockerPidPath = join(runtimeSkillCache, "runtime-skill-docker.pid")
+
+  t.after(async () => {
+    await rm(runtimeSkillCache, { recursive: true, force: true })
+  })
+
+  const { baseUrl } = await startBridge(t, {
+    OPENCLAW_DOCKER_COMMAND: JSON.stringify([process.execPath, fixturePath]),
+    OPENCLAW_RUNTIME_SKILL_DOCKER_COMMAND: JSON.stringify([
+      process.execPath,
+      fixturePath,
+      "runtime-skill-docker"
+    ]),
+    OPENCLAW_RUNTIME_SKILL_LOCK: lockPath,
+    OPENCLAW_RUNTIME_SKILL_CACHE: runtimeSkillCache,
+    FAKE_RUNTIME_SKILL_DOCKER_STARTED_PATH: dockerStartedPath,
+    FAKE_RUNTIME_SKILL_DOCKER_PID_PATH: dockerPidPath,
+    FAKE_RUNTIME_SKILL_DOCKER_DELAY_MS: "5000"
+  })
+
+  const runPromise = postRun(baseUrl, {
+    protocolVersion: "harness-agent-bridge/v0.3",
+    idempotencyKey: "runtime-skill-setup-stop-tar",
+    workflowRunId: "workflow-runtime-skill-setup-stop-tar",
+    executor: "openclaw.rowlet",
+    title: "Stop during runtime skill docker exec",
+    requirement: "Exercise stop during runtime skill docker exec.",
+    runtimeSkillBundles: [runtimeSkillBundle]
+  })
+
+  await waitFor(async () => {
+    try {
+      await readFile(dockerStartedPath, "utf8")
+      return true
+    } catch {
+      return false
+    }
+  })
+
+  const stopRequestedAt = Date.now()
+  const stopResponse = await fetch(
+    `${baseUrl}/workflow-runs/workflow-runtime-skill-setup-stop-tar/stop`,
+    { method: "POST" }
+  )
+  assert.equal(stopResponse.status, 200)
+  assert.deepEqual(await stopResponse.json(), { ok: true, stopped: true })
+
+  const runResponse = await Promise.race([
+    runPromise,
+    new Promise<Response>((_, reject) => {
+      setTimeout(() => {
+        reject(
+          new Error(
+            "Timed out waiting for stop to interrupt the runtime-skill docker subprocess."
+          )
+        )
+      }, 1_500)
+    })
+  ])
+  assert.ok(Date.now() - stopRequestedAt < 1_500)
+  assert.equal(runResponse.status, 200)
+
+  const completedRun = await runResponse.json()
+  assert.equal(completedRun.status, "failed")
+  assert.equal(completedRun.output, "Runtime skill installation cancelled.")
+
+  const dockerPid = Number((await readFile(dockerPidPath, "utf8")).trim())
+  await waitFor(async () => !isProcessRunning(dockerPid), 1_000)
+
+  const eventsResponse = await getJson(
+    baseUrl,
+    "/agent-runs/by-idempotency/runtime-skill-setup-stop-tar/events?after=0"
   )
   assert.equal(eventsResponse.status, 200)
   assert.equal(eventsResponse.body.status, "failed")
