@@ -237,17 +237,6 @@ type UnboundConversationRouteInput = {
 }
 
 export async function routeUnboundConversation(input: UnboundConversationRouteInput) {
-  return routeUnboundConversationWithHistory(input, { stripSourceLabels: true })
-}
-
-export async function routeOpenClawUnboundConversation(input: UnboundConversationRouteInput) {
-  return routeUnboundConversationWithHistory(input, { stripSourceLabels: false })
-}
-
-async function routeUnboundConversationWithHistory(
-  input: UnboundConversationRouteInput,
-  options: { stripSourceLabels: boolean }
-) {
   const syntheticRun = createWorkflowRun({
     projectId: "",
     projectName: "Unbound conversation",
@@ -265,12 +254,6 @@ async function routeUnboundConversationWithHistory(
     targetAgent: input.targetAgent,
     entries: input.entries
   })
-  const conversationHistory = options.stripSourceLabels
-    ? delta.history.map((entry) => ({
-      ...entry,
-      content: stripSharedConversationSourceLabel(entry.content)
-    }))
-    : delta.history
   const result = await input.invokeAgent({
     run: syntheticRun,
     executor: input.targetAgent,
@@ -279,7 +262,7 @@ async function routeUnboundConversationWithHistory(
     title: "Unbound agent execution",
     fallbackBody: "Execute the operator request and return the result.",
     conversationId: input.conversationId,
-    conversationHistory,
+    conversationHistory: delta.history,
     skill: createUnboundExecutionSkill(input.targetAgent)
   })
 
@@ -297,8 +280,9 @@ async function routeUnboundConversationWithHistory(
   }
 }
 
-function stripSharedConversationSourceLabel(content: string) {
-  return content.replace(/^\[[^\]]+\]\s*/, "")
+/** @deprecated Use routeUnboundConversation instead. */
+export async function routeOpenClawUnboundConversation(input: UnboundConversationRouteInput) {
+  return routeUnboundConversation(input)
 }
 
 function isShareableConversationEntry(entry: { role: string }) {

@@ -686,7 +686,9 @@ test("unbound Codex routing dispatches directly to Codex with unrestricted conve
   assert.equal(invocation?.skill.id, "conversation.unbound")
   assert.equal(
     invocation?.conversationHistory?.some(
-      (entry) => entry.role === "user" && entry.content === content
+      (entry) => entry.role === "user"
+        && entry.content.endsWith(content)
+        && entry.content.includes(content)
     ),
     true
   )
@@ -865,14 +867,14 @@ test("unbound route helper advances conversation history cursor only after succe
   })
 
   assert.deepEqual(capturedHistories[0], [
-    { role: "user", content: "Message 1" }
+    { role: "user", content: "[openclaw.gengar] Message 1" }
   ])
   assert.deepEqual(capturedHistories[1], [
-    { role: "user", content: "Message 1" },
-    { role: "user", content: "Message 2" }
+    { role: "user", content: "[openclaw.gengar] Message 1" },
+    { role: "user", content: "[openclaw.gengar] Message 2" }
   ])
   assert.deepEqual(capturedHistories[2], [
-    { role: "user", content: "Message 3" }
+    { role: "user", content: "[openclaw.gengar] Message 3" }
   ])
 })
 
