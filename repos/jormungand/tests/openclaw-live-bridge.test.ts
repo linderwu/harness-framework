@@ -692,3 +692,56 @@ test("OpenClaw bridge stop is effective during delayed runtime-skill setup", { c
   assert.equal(eventsResponse.body.status, "failed")
   assert.equal(eventsResponse.body.events.at(-1)?.type, "failed")
 })
+
+test("OpenClaw bridge stop during spawn-to-cancel handoff kills the child and ends the journal terminally", { concurrency: false }, async (t) => {
+  const { commandDir, fixturePath } = await createFakeDocker(t)
+  const commandPath = `${commandDir};${process.env.Path ?? process.env.PATH ?? ""}`
+  const { baseUrl } = await startBridge(t, {
+    PATH: commandPath,
+    Path: commandPath,
+    FAKE_DOCKER_MODE: "slow-stop",
+    OPENCLAW_DOCKER_COMMAND: JSON.stringify([process.execPath, fixturePath]),
+    OPENCLAW_TEST_SPAWN_TO_CANCEL_HANDLER_DELAY_MS: "200"
+  })
+
+  const runPromise = postRun(baseUrl, {
+    protocolVersion: "harness-agent-bridge/v0.3",
+    idempotencyKey: "spawn-cancel-handoff-stop",
+    workflowRunId: "workflow-spawn-cancel-handoff-stop",
+    executor: "openclaw.rowlet",
+    title: "Stop during child handoff",
+    requirement: "Exercise stop during the spawn-to-cancel registration handoff."
+  })
+
+  await waitFor(async () => {
+    const response = await getJson(
+      baseUrl,
+      "/agent-runs/by-idempotency/spawn-cancel-handoff-stop/events?after=0"
+    )
+    return response.status === 200 && response.body.events?.some(
+      (event: { type?: string }) => event.type === "started"
+    )
+  })
+
+  const stopResponse = await fetch(
+    `${baseUrl}/workflow-runs/workflow-spawn-cancel-handoff-stop/stop`,
+    { method: "POST" }
+  )
+  assert.equal(stopResponse.status, 200)
+  assert.deepEqual(await stopResponse.json(), { ok: true, stopped: true })
+
+  const runResponse = await runPromise
+  assert.equal(runResponse.status, 200)
+  const completedRun = await runResponse.json()
+  assert.equal(completedRun.status, "failed")
+  assert.notEqual(completedRun.output, "Stopped later")
+  assert.ok(completedRun.capabilities.includes("live-events"))
+
+  const eventsResponse = await getJson(
+    baseUrl,
+    "/agent-runs/by-idempotency/spawn-cancel-handoff-stop/events?after=0"
+  )
+  assert.equal(eventsResponse.status, 200)
+  assert.equal(eventsResponse.body.status, "failed")
+  assert.equal(eventsResponse.body.events.at(-1)?.type, "failed")
+})

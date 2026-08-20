@@ -381,13 +381,14 @@ async function runOpenClawAgent({
   const stopChild = () => child.kill("SIGTERM")
   const timer = setTimeout(stopChild, timeoutMs)
 
-  journal.cancel = () => activeRun.cancel()
-  activeRun.cancelHandler = stopChild
-  activateRun(activeRun)
-
   const stdoutParser = createStructuredRecordParser((record) => {
     appendBoundedRecord(structuredRecords, record)
     consumeStructuredRecord(record, journal, assistantFragments)
+  })
+
+  const childExitPromise = new Promise((resolve, reject) => {
+    child.on("error", reject)
+    child.on("close", (code) => resolve(code ?? 1))
   })
 
   child.stdout.on("data", (chunk) => {
@@ -400,14 +401,19 @@ async function runOpenClawAgent({
     stderr = appendTailText(stderr, text, maxAgentLiveText)
   })
 
+  await delayCancelHandlerRegistrationForTests()
+  journal.cancel = () => activeRun.cancel()
+  activeRun.cancelHandler = stopChild
+  activateRun(activeRun)
+  if (activeRun.cancelled) {
+    activeRun.cancelHandler()
+  }
+
   let exitCode = 1
   let startupError
 
   try {
-    exitCode = await new Promise((resolve, reject) => {
-      child.on("error", reject)
-      child.on("close", (code) => resolve(code ?? 1))
-    })
+    exitCode = await childExitPromise
   } catch (error) {
     startupError = error
     throw error
@@ -1296,4 +1302,16 @@ function resolveCommandOverride(rawValue, fallbackCommand) {
 function parseCompletedRunTtlMs(value) {
   const ttlMs = Number(value ?? 3600000)
   return Number.isFinite(ttlMs) && ttlMs >= 0 ? ttlMs : 3600000
+}
+
+async function delayCancelHandlerRegistrationForTests() {
+  const delayMs = Number(
+    process.env.OPENCLAW_TEST_SPAWN_TO_CANCEL_HANDLER_DELAY_MS ?? 0
+  )
+
+  if (!Number.isFinite(delayMs) || delayMs <= 0) {
+    return
+  }
+
+  await new Promise((resolve) => setTimeout(resolve, delayMs))
 }
