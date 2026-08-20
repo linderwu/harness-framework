@@ -527,6 +527,118 @@ test("openclaw live reducer keeps status and reasoning separate from visible act
   }), true)
 })
 
+test("openclaw live submission lifecycle defers replayed terminal frames until the current POST settles", async () => {
+  const taskConversationModule = await loadTaskConversationModule()
+  const startAgentLiveSubmissionLifecycle = Reflect.get(taskConversationModule, "startAgentLiveSubmissionLifecycle") as
+    | (() => { postPending: boolean; terminalEventReceived: boolean })
+    | undefined
+  const advanceAgentLiveSubmissionLifecycle = Reflect.get(taskConversationModule, "advanceAgentLiveSubmissionLifecycle") as
+    | ((
+        lifecycle: { postPending: boolean; terminalEventReceived: boolean } | undefined,
+        event: AgentLiveEvent
+      ) => {
+        lifecycle: { postPending: boolean; terminalEventReceived: boolean } | undefined
+        shouldCloseSource: boolean
+      })
+    | undefined
+  const settleAgentLiveSubmissionLifecycle = Reflect.get(taskConversationModule, "settleAgentLiveSubmissionLifecycle") as
+    | ((
+        lifecycle: { postPending: boolean; terminalEventReceived: boolean } | undefined
+      ) => {
+        lifecycle: { postPending: boolean; terminalEventReceived: boolean } | undefined
+        shouldCloseSource: boolean
+      })
+    | undefined
+
+  assert.equal(typeof startAgentLiveSubmissionLifecycle, "function")
+  assert.equal(typeof advanceAgentLiveSubmissionLifecycle, "function")
+  assert.equal(typeof settleAgentLiveSubmissionLifecycle, "function")
+
+  const pendingLifecycle = startAgentLiveSubmissionLifecycle!()
+  const replayedTerminal = advanceAgentLiveSubmissionLifecycle!(pendingLifecycle, {
+    id: "completed-old",
+    sequence: 9,
+    conversationId: "conversation-1",
+    agentId: "openclaw.rowlet",
+    type: "completed",
+    createdAt: "2026-08-20T00:00:09.000Z",
+    message: "previous run completed"
+  })
+
+  assert.equal(replayedTerminal.shouldCloseSource, false)
+  assert.deepEqual(replayedTerminal.lifecycle, {
+    postPending: true,
+    terminalEventReceived: true
+  })
+
+  const postSettled = settleAgentLiveSubmissionLifecycle!(replayedTerminal.lifecycle)
+  assert.equal(postSettled.shouldCloseSource, true)
+  assert.equal(postSettled.lifecycle, undefined)
+})
+
+test("openclaw live submission lifecycle keeps the stream open for the current run until its own terminal event arrives", async () => {
+  const taskConversationModule = await loadTaskConversationModule()
+  const startAgentLiveSubmissionLifecycle = Reflect.get(taskConversationModule, "startAgentLiveSubmissionLifecycle") as
+    | (() => { postPending: boolean; terminalEventReceived: boolean })
+    | undefined
+  const advanceAgentLiveSubmissionLifecycle = Reflect.get(taskConversationModule, "advanceAgentLiveSubmissionLifecycle") as
+    | ((
+        lifecycle: { postPending: boolean; terminalEventReceived: boolean } | undefined,
+        event: AgentLiveEvent
+      ) => {
+        lifecycle: { postPending: boolean; terminalEventReceived: boolean } | undefined
+        shouldCloseSource: boolean
+      })
+    | undefined
+  const settleAgentLiveSubmissionLifecycle = Reflect.get(taskConversationModule, "settleAgentLiveSubmissionLifecycle") as
+    | ((
+        lifecycle: { postPending: boolean; terminalEventReceived: boolean } | undefined
+      ) => {
+        lifecycle: { postPending: boolean; terminalEventReceived: boolean } | undefined
+        shouldCloseSource: boolean
+      })
+    | undefined
+
+  assert.equal(typeof startAgentLiveSubmissionLifecycle, "function")
+  assert.equal(typeof advanceAgentLiveSubmissionLifecycle, "function")
+  assert.equal(typeof settleAgentLiveSubmissionLifecycle, "function")
+
+  const pendingLifecycle = startAgentLiveSubmissionLifecycle!()
+  const startedOutcome = advanceAgentLiveSubmissionLifecycle!(pendingLifecycle, {
+    id: "started-new",
+    sequence: 10,
+    conversationId: "conversation-1",
+    agentId: "openclaw.rowlet",
+    type: "started",
+    createdAt: "2026-08-20T00:00:10.000Z",
+    message: "current run started"
+  })
+  assert.equal(startedOutcome.shouldCloseSource, false)
+  assert.deepEqual(startedOutcome.lifecycle, {
+    postPending: true,
+    terminalEventReceived: false
+  })
+
+  const postSettled = settleAgentLiveSubmissionLifecycle!(startedOutcome.lifecycle)
+  assert.equal(postSettled.shouldCloseSource, false)
+  assert.deepEqual(postSettled.lifecycle, {
+    postPending: false,
+    terminalEventReceived: false
+  })
+
+  const terminalOutcome = advanceAgentLiveSubmissionLifecycle!(postSettled.lifecycle, {
+    id: "completed-new",
+    sequence: 11,
+    conversationId: "conversation-1",
+    agentId: "openclaw.rowlet",
+    type: "completed",
+    createdAt: "2026-08-20T00:00:11.000Z",
+    message: "current run completed"
+  })
+  assert.equal(terminalOutcome.shouldCloseSource, true)
+  assert.equal(terminalOutcome.lifecycle, undefined)
+})
+
 test("openclaw live helpers encode the SSE path and bound preview activity", async () => {
   const taskConversationModule = await loadTaskConversationModule()
   const buildConversationLivePath = Reflect.get(taskConversationModule, "buildConversationLivePath") as

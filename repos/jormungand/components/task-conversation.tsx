@@ -44,6 +44,10 @@ type AgentLivePreview = {
   reasoning?: string
   status?: string
 }
+type AgentLiveSubmissionLifecycle = {
+  postPending: boolean
+  terminalEventReceived: boolean
+}
 
 export const MAX_VISIBLE_AGENT_LIVE_EVENTS = 18
 
@@ -74,6 +78,68 @@ export function reduceAgentLivePreview(current: AgentLivePreview, event: AgentLi
     events: nextEvents,
     reasoning: nextReasoning,
     status: nextStatus?.slice(0, MAX_AGENT_LIVE_TEXT)
+  }
+}
+
+export function startAgentLiveSubmissionLifecycle(): AgentLiveSubmissionLifecycle {
+  return {
+    postPending: true,
+    terminalEventReceived: false
+  }
+}
+
+export function advanceAgentLiveSubmissionLifecycle(
+  lifecycle: AgentLiveSubmissionLifecycle | undefined,
+  event: AgentLiveEvent
+) {
+  const terminal = isAgentLiveTerminal(event)
+
+  if (!lifecycle) {
+    return {
+      lifecycle: undefined,
+      shouldCloseSource: terminal
+    }
+  }
+
+  if (terminal && lifecycle.postPending) {
+    return {
+      lifecycle: {
+        ...lifecycle,
+        terminalEventReceived: true
+      },
+      shouldCloseSource: false
+    }
+  }
+
+  return {
+    lifecycle: terminal ? undefined : lifecycle,
+    shouldCloseSource: terminal
+  }
+}
+
+export function settleAgentLiveSubmissionLifecycle(
+  lifecycle: AgentLiveSubmissionLifecycle | undefined
+) {
+  if (!lifecycle) {
+    return {
+      lifecycle: undefined,
+      shouldCloseSource: false
+    }
+  }
+
+  if (lifecycle.terminalEventReceived) {
+    return {
+      lifecycle: undefined,
+      shouldCloseSource: true
+    }
+  }
+
+  return {
+    lifecycle: {
+      ...lifecycle,
+      postPending: false
+    },
+    shouldCloseSource: false
   }
 }
 
@@ -128,6 +194,7 @@ export function TaskConversation(props: {
   const agentLiveEventListenerRef = useRef<EventListener | undefined>(undefined)
   const agentLiveErrorListenerRef = useRef<EventListener | undefined>(undefined)
   const agentLivePreviewRef = useRef<AgentLivePreview>({ events: [] })
+  const agentLiveSubmissionLifecycleRef = useRef<{ postPending: boolean; terminalEventReceived: boolean } | undefined>(undefined)
   const pollingInFlight = useRef<{
     generation: number
     promise: ReturnType<typeof loadConversation>
@@ -188,6 +255,7 @@ export function TaskConversation(props: {
     }
 
     activeEventSourceRef.current = undefined
+    agentLiveSubmissionLifecycleRef.current = undefined
     agentLiveEventListenerRef.current = undefined
     agentLiveErrorListenerRef.current = undefined
     setActiveEventSource(undefined)
@@ -369,6 +437,7 @@ export function TaskConversation(props: {
     try {
       if (shouldOpenAgentLiveStream(targetAgent)) {
         closeAgentLiveSource()
+        agentLiveSubmissionLifecycleRef.current = startAgentLiveSubmissionLifecycle()
         if (typeof window !== "undefined" && typeof EventSource === "function") {
           try {
             const source = new EventSource(buildConversationLivePath(activeConversationId))
@@ -387,7 +456,9 @@ export function TaskConversation(props: {
                 setAgentLiveEvents(nextPreview.events)
                 setAgentLiveReasoning(nextPreview.reasoning)
                 setAgentLiveStatus(nextPreview.status)
-                if (event.type === "completed" || event.type === "failed") {
+                const lifecycleResult = advanceAgentLiveSubmissionLifecycle(agentLiveSubmissionLifecycleRef.current, event)
+                agentLiveSubmissionLifecycleRef.current = lifecycleResult.lifecycle
+                if (lifecycleResult.shouldCloseSource) {
                   closeAgentLiveSource({ preservePreview: true })
                 }
               } catch {
@@ -426,6 +497,11 @@ export function TaskConversation(props: {
       }
       if (!response.ok || !result.userEntry) throw new Error(result.error ?? "Message dispatch failed")
       if (generation !== requestGeneration.current) return
+      const lifecycleResult = settleAgentLiveSubmissionLifecycle(agentLiveSubmissionLifecycleRef.current)
+      agentLiveSubmissionLifecycleRef.current = lifecycleResult.lifecycle
+      if (lifecycleResult.shouldCloseSource) {
+        closeAgentLiveSource({ preservePreview: true })
+      }
       setConversationId(result.conversationId ?? activeConversationId)
       setEntries((current) => result.entries ?? mergeResult(current, optimistic.id, result.userEntry!, result.responseEntry))
       setSession(result.session)
@@ -434,6 +510,7 @@ export function TaskConversation(props: {
       if (result.binding) props.onBound?.(result.binding)
     } catch (submitError) {
       if (generation !== requestGeneration.current) return
+      closeAgentLiveSource()
       setEntries((current) => current.map((entry) => entry.id === optimistic.id ? { ...entry, status: "failed" } : entry))
       setError(formatError(submitError))
     }

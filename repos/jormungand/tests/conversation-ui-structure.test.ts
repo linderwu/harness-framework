@@ -91,12 +91,17 @@ test("openclaw live stream state stays ephemeral and uses the conversation SSE b
 })
 
 test("openclaw live stream cleanup closes listeners on terminal events and request lifecycle changes", () => {
+  assert.match(taskConversation, /const agentLiveSubmissionLifecycleRef = useRef<\{ postPending: boolean; terminalEventReceived: boolean \} \| undefined>\(undefined\)/)
+  assert.match(taskConversation, /agentLiveSubmissionLifecycleRef\.current = startAgentLiveSubmissionLifecycle\(\)/)
+  assert.match(taskConversation, /advanceAgentLiveSubmissionLifecycle\(agentLiveSubmissionLifecycleRef\.current, event\)/)
+  assert.match(taskConversation, /settleAgentLiveSubmissionLifecycle\(agentLiveSubmissionLifecycleRef\.current\)/)
   assert.match(taskConversation, /source\.removeEventListener\("agent-live", handleAgentLiveEvent\)/)
   assert.match(taskConversation, /source\.removeEventListener\("error", handleAgentLiveError\)/)
   assert.match(taskConversation, /source\.close\(\)/)
-  assert.match(taskConversation, /if \(event\.type === "completed" \|\| event\.type === "failed"\) \{[\s\S]*closeAgentLiveSource\(\)/)
+  assert.match(taskConversation, /if \(lifecycleResult\.shouldCloseSource\) \{[\s\S]*closeAgentLiveSource\(\{ preservePreview: true \}\)/)
   assert.match(taskConversation, /function invalidateConversationRequests\(\) \{[\s\S]*closeAgentLiveSource\(\)/)
   assert.match(taskConversation, /useEffect\(\(\) => \(\) => \{[\s\S]*closeAgentLiveSource\(\)[\s\S]*\}, \[\]\)/)
+  assert.match(taskConversation, /} catch \(submitError\) \{[\s\S]*closeAgentLiveSource\(\)[\s\S]*setEntries\(/)
 })
 
 test("activity panel renders live agent preview details without changing codex controls", () => {
