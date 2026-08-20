@@ -61,13 +61,13 @@ async function postManagerWake(
     return NextResponse.json({ status: "queued", jobId: existingJob.id }, { status: 202 })
   }
 
-  await scheduler.enqueue({ workflowRunId: id, reason: body.reason, idempotencyKey })
   const { job } = await repository.createExecutionJob({
     kind: "manager_wake",
     workflowRunId: id,
     payload: { reason: body.reason },
     idempotencyKey: executionJobIdempotencyKey
   })
+  await scheduler.enqueue({ workflowRunId: id, reason: body.reason, idempotencyKey })
   const scheduleExecutionJobDrain = dependencies.scheduleExecutionJobDrain ??
     createDefaultExecutionJobDrain({ repository, scheduler })
   await scheduleExecutionJobDrain(job.id)

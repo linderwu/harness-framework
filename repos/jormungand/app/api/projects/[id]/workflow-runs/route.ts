@@ -114,6 +114,12 @@ async function postProjectWorkflowRun(
     }
 
     try {
+      const { job } = await repository.createExecutionJob({
+        kind: "workflow_run_start",
+        workflowRunId: managedRun.id,
+        payload: { reason: "mission_created" },
+        idempotencyKey: executionJobIdempotencyKey
+      })
       const runningRun = await upsertWorkflowRun({
         ...managedRun,
         status: "running",
@@ -130,12 +136,6 @@ async function postProjectWorkflowRun(
       await scheduler.enqueue({
         workflowRunId: runningRun.id,
         reason: "mission_created",
-        idempotencyKey: executionJobIdempotencyKey
-      })
-      const { job } = await repository.createExecutionJob({
-        kind: "workflow_run_start",
-        workflowRunId: runningRun.id,
-        payload: { reason: "mission_created" },
         idempotencyKey: executionJobIdempotencyKey
       })
       await scheduleExecutionJobDrain(job.id)

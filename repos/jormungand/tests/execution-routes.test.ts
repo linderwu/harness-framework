@@ -97,6 +97,12 @@ async function openRepository(t: TestContext) {
   return { repository }
 }
 
+function makeExecutionJobCreationFail(repository: ReturnType<typeof createHiveMemoryRepository>) {
+  repository.createExecutionJob = async () => {
+    throw new Error("execution job insert failed")
+  }
+}
+
 function createManagedRun(overrides: { managed?: WorkflowRun["managed"] } = {}) {
   return createWorkflowRun({
     projectId: "project-managed-1",
@@ -208,6 +214,45 @@ test("managed workflow run creation enqueues a durable execution job and returns
   assert.equal(duplicateResponse.status, 202)
   assert.equal(duplicateBody.jobId, body.jobId)
   assert.equal(repository.getExecutionJob(body.jobId ?? "")?.id, body.jobId)
+})
+
+test("managed workflow creation does not enqueue manager work when execution job creation fails", async (t) => {
+  const { repository } = await openRepository(t)
+  const project = createProject({
+    name: "Job-first launch",
+    type: "hive_mission",
+    goal: "Do not orphan manager work.",
+    repository: "github.com/acme/job-first-launch",
+    source: "dashboard",
+    managedConfig: createManagedProjectConfig()
+  })
+  makeExecutionJobCreationFail(repository)
+  const routeModule = await importProjectWorkflowRunsRoute()
+  const handlers =
+    routeModule.createProjectWorkflowRunsRouteHandlers?.({
+      getProject: async (id) => (id === project.id ? project : undefined),
+      repository,
+      scheduleExecutionJobDrain: async () => undefined
+    }) ?? routeModule
+
+  const response = await handlers.POST(
+    new Request(`https://jormungand.test/api/projects/${project.id}/workflow-runs`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": "managed-job-first-failure"
+      },
+      body: JSON.stringify({ selectedAgent: "codex" })
+    }),
+    { params: Promise.resolve({ id: project.id }) }
+  )
+  const body = await response.json() as { latestRun?: WorkflowRun; error?: string }
+
+  assert.equal(response.status, 503)
+  assert.match(body.error ?? "", /execution job insert failed/)
+  assert.ok(body.latestRun?.id)
+  assert.equal(repository.listManagerTasks(body.latestRun.id).length, 0)
+  assert.equal(repository.listManagerWakes(body.latestRun.id).length, 0)
 })
 
 test("manager wake and message mutations queue durable execution jobs without dropping validation errors", async (t) => {
@@ -339,6 +384,62 @@ test("manager wake and message mutations queue durable execution jobs without dr
 
   assert.equal(unmanagedResponse.status, 409)
   assert.equal(unmanagedBody.error, "Workflow run is not manager-controlled")
+})
+
+test("manager wake and message do not append side effects when execution job creation fails", async (t) => {
+  const { repository } = await openRepository(t)
+  const wakeRun = createManagedRun()
+  const messageRun = createManagedRun()
+  makeExecutionJobCreationFail(repository)
+  const wakeRouteModule = await importWorkflowRunManagerWakeRoute()
+  const messageRouteModule = await importWorkflowRunManagerMessageRoute()
+  const wakeHandlers =
+    wakeRouteModule.createWorkflowRunManagerWakeRouteHandlers?.({
+      getWorkflowRun: async (id) => (id === wakeRun.id ? wakeRun : undefined),
+      repository,
+      scheduleExecutionJobDrain: async () => undefined
+    }) ?? wakeRouteModule
+  const messageHandlers =
+    messageRouteModule.createWorkflowRunManagerMessageRouteHandlers?.({
+      getWorkflowRun: async (id) => (id === messageRun.id ? messageRun : undefined),
+      repository,
+      scheduleExecutionJobDrain: async () => undefined
+    }) ?? messageRouteModule
+
+  await assert.rejects(
+    wakeHandlers.POST(
+      new Request(`https://jormungand.test/api/workflow-runs/${wakeRun.id}/manager/wake`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          reason: "operator_message",
+          idempotencyKey: "wake-job-first-failure"
+        })
+      }),
+      { params: Promise.resolve({ id: wakeRun.id }) }
+    ),
+    /execution job insert failed/
+  )
+
+  assert.equal(repository.listManagerWakes(wakeRun.id).length, 0)
+
+  await assert.rejects(
+    messageHandlers.POST(
+      new Request(`https://jormungand.test/api/workflow-runs/${messageRun.id}/manager/message`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          content: "Please continue.",
+          idempotencyKey: "message-job-first-failure"
+        })
+      }),
+      { params: Promise.resolve({ id: messageRun.id }) }
+    ),
+    /execution job insert failed/
+  )
+
+  assert.equal(repository.listEvents({ workflowRunId: messageRun.id }).length, 0)
+  assert.equal(repository.listManagerWakes(messageRun.id).length, 0)
 })
 
 test("agent task workflow runs enqueue a durable advance job before returning", async (t) => {

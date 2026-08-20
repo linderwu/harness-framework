@@ -53,17 +53,17 @@ async function postManagerMessage(
     return NextResponse.json({ status: "queued", jobId: existingJob.id }, { status: 202 })
   }
 
-  await repository.appendEvent({
-    eventType: "manager_operator_message", actor: "human", workflowRunId: id,
-    payload: { content: body.content.trim() }, idempotencyKey
-  })
-  await scheduler.enqueue({ workflowRunId: id, reason: "operator_message", idempotencyKey: `wake:${idempotencyKey}` })
   const { job } = await repository.createExecutionJob({
     kind: "manager_message",
     workflowRunId: id,
     payload: { eventType: "manager_operator_message" },
     idempotencyKey: executionJobIdempotencyKey
   })
+  await repository.appendEvent({
+    eventType: "manager_operator_message", actor: "human", workflowRunId: id,
+    payload: { content: body.content.trim() }, idempotencyKey
+  })
+  await scheduler.enqueue({ workflowRunId: id, reason: "operator_message", idempotencyKey: `wake:${idempotencyKey}` })
   const scheduleExecutionJobDrain = dependencies.scheduleExecutionJobDrain ??
     createDefaultExecutionJobDrain({ repository, scheduler })
   await scheduleExecutionJobDrain(job.id)
