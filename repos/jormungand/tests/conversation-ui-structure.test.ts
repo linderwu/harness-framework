@@ -71,6 +71,15 @@ test("conversation header surfaces the managed title, access mode, dialog copy, 
   assert.match(taskConversation, /Delete this conversation and its Codex session\?/)
 })
 
+test("rename action opens a visible native dialog for the title input", () => {
+  assert.match(taskConversation, /const renameDialogRef = useRef<HTMLDialogElement>\(null\)/)
+  assert.match(taskConversation, /function openRenameDialog\(\) \{[\s\S]*dialog\.showModal\(\)/)
+  assert.match(taskConversation, /onClick=\{openRenameDialog\}/)
+  assert.match(taskConversation, /aria-labelledby="rename-conversation-title"/)
+  assert.match(taskConversation, /id="rename-conversation-title"/)
+  assert.match(taskConversation, /aria-label="Rename conversation form"/)
+})
+
 test("dashboard resets bound workspace selection when a new conversation starts", () => {
   assert.match(dashboard, /const \[conversationVersion, setConversationVersion\] = useState\(0\)/)
   assert.match(dashboard, /function handleNewConversation\(\)/)
