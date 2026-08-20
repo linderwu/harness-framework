@@ -12,7 +12,34 @@ type ConversationLiveRouteModule = {
   GET: (request: Request) => Promise<Response>
   formatAgentLiveSse: (eventName: string, payload: unknown) => string
   createConversationLiveRouteHandlers?: (dependencies?: {
-    bus?: ReturnType<typeof createAgentLiveBus>
+    bus?: {
+      getSnapshot: (conversationId: string) => {
+        conversationId: string
+        events: Array<{
+          id: string
+          sequence: number
+          conversationId: string
+          agentId: "openclaw.rowlet"
+          type: "status"
+          createdAt: string
+          message?: string
+        }>
+        terminal: boolean
+        lastSequence: number
+      }
+      subscribe: (
+        conversationId: string,
+        listener: (event: {
+          id: string
+          sequence: number
+          conversationId: string
+          agentId: "openclaw.rowlet"
+          type: "status"
+          createdAt: string
+          message?: string
+        }) => void
+      ) => { unsubscribe(): void }
+    } | ReturnType<typeof createAgentLiveBus>
   }) => {
     GET: (request: Request) => Promise<Response>
   }
@@ -211,5 +238,60 @@ describe("conversation live route", { concurrency: false }, () => {
     assert.match(body, /"sequence":3/)
     assert.doesNotMatch(body, /other conversation|still other conversation/)
     assert.ok(body.indexOf("\"sequence\":1") < body.indexOf("\"sequence\":3"))
+  })
+
+  test("reader cancel unsubscribes the bus listener immediately", async () => {
+    const route = await importConversationLiveRoute()
+    const requestedConversationId = "conversation:33333333-3333-4333-8333-333333333333"
+    let unsubscribeCalls = 0
+    let subscribeCalls = 0
+
+    const handlers = route.createConversationLiveRouteHandlers?.({
+      bus: {
+        getSnapshot(conversationId) {
+          return {
+            conversationId,
+            events: [],
+            terminal: false,
+            lastSequence: -1
+          }
+        },
+        subscribe(
+          conversationId: string,
+          listener: (event: {
+            id: string
+            sequence: number
+            conversationId: string
+            agentId: "openclaw.rowlet"
+            type: "status"
+            createdAt: string
+            message?: string
+          }) => void
+        ) {
+          void listener
+          subscribeCalls += 1
+          assert.equal(conversationId, requestedConversationId)
+          return {
+            unsubscribe() {
+              unsubscribeCalls += 1
+            }
+          }
+        }
+      }
+    }) ?? route
+
+    const response = await handlers.GET(
+      new Request(`https://jormungand.test/api/conversation/live?conversationId=${requestedConversationId}`)
+    )
+
+    const reader = response.body?.getReader()
+    assert.ok(reader)
+
+    const firstChunk = await reader.read()
+    assert.equal(firstChunk.done, false)
+    await reader.cancel("client closed")
+
+    assert.equal(subscribeCalls, 1)
+    assert.equal(unsubscribeCalls, 1)
   })
 })

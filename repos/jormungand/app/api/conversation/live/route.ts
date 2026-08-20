@@ -26,6 +26,7 @@ function isTerminalEvent(event: AgentLiveEvent) {
 
 function createConversationLiveStream(request: Request, conversationId: string, bus: AgentLiveBus) {
   const encoder = new TextEncoder()
+  let closeStream: (shouldCloseController?: boolean) => void = () => undefined
 
   return new ReadableStream<Uint8Array>({
     start(controller) {
@@ -33,15 +34,18 @@ function createConversationLiveStream(request: Request, conversationId: string, 
       let replayComplete = false
       let lastDeliveredSequence = -1
       const pendingEvents: AgentLiveEvent[] = []
+      let unsubscribe: () => void = () => undefined
 
-      const closeStream = () => {
+      closeStream = (shouldCloseController = true) => {
         if (closed) {
           return
         }
         closed = true
         request.signal.removeEventListener("abort", handleAbort)
-        subscription.unsubscribe()
-        controller.close()
+        unsubscribe()
+        if (shouldCloseController) {
+          controller.close()
+        }
       }
 
       const enqueue = (eventName: string, payload: unknown) => {
@@ -69,6 +73,7 @@ function createConversationLiveStream(request: Request, conversationId: string, 
         }
         deliver(event)
       }, bus)
+      unsubscribe = () => subscription.unsubscribe()
 
       const handleAbort = () => {
         closeStream()
@@ -101,6 +106,9 @@ function createConversationLiveStream(request: Request, conversationId: string, 
       if (snapshot.terminal) {
         closeStream()
       }
+    },
+    cancel() {
+      closeStream(false)
     }
   })
 }
