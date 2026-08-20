@@ -1744,6 +1744,11 @@ small,
 .taskNavigation .projectSelector { min-height: 96px; }
 .taskNavigation .composePanel { height: auto; position: static; }
 .taskNavigation.collapsed { display: block; }
+.taskNavigation > .mobileDrawerHeader { order: -3; }
+.taskNavigation > .navigationRailToggle { order: -2; }
+.taskNavigation > .composePanel { order: -1; }
+.taskNavigation > .projectSelector { order: 0; }
+.taskNavigation .codexActivityPanel { order: 1; }
 .codexActivityMount { display: contents; }
 
 .railToggle {

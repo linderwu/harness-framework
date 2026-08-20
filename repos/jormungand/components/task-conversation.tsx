@@ -589,13 +589,13 @@ export function TaskConversation(props: {
     <section className={`panel runsPanel codexActivityPanel${isCodexActivityExpanded ? "" : " collapsed"}`} aria-label="Codex activity panel">
       <button
         aria-expanded={isCodexActivityExpanded}
-        aria-label={isCodexActivityExpanded ? "Collapse Live Codex session" : "Expand Live Codex session"}
+        aria-label={isCodexActivityExpanded ? "Collapse Live session" : "Expand Live session"}
         className="projectSelectorSummary codexActivityToggle"
         onClick={() => setIsCodexActivityExpanded((current) => !current)}
         type="button"
       >
         <span className="projectSelectorHeader">
-          <span><strong>Live Codex session</strong></span>
+          <span><strong>Live session</strong></span>
           {isCodexActivityExpanded ? <ChevronDown size={18} /> : <ChevronLeft size={18} />}
         </span>
       </button>
@@ -604,7 +604,7 @@ export function TaskConversation(props: {
           <section className="codexActivity" aria-label="Codex activity">
             <div className="codexActivityHeader">
               <div>
-                <p className="eyebrow">Live Codex session</p>
+                <p className="eyebrow">Live session</p>
                 <strong>{formatSessionStatus(session)}</strong>
               </div>
               <div className="codexActivityActions">
