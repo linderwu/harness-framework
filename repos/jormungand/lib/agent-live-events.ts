@@ -43,6 +43,9 @@ export function normalizeAgentLiveEvent(input: unknown): AgentLiveEvent {
   const agentId = readAgentKind(value.agentId)
   const type = readEventType(value.type)
   const metadata = normalizeMetadata(value.metadata)
+  const normalizeEventText = type === "assistant_delta"
+    ? normalizeBoundedDelta
+    : normalizeBoundedText
 
   return {
     id: readOptionalString(value.id) ?? crypto.randomUUID(),
@@ -50,8 +53,8 @@ export function normalizeAgentLiveEvent(input: unknown): AgentLiveEvent {
     conversationId,
     agentId,
     type,
-    message: normalizeBoundedText(value.message),
-    text: normalizeBoundedText(value.text),
+    message: normalizeEventText(value.message),
+    text: normalizeEventText(value.text),
     delta: normalizeBoundedDelta(value.delta),
     createdAt: readOptionalString(value.createdAt) ?? new Date().toISOString(),
     metadata
