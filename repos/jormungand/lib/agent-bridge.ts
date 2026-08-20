@@ -14,7 +14,13 @@ import {
   extractA2AResponseText,
   resolveOpenClawA2AProtocol
 } from "./a2a-protocol"
+import {
+  getAgentLiveSnapshot,
+  publishAgentLiveEvent
+} from "./agent-live-bus"
 import { getAgentProfile } from "./agents"
+import type { AgentLiveEvent } from "./agent-live-events"
+import { normalizeAgentLiveEvent } from "./agent-live-events"
 import { getAgentPermissionMode } from "./agent-permissions"
 import { ensureGitHubRepository } from "./github-repository"
 import type { AgentArtifactResult } from "@/lib/workflow"
@@ -50,10 +56,55 @@ interface BridgeResponse {
   runtimeSkillBundleResults?: RuntimeSkillBundleResult[]
 }
 
+interface BridgeLiveEventsResponse {
+  status?: "completed" | "failed" | "running"
+  nextCursor?: unknown
+  events?: unknown
+}
+
+export interface AgentBridgeTestHooks {
+  fetch?: typeof fetch
+  now?: () => number
+  sleep?: (ms: number) => Promise<void>
+  livePollIntervalMs?: number
+  livePollTimeoutMs?: number
+  publishLiveEvent?: (event: AgentLiveEvent) => boolean
+  getLastLiveSequence?: (conversationId: string) => number
+}
+
+interface AgentBridgeRuntime {
+  fetch: typeof fetch
+  now: () => number
+  sleep: (ms: number) => Promise<void>
+  livePollIntervalMs: number
+  livePollTimeoutMs: number
+  publishLiveEvent: (event: AgentLiveEvent) => boolean
+  getLastLiveSequence: (conversationId: string) => number
+}
+
+interface OpenClawLiveRelay {
+  publishStarted(): void
+  startPolling(): void
+  publishFinal(result: AgentArtifactResult): void
+}
+
+let agentBridgeTestHooks: AgentBridgeTestHooks = {}
+
 const bridgeProtocolV2 = "harness-agent-bridge/v0.2"
 const bridgeProtocolV3 = "harness-agent-bridge/v0.3"
 const openClawA2AControlMessage =
   process.env.OPENCLAW_A2A_CONTROL_MESSAGE ?? "/stop"
+
+export function __setAgentBridgeTestHooks(hooks: AgentBridgeTestHooks) {
+  agentBridgeTestHooks = {
+    ...agentBridgeTestHooks,
+    ...hooks
+  }
+}
+
+export function __resetAgentBridgeTestHooks() {
+  agentBridgeTestHooks = {}
+}
 
 export async function invokeConfiguredAgent(
   input: AgentInvocationInput
@@ -96,70 +147,92 @@ export async function invokeConfiguredAgent(
     return createMissingBridgeResult(input, source)
   }
 
+  const runtime = getAgentBridgeRuntime()
+  const liveRelay = createOpenClawLiveRelay(
+    input,
+    bridgeUrl,
+    source,
+    idempotencyKey,
+    runtime
+  )
+
   try {
-    const response = await fetch(new URL("agent-runs", normalizeUrl(bridgeUrl)), {
-      method: "POST",
-      headers: createBridgeHeaders(input.executor, idempotencyKey),
-      body: JSON.stringify({
-        protocolVersion: requiredProtocol,
-        idempotencyKey,
-        workflowRunId: input.run.id,
-        workflowVersion: input.run.version,
-        projectName: input.run.projectName,
-        repository: input.run.repository,
-        requirement: input.run.requirement,
-        contextFiles: input.run.contextFiles ?? [],
-        stage: input.stage,
-        artifactType: input.artifactType,
-        title: input.title,
-        executor: input.executor,
-        agentFamily: profile.family,
-        mainAgent: profile.mainAgent,
-        skill: input.skill,
-        permissionMode: getAgentPermissionMode(),
-        runtimeSkillBundles: input.runtimeSkillBundles ?? [],
-        artifacts: input.run.artifacts,
-        selectedModelId: input.run.selectedModelId?.trim(),
-        selectedReasoningIntensity: input.run.selectedReasoningIntensity,
-        fallbackBody: input.fallbackBody,
-        contextPack: input.contextPack,
-        conversationId: input.conversationId,
-        conversationHistory: input.conversationHistory
-      })
-    })
+    liveRelay?.publishStarted()
+    const responsePromise = runtime.fetch(
+      new URL("agent-runs", normalizeUrl(bridgeUrl)),
+      {
+        method: "POST",
+        headers: createBridgeHeaders(input.executor, idempotencyKey),
+        body: JSON.stringify({
+          protocolVersion: requiredProtocol,
+          idempotencyKey,
+          workflowRunId: input.run.id,
+          workflowVersion: input.run.version,
+          projectName: input.run.projectName,
+          repository: input.run.repository,
+          requirement: input.run.requirement,
+          contextFiles: input.run.contextFiles ?? [],
+          stage: input.stage,
+          artifactType: input.artifactType,
+          title: input.title,
+          executor: input.executor,
+          agentFamily: profile.family,
+          mainAgent: profile.mainAgent,
+          skill: input.skill,
+          permissionMode: getAgentPermissionMode(),
+          runtimeSkillBundles: input.runtimeSkillBundles ?? [],
+          artifacts: input.run.artifacts,
+          selectedModelId: input.run.selectedModelId?.trim(),
+          selectedReasoningIntensity: input.run.selectedReasoningIntensity,
+          fallbackBody: input.fallbackBody,
+          contextPack: input.contextPack,
+          conversationId: input.conversationId,
+          conversationHistory: input.conversationHistory
+        })
+      }
+    )
+    liveRelay?.startPolling()
+    const response = await responsePromise
 
     const data = (await response.json().catch(() => ({}))) as BridgeResponse
 
+    let result: AgentArtifactResult
+
     if (!response.ok) {
       if (response.status === 524 || response.status === 409) {
-        return pollBridgeRunByIdempotencyKey({
+        result = await pollBridgeRunByIdempotencyKey({
           bridgeUrl,
           executor: input.executor,
           idempotencyKey,
           profileLabel: profile.label,
           source
         })
+      } else {
+        result = {
+          status: "failed",
+          source,
+          body: [
+            `${profile.label} bridge request failed with HTTP ${response.status}.`,
+            data.error ? `Error: ${data.error}` : undefined
+          ]
+            .filter(Boolean)
+            .join("\n")
+        }
       }
-
-      return {
-        status: "failed",
-        source,
-        body: [
-          `${profile.label} bridge request failed with HTTP ${response.status}.`,
-          data.error ? `Error: ${data.error}` : undefined
-        ]
-          .filter(Boolean)
-          .join("\n")
-      }
+    } else {
+      result = bridgeResponseToAgentResult(data, source, idempotencyKey)
     }
 
-    return bridgeResponseToAgentResult(data, source, idempotencyKey)
+    liveRelay?.publishFinal(result)
+    return result
   } catch (error) {
-    return {
+    const result: AgentArtifactResult = {
       status: "failed",
       source,
       body: `${profile.label} bridge is not reachable: ${formatError(error)}`
     }
+    liveRelay?.publishFinal(result)
+    return result
   }
 }
 
@@ -271,7 +344,251 @@ function bridgeResponseToAgentResult(
 }
 
 function sleep(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms))
+  return new Promise<void>((resolve) => setTimeout(resolve, ms))
+}
+
+function getAgentBridgeRuntime(): AgentBridgeRuntime {
+  return {
+    fetch: agentBridgeTestHooks.fetch ?? globalThis.fetch.bind(globalThis),
+    now: agentBridgeTestHooks.now ?? Date.now,
+    sleep: agentBridgeTestHooks.sleep ?? sleep,
+    livePollIntervalMs: Math.max(
+      0,
+      agentBridgeTestHooks.livePollIntervalMs ??
+        Number(process.env.AGENT_BRIDGE_LIVE_POLL_INTERVAL_MS ?? 500)
+    ),
+    livePollTimeoutMs: Math.max(
+      1,
+      agentBridgeTestHooks.livePollTimeoutMs ??
+        Number(process.env.AGENT_BRIDGE_LIVE_POLL_TIMEOUT_MS ?? 900000)
+    ),
+    publishLiveEvent:
+      agentBridgeTestHooks.publishLiveEvent ?? ((event) => publishAgentLiveEvent(event)),
+    getLastLiveSequence:
+      agentBridgeTestHooks.getLastLiveSequence ??
+      ((conversationId) => getAgentLiveSnapshot(conversationId).lastSequence)
+  }
+}
+
+function createOpenClawLiveRelay(
+  input: AgentInvocationInput,
+  bridgeUrl: string,
+  source: AgentArtifactResult["source"],
+  idempotencyKey: string,
+  runtime: AgentBridgeRuntime
+): OpenClawLiveRelay | undefined {
+  const conversationId = input.conversationId?.trim()
+
+  if (!conversationId || getAgentProfile(input.executor).family !== "openclaw") {
+    return undefined
+  }
+
+  const liveConversationId = conversationId
+  const baseSequence = Math.max(runtime.getLastLiveSequence(liveConversationId) + 1, 0)
+  const metadata = {
+    runId: input.run.id,
+    source,
+    phase: input.stage
+  }
+  let lastPublishedSequence = baseSequence - 1
+  let cursor = 0
+  let stopped = false
+  let terminalPublished = false
+
+  function publishEvent(payload: {
+    id?: string
+    sequence: number
+    type: string
+    message?: string
+    text?: string
+    delta?: string
+    createdAt?: string
+  }) {
+    try {
+      const event = normalizeAgentLiveEvent({
+        ...payload,
+        conversationId: liveConversationId,
+        agentId: input.executor,
+        metadata
+      })
+      const published = runtime.publishLiveEvent(event)
+      if (published) {
+        lastPublishedSequence = event.sequence
+      }
+      if (event.type === "completed" || event.type === "failed") {
+        terminalPublished = true
+      }
+      return published
+    } catch {
+      return false
+    }
+  }
+
+  async function pollLiveEvents() {
+    const deadline = runtime.now() + runtime.livePollTimeoutMs
+
+    while (!stopped && runtime.now() < deadline) {
+      await runtime.sleep(runtime.livePollIntervalMs)
+
+      if (stopped || runtime.now() >= deadline) {
+        return
+      }
+
+      const response = await runtime
+        .fetch(
+          new URL(
+            `agent-runs/by-idempotency/${encodeURIComponent(idempotencyKey)}/events?after=${cursor}`,
+            normalizeUrl(bridgeUrl)
+          ),
+          {
+            headers: createBridgeHeaders(input.executor, idempotencyKey)
+          }
+        )
+        .catch(() => undefined)
+
+      if (!response || response.status === 404 || !response.ok) {
+        return
+      }
+
+      const data = (await response.json().catch(() => ({}))) as BridgeLiveEventsResponse
+      const highestSequence = publishBridgeEvents(
+        Array.isArray(data.events) ? data.events : []
+      )
+      const nextCursor = readNonNegativeInteger(data.nextCursor)
+
+      if (nextCursor !== undefined && nextCursor > cursor) {
+        cursor = nextCursor
+      } else if (highestSequence > cursor) {
+        cursor = highestSequence
+      }
+
+      if (data.status === "completed" || data.status === "failed") {
+        return
+      }
+    }
+  }
+
+  function publishBridgeEvents(events: unknown[]) {
+    let highestSequence = cursor
+
+    for (const record of events) {
+      const normalized = normalizeBridgeLiveRecord(record, {
+        baseSequence,
+        conversationId: liveConversationId,
+        agentId: input.executor,
+        metadata
+      })
+
+      if (!normalized) {
+        continue
+      }
+
+      highestSequence = Math.max(highestSequence, normalized.originalSequence)
+
+      if (normalized.event.type === "started") {
+        continue
+      }
+
+      if (normalized.event.type === "completed" || normalized.event.type === "failed") {
+        terminalPublished = true
+      }
+
+      if (runtime.publishLiveEvent(normalized.event)) {
+        lastPublishedSequence = normalized.event.sequence
+      }
+    }
+
+    return highestSequence
+  }
+
+  return {
+    publishStarted() {
+      publishEvent({
+        sequence: baseSequence,
+        type: "started",
+        message: `Starting ${getAgentProfile(input.executor).label} bridge request.`
+      })
+    },
+    startPolling() {
+      void pollLiveEvents()
+    },
+    publishFinal(result) {
+      stopped = true
+
+      if (terminalPublished) {
+        return
+      }
+
+      publishEvent({
+        sequence: lastPublishedSequence + 1,
+        type: result.status === "failed" ? "failed" : "completed",
+        message: result.statusMessage
+      })
+    }
+  }
+}
+
+function normalizeBridgeLiveRecord(
+  input: unknown,
+  context: {
+    baseSequence: number
+    conversationId: string
+    agentId: AgentKind
+    metadata: AgentLiveEvent["metadata"]
+  }
+) {
+  const value = asRecord(input)
+  const originalSequence = readNonNegativeInteger(value.sequence)
+  const type = readOptionalString(value.type)
+
+  if (originalSequence === undefined || !type) {
+    return undefined
+  }
+
+  try {
+    return {
+      originalSequence,
+      event: normalizeAgentLiveEvent({
+        id: readOptionalString(value.id),
+        sequence: context.baseSequence + Math.max(0, originalSequence - 1),
+        conversationId: context.conversationId,
+        agentId: context.agentId,
+        type,
+        message: readOptionalString(value.message),
+        text: readOptionalString(value.text),
+        delta: typeof value.delta === "string" ? value.delta : undefined,
+        createdAt: readOptionalString(value.createdAt),
+        metadata: context.metadata
+      })
+    }
+  } catch {
+    return undefined
+  }
+}
+
+function asRecord(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {}
+  }
+
+  return value as Record<string, unknown>
+}
+
+function readOptionalString(value: unknown) {
+  if (typeof value !== "string") {
+    return undefined
+  }
+
+  const text = value.trim()
+  return text ? text : undefined
+}
+
+function readNonNegativeInteger(value: unknown) {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
+    return undefined
+  }
+
+  return value
 }
 
 async function invokeIntakeAgent(
