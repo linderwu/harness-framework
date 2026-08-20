@@ -37,6 +37,17 @@ type NewConversationResult = {
   metadata?: ConversationHeaderMetadata
 }
 
+type QueuedMutationResult = {
+  status: "queued"
+  jobId: string
+}
+
+function isQueuedMutationResult(
+  result: NewConversationResult | QueuedMutationResult | ConversationSummary
+): result is QueuedMutationResult {
+  return "jobId" in result
+}
+
 type ConversationManagerAction = "rename" | "archive" | "unarchive" | "delete"
 
 export function TaskConversation(props: {
@@ -289,6 +300,8 @@ export function TaskConversation(props: {
       const result = await response.json() as {
         conversationId?: string
         error?: string
+        jobId?: string
+        status?: string
         userEntry?: ConversationEntry
         responseEntry?: ConversationEntry
         binding?: ConversationBinding
@@ -296,8 +309,23 @@ export function TaskConversation(props: {
         session?: CodexConversationState["session"]
         events?: CodexConversationEvent[]
       }
-      if (!response.ok || !result.userEntry) throw new Error(result.error ?? "Message dispatch failed")
       if (generation !== requestGeneration.current) return
+      if (response.status === 202) {
+        if (!result.jobId) throw new Error(result.error ?? "Message dispatch failed")
+        setConversationId(result.conversationId ?? activeConversationId)
+        if (result.entries) {
+          setEntries(result.entries)
+        } else if (result.userEntry) {
+          setEntries((current) => mergeResult(current, optimistic.id, result.userEntry!, result.responseEntry))
+        }
+        if ("session" in result) setSession(result.session)
+        if ("events" in result) setEvents(result.events ?? [])
+        if (isUnbound) void refreshConversations(generation)
+        if (result.binding) props.onBound?.(result.binding)
+        setStatusMessage(`Message queued. Job ID: ${result.jobId}.`)
+        return
+      }
+      if (!response.ok || !result.userEntry) throw new Error(result.error ?? "Message dispatch failed")
       setConversationId(result.conversationId ?? activeConversationId)
       setEntries((current) => result.entries ?? mergeResult(current, optimistic.id, result.userEntry!, result.responseEntry))
       setSession(result.session)
@@ -323,9 +351,21 @@ export function TaskConversation(props: {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action, conversationId: activeConversationId })
       })
-      const result = await response.json() as CodexConversationState & { error?: string }
+      const result = await response.json() as CodexConversationState & { error?: string; jobId?: string; status?: string }
       if (!response.ok) throw new Error(result.error ?? "Codex control request failed")
       if (generation !== requestGeneration.current) return
+      if (response.status === 202) {
+        if (!result.jobId) throw new Error(result.error ?? "Codex control request failed")
+        if (result.conversationId) setConversationId(result.conversationId)
+        if ("entries" in result) {
+          setEntries(result.entries)
+        }
+        if ("session" in result) setSession(result.session)
+        if ("events" in result) setEvents(result.events ?? [])
+        onEntriesChanged(result.entries ?? entries)
+        setStatusMessage(`Conversation control queued. Job ID: ${result.jobId}.`)
+        return
+      }
       setConversationId(result.conversationId ?? activeConversationId)
       setEntries(result.entries)
       setSession(result.session)
@@ -356,6 +396,10 @@ export function TaskConversation(props: {
     setStatusMessage(undefined)
     try {
       const result = await requestNewConversation(fetch)
+      if (isQueuedMutationResult(result)) {
+        setStatusMessage(`New conversation queued. Job ID: ${result.jobId}.`)
+        return
+      }
       setConversationId(result.conversationId)
       setEntries([])
       setAllowedAgents(initialAllowedAgents)
@@ -450,6 +494,10 @@ export function TaskConversation(props: {
     try {
       const summary = await requestConversationRename(fetch, activeConversationId, renameDraft)
       if (generation !== requestGeneration.current) return
+      if (isQueuedMutationResult(summary)) {
+        setStatusMessage(`Rename queued. Job ID: ${summary.jobId}.`)
+        return
+      }
       setMetadata(toConversationHeaderMetadata(summary))
       setRenameDraft(summary.title)
       closeRenameDialog()
@@ -472,6 +520,10 @@ export function TaskConversation(props: {
     try {
       const summary = await requestConversationState(fetch, activeConversationId, nextState)
       if (generation !== requestGeneration.current) return
+      if (isQueuedMutationResult(summary)) {
+        setStatusMessage(`${nextState === "archived" ? "Archive" : "Unarchive"} queued. Job ID: ${summary.jobId}.`)
+        return
+      }
       setMetadata(toConversationHeaderMetadata(summary))
       setStatusMessage(
         nextState === "archived"
@@ -549,6 +601,10 @@ export function TaskConversation(props: {
       onEntriesChanged([])
       try {
         const replacement = await requestNewConversation(fetch)
+        if (isQueuedMutationResult(replacement)) {
+          setStatusMessage(`Replacement conversation queued. Job ID: ${replacement.jobId}.`)
+          return
+        }
         setConversationId(replacement.conversationId)
         setMetadata(replacement.metadata)
         setIsConversationIdentityUnavailable(false)
@@ -887,8 +943,8 @@ export function requestConversationSummaries(
 
 export function requestNewConversation(fetchImpl: typeof fetch) {
   return requestJson<
-    { conversationId?: string; metadata?: ConversationHeaderMetadata; error?: string },
-    NewConversationResult
+    { conversationId?: string; metadata?: ConversationHeaderMetadata; error?: string; jobId?: string; status?: string },
+    NewConversationResult | QueuedMutationResult
   >(
     fetchImpl,
     "/api/conversation/new",
@@ -897,7 +953,16 @@ export function requestNewConversation(fetchImpl: typeof fetch) {
       headers: { "Content-Type": "application/json" }
     },
     "New conversation could not be started",
-    (result) => {
+    (result, response) => {
+      if (response.status === 202) {
+        if (!result.jobId) {
+          throw new Error(result.error ?? "New conversation could not be started")
+        }
+        return {
+          status: "queued",
+          jobId: result.jobId
+        } satisfies QueuedMutationResult
+      }
       if (!result.conversationId) {
         throw new Error(result.error ?? "New conversation could not be started")
       }
@@ -1066,7 +1131,10 @@ function requestManagedConversationUpdate(
   body: { title?: string; state?: ConversationState },
   fallbackError: string
 ) {
-  return requestJson<ConversationSummary & { error?: string }>(
+  return requestJson<
+    ConversationSummary & { error?: string; jobId?: string; status?: string },
+    ConversationSummary | QueuedMutationResult
+  >(
     fetchImpl,
     `/api/conversations/${conversationId}`,
     {
@@ -1075,6 +1143,19 @@ function requestManagedConversationUpdate(
       body: JSON.stringify(body)
     },
     fallbackError
+    ,
+    (result, response) => {
+      if (response.status === 202) {
+        if (!result.jobId) {
+          throw new Error(result.error ?? fallbackError)
+        }
+        return {
+          status: "queued",
+          jobId: result.jobId
+        } satisfies QueuedMutationResult
+      }
+      return result
+    }
   )
 }
 
@@ -1083,12 +1164,12 @@ async function requestJson<T, TResult = T>(
   input: string,
   init: RequestInit,
   fallbackError: string,
-  select?: (result: T) => TResult
+  select?: (result: T, response: Response) => TResult
 ): Promise<TResult> {
   const response = await fetchImpl(input, init)
   const result = await response.json().catch(() => ({})) as T & { error?: string }
   if (!response.ok) {
     throw new Error(result.error ?? fallbackError)
   }
-  return select ? select(result) : result as unknown as TResult
+  return select ? select(result, response) : result as unknown as TResult
 }

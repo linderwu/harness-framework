@@ -48,7 +48,7 @@ const diagrams = [
       node("engine", "Workflow Engine", "Creates/advances runs and coordinates gates.", "container", 600, 160),
       node("bridge", "Agent Bridge", "Normalizes Codex/OpenClaw/simulated executor calls.", "container", 900, 70),
       node("resolver", "Runtime Skill Resolver", "Resolves bridge protocol v0.3 skill bundles.", "container", 900, 250),
-      node("store", "Workspace Store", "Local JSON-backed project and workflow state.", "storage", 600, 350),
+    node("store", "Workspace Store", "Configured data-dir persistence for SQLite and workflow JSON.", "storage", 600, 350),
       node("codex", "Codex Bridge", "External execution bridge.", "external", 1190, 30),
       node("openclaw", "OpenClaw Runtime", "Optional external executor.", "external", 1190, 180),
       node("github", "GitHub", "Repository source/target.", "external", 1190, 330)
@@ -92,7 +92,7 @@ const diagrams = [
       node("workflow", "Workflow Run Routes", "Create/read/advance/stop/cancel workflow runs.", "component", 720, 200, 240, 120),
       node("approval", "Approval Gate Routes", "Apply approval decisions.", "component", 720, 370, 240, 120),
       node("health", "Protected Agent Health", "Probe authenticated Codex/OpenClaw bridge health.", "component", 720, 540, 240, 120),
-      node("store", "Workspace Store", "JSON-backed persistence.", "storage", 1080, 30),
+    node("store", "Workspace Store", "Configured data-dir persistence for SQLite and workflow JSON.", "storage", 1080, 30),
       node("engine", "Workflow Engine", "Creates/advances runs and decides gates.", "container", 1080, 300),
       node("codex", "Codex Bridge", "Authenticated v0.3 health endpoint.", "external", 1080, 500),
       node("openclaw", "OpenClaw Bridge", "Authenticated v0.3 health endpoint.", "external", 1080, 680)
@@ -142,7 +142,7 @@ const diagrams = [
     edge("control", "codex", "stop/cancel")
   ]),
   componentDiagram("component-workspace-store", "Workspace Store Components", "Workspace Store", [
-    ["file", "State File", "repos/jormungand/data/harness-state.json."],
+    ["file", "State File", "`JORMUNGAND_DATA_DIR`/harness-state.json."],
     ["access", "State Access", "Read/write/list/upsert/delete operations."],
     ["normalize", "State Normalizer", "Legacy migration, project links, event-log status."]
   ], [
@@ -194,7 +194,7 @@ const diagrams = [
     nodes: [
       node("browser", "Operator Browser", "Runs Harness Dashboard UI.", "person", 60, 100),
       node("next", "Local Next.js Process", "Serves UI and route handlers.", "container", 360, 100),
-      node("json", "Local State File", "repos/jormungand/data/harness-state.json.", "storage", 680, 100),
+      node("json", "Local State File", "`JORMUNGAND_DATA_DIR`/harness-state.json.", "storage", 680, 100),
       node("codex", "Local Codex Bridge", "Optional CODEX_BRIDGE_URL process.", "external", 1000, 40),
       node("openclaw", "OpenClaw Bridge/A2A", "Optional OPENCLAW_* process or command.", "external", 1000, 220),
       node("github", "GitHub", "Network repository service.", "external", 1280, 130)
@@ -280,7 +280,7 @@ function componentDiagram(key, title, containerName, components, edges) {
     node("engine", "Workflow Engine", "Workflow domain logic.", "container", 1080, 60),
     node("bridge", "Agent Bridge", "External executor integration.", "container", 1080, 220),
     node("resolver", "Runtime Skill Resolver", "Runtime skill bundle resolution.", "container", 1080, 380),
-    node("store", "Workspace Store", "JSON-backed persistence.", "storage", 820, 380),
+    node("store", "Workspace Store", "Configured data-dir persistence for SQLite and workflow JSON.", "storage", 820, 380),
     node("codex", "Codex Bridge", "Authenticated v0.3 external bridge.", "external", 1340, 80),
     node("openclaw", "OpenClaw Runtime", "Authenticated v0.3 or A2A executor.", "external", 1340, 240),
     node("github", "GitHub", "Repository service.", "external", 1340, 400)

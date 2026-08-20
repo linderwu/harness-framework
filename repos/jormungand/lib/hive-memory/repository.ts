@@ -11,6 +11,7 @@ import type {
   ConversationState,
   ConversationSummary,
   CreateA2ATaskInput,
+  CreateExecutionJobInput,
   CreateMemoryInput,
   FormalMemory,
   HiveEvent,
@@ -20,6 +21,14 @@ import type {
   MemorySearchInput,
   MemoryTransitionInput,
   RecordMemoryUseInput,
+  ClaimExecutionJobInput,
+  ClaimNextExecutionJobInput,
+  CompleteExecutionJobInput,
+  CancelExecutionJobInput,
+  RecoverExpiredExecutionJobsInput,
+  RequeueExecutionJobInput,
+  ExecutionJob,
+  FailExecutionJobInput,
   SubmitMemoryCandidate,
   UpdateA2ATaskInput
 } from "./types"
@@ -30,6 +39,14 @@ import {
   redactA2AFrame,
   sha256Json
 } from "../a2a-runtime"
+import {
+  cancelQueuedExecutionJob,
+  claimQueuedExecutionJob,
+  completeRunningExecutionJob,
+  createQueuedExecutionJob,
+  failRunningExecutionJob,
+  requeueFailedExecutionJob
+} from "../execution-jobs"
 import { legacyConversationId } from "../conversation-identity"
 
 type MemoryRow = {
@@ -178,6 +195,24 @@ type A2AEventRow = {
   actor: string
   payload_json: string
   created_at: string
+}
+
+type ExecutionJobRow = {
+  id: string
+  kind: string
+  workflow_run_id: string | null
+  payload_json: string
+  idempotency_key: string
+  status: ExecutionJob["status"]
+  attempt_count: number
+  available_at: string
+  lease_owner: string | null
+  lease_expires_at: string | null
+  result_json: string | null
+  last_error: string | null
+  created_at: string
+  updated_at: string
+  completed_at: string | null
 }
 
 export class HiveMemoryRepository {
@@ -1421,6 +1456,343 @@ export class HiveMemoryRepository {
     })
   }
 
+  async createExecutionJob(input: CreateExecutionJobInput) {
+    const now = new Date().toISOString()
+    const job = createQueuedExecutionJob(input, now)
+
+    return this.database.transaction((connection) => {
+      const existing = connection.prepare(`
+        SELECT * FROM execution_jobs WHERE idempotency_key = ?
+      `).get(job.idempotencyKey) as ExecutionJobRow | undefined
+      if (existing) {
+        return { job: executionJobFromRow(existing), inserted: false }
+      }
+
+      connection.prepare(`
+        INSERT INTO execution_jobs(
+          id, kind, workflow_run_id, payload_json, idempotency_key, status,
+          attempt_count, available_at, lease_owner, lease_expires_at,
+          result_json, last_error, created_at, updated_at, completed_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, ?, ?, NULL)
+      `).run(
+        job.id,
+        job.kind,
+        job.workflowRunId ?? null,
+        job.payloadJson,
+        job.idempotencyKey,
+        job.status,
+        job.attemptCount,
+        job.availableAt,
+        job.createdAt,
+        job.updatedAt
+      )
+
+      return { job, inserted: true }
+    })
+  }
+
+  getExecutionJob(id: string) {
+    return this.database.read((connection) => {
+      const row = connection.prepare("SELECT * FROM execution_jobs WHERE id = ?").get(id) as ExecutionJobRow | undefined
+      return row ? executionJobFromRow(row) : undefined
+    })
+  }
+
+  getExecutionJobByIdempotencyKey(idempotencyKey: string) {
+    return this.database.read((connection) => {
+      const row = connection.prepare("SELECT * FROM execution_jobs WHERE idempotency_key = ?").get(idempotencyKey) as ExecutionJobRow | undefined
+      return row ? executionJobFromRow(row) : undefined
+    })
+  }
+
+  async claimNextExecutionJob(input: ClaimNextExecutionJobInput) {
+    const now = input.now ?? new Date().toISOString()
+    return this.database.transaction((connection) => {
+      this.recoverExpiredExecutionJobsOnConnection(connection, { now, kind: input.kind, workflowRunId: input.workflowRunId })
+      const row = connection.prepare(`
+        SELECT * FROM execution_jobs
+        WHERE status = 'queued'
+          AND available_at <= ?
+          AND (? IS NULL OR kind = ?)
+          AND (? IS NULL OR workflow_run_id = ?)
+        ORDER BY available_at ASC, created_at ASC, id ASC
+        LIMIT 1
+      `).get(
+        now,
+        input.kind ?? null,
+        input.kind ?? null,
+        input.workflowRunId ?? null,
+        input.workflowRunId ?? null
+      ) as ExecutionJobRow | undefined
+
+      if (!row) {
+        return undefined
+      }
+
+      const next = claimQueuedExecutionJob(executionJobFromRow(row), { ...input, now })
+      const result = connection.prepare(`
+        UPDATE execution_jobs SET
+          status = ?,
+          attempt_count = ?,
+          available_at = ?,
+          lease_owner = ?,
+          lease_expires_at = ?,
+          result_json = ?,
+          last_error = ?,
+          updated_at = ?
+        WHERE id = ? AND status = 'queued'
+      `).run(
+        next.status,
+        next.attemptCount,
+        next.availableAt,
+        next.leaseOwner ?? null,
+        next.leaseExpiresAt ?? null,
+        next.resultJson ?? null,
+        next.lastError ?? null,
+        next.updatedAt,
+        next.id
+      )
+
+      if (result.changes === 0) {
+        throw new Error(`Execution job ${next.id} was not claimable.`)
+      }
+
+      return next
+    })
+  }
+
+  async claimExecutionJob(input: ClaimExecutionJobInput) {
+    const now = input.now ?? new Date().toISOString()
+    return this.database.transaction((connection) => {
+      const row = connection.prepare(`
+        SELECT * FROM execution_jobs
+        WHERE id = ?
+          AND status = 'queued'
+          AND available_at <= ?
+      `).get(input.id, now) as ExecutionJobRow | undefined
+
+      if (!row) {
+        return undefined
+      }
+
+      const next = claimQueuedExecutionJob(executionJobFromRow(row), { ...input, now })
+      const result = connection.prepare(`
+        UPDATE execution_jobs SET
+          status = ?,
+          attempt_count = ?,
+          available_at = ?,
+          lease_owner = ?,
+          lease_expires_at = ?,
+          result_json = ?,
+          last_error = ?,
+          updated_at = ?
+        WHERE id = ? AND status = 'queued'
+      `).run(
+        next.status,
+        next.attemptCount,
+        next.availableAt,
+        next.leaseOwner ?? null,
+        next.leaseExpiresAt ?? null,
+        next.resultJson ?? null,
+        next.lastError ?? null,
+        next.updatedAt,
+        next.id
+      )
+
+      if (result.changes === 0) {
+        throw new Error(`Execution job ${next.id} was not claimable.`)
+      }
+
+      return next
+    })
+  }
+
+  async completeExecutionJob(input: CompleteExecutionJobInput) {
+    const now = input.now ?? new Date().toISOString()
+    return this.database.transaction((connection) => {
+      const row = connection.prepare("SELECT * FROM execution_jobs WHERE id = ?").get(input.id) as ExecutionJobRow | undefined
+      if (!row) {
+        throw new Error(`Execution job ${input.id} not found.`)
+      }
+      const next = completeRunningExecutionJob(executionJobFromRow(row), {
+        id: input.id,
+        leaseOwner: input.leaseOwner,
+        result: input.result,
+        now
+      })
+      if (next.resultJson === undefined) {
+        throw new Error("Execution job result must be JSON-serializable.")
+      }
+      const result = connection.prepare(`
+        UPDATE execution_jobs SET
+          status = ?,
+          result_json = ?,
+          lease_owner = NULL,
+          lease_expires_at = NULL,
+          last_error = NULL,
+          completed_at = ?,
+          updated_at = ?
+        WHERE id = ? AND status = 'running' AND lease_owner = ?
+      `).run(
+        next.status,
+        next.resultJson,
+        next.completedAt ?? null,
+        next.updatedAt,
+        next.id,
+        input.leaseOwner
+      )
+      if (result.changes === 0) {
+        throw new Error(`Execution job ${input.id} is not running under lease ${input.leaseOwner}.`)
+      }
+      return next
+    })
+  }
+
+  async failExecutionJob(input: FailExecutionJobInput) {
+    const now = input.now ?? new Date().toISOString()
+    return this.database.transaction((connection) => {
+      const row = connection.prepare("SELECT * FROM execution_jobs WHERE id = ?").get(input.id) as ExecutionJobRow | undefined
+      if (!row) {
+        throw new Error(`Execution job ${input.id} not found.`)
+      }
+      const next = failRunningExecutionJob(executionJobFromRow(row), {
+        id: input.id,
+        leaseOwner: input.leaseOwner,
+        error: input.error,
+        now
+      })
+      const result = connection.prepare(`
+        UPDATE execution_jobs SET
+          status = ?,
+          lease_owner = NULL,
+          lease_expires_at = NULL,
+          result_json = NULL,
+          last_error = ?,
+          completed_at = NULL,
+          updated_at = ?
+        WHERE id = ? AND status = 'running' AND lease_owner = ?
+      `).run(
+        next.status,
+        next.lastError ?? null,
+        next.updatedAt,
+        next.id,
+        input.leaseOwner
+      )
+      if (result.changes === 0) {
+        throw new Error(`Execution job ${input.id} is not running under lease ${input.leaseOwner}.`)
+      }
+      return next
+    })
+  }
+
+  async requeueExecutionJob(input: RequeueExecutionJobInput) {
+    const now = input.now ?? new Date().toISOString()
+    return this.database.transaction((connection) => {
+      const row = connection.prepare("SELECT * FROM execution_jobs WHERE id = ?").get(input.id) as ExecutionJobRow | undefined
+      if (!row) {
+        throw new Error(`Execution job ${input.id} not found.`)
+      }
+      const next = requeueFailedExecutionJob(executionJobFromRow(row), {
+        id: input.id,
+        now,
+        availableAt: input.availableAt
+      })
+      const result = connection.prepare(`
+        UPDATE execution_jobs SET
+          status = ?,
+          available_at = ?,
+          lease_owner = NULL,
+          lease_expires_at = NULL,
+          result_json = NULL,
+          last_error = NULL,
+          completed_at = NULL,
+          updated_at = ?
+        WHERE id = ? AND status = 'failed'
+      `).run(
+        next.status,
+        next.availableAt,
+        next.updatedAt,
+        next.id
+      )
+      if (result.changes === 0) {
+        throw new Error(`Execution job ${input.id} is not failed.`)
+      }
+      return next
+    })
+  }
+
+  async cancelExecutionJob(input: CancelExecutionJobInput) {
+    const now = input.now ?? new Date().toISOString()
+    return this.database.transaction((connection) => {
+      const row = connection.prepare("SELECT * FROM execution_jobs WHERE id = ?").get(input.id) as ExecutionJobRow | undefined
+      if (!row) {
+        throw new Error(`Execution job ${input.id} not found.`)
+      }
+      const next = cancelQueuedExecutionJob(executionJobFromRow(row), {
+        id: input.id,
+        now
+      })
+      const result = connection.prepare(`
+        UPDATE execution_jobs SET
+          status = ?,
+          lease_owner = NULL,
+          lease_expires_at = NULL,
+          result_json = NULL,
+          last_error = NULL,
+          completed_at = ?,
+          updated_at = ?
+        WHERE id = ? AND status = 'queued'
+      `).run(
+        next.status,
+        next.completedAt ?? null,
+        next.updatedAt,
+        next.id
+      )
+      if (result.changes === 0) {
+        throw new Error(`Execution job ${input.id} is not queued.`)
+      }
+      return next
+    })
+  }
+
+  async recoverExpiredExecutionJobs(input: RecoverExpiredExecutionJobsInput & { kind?: string; workflowRunId?: string } = {}) {
+    const now = input.now ?? new Date().toISOString()
+    return this.database.write((connection) =>
+      this.recoverExpiredExecutionJobsOnConnection(connection, { now, kind: input.kind, workflowRunId: input.workflowRunId })
+    )
+  }
+
+  private recoverExpiredExecutionJobsOnConnection(
+    connection: Database.Database,
+    input: { now: string; kind?: string; workflowRunId?: string }
+  ) {
+    const result = connection.prepare(`
+      UPDATE execution_jobs SET
+        status = 'queued',
+        available_at = ?,
+        lease_owner = NULL,
+        lease_expires_at = NULL,
+        result_json = NULL,
+        last_error = NULL,
+        completed_at = NULL,
+        updated_at = ?
+      WHERE status = 'running'
+        AND lease_expires_at IS NOT NULL
+        AND lease_expires_at <= ?
+        AND (? IS NULL OR kind = ?)
+        AND (? IS NULL OR workflow_run_id = ?)
+    `).run(
+      input.now,
+      input.now,
+      input.now,
+      input.kind ?? null,
+      input.kind ?? null,
+      input.workflowRunId ?? null,
+      input.workflowRunId ?? null
+    )
+    return result.changes
+  }
+
   private requireMemory(id: string) {
     const memory = this.getMemory(id)
     if (!memory) throw new Error(`Memory ${id} not found.`)
@@ -1688,6 +2060,26 @@ function eventFromRow(row: { id: string; event_type: string; actor: string; work
     payload: JSON.parse(row.payload_json) as Record<string, unknown>,
     idempotencyKey: row.idempotency_key ?? undefined,
     createdAt: row.created_at
+  }
+}
+
+function executionJobFromRow(row: ExecutionJobRow): ExecutionJob {
+  return {
+    id: row.id,
+    kind: row.kind,
+    workflowRunId: row.workflow_run_id ?? undefined,
+    payloadJson: row.payload_json,
+    idempotencyKey: row.idempotency_key,
+    status: row.status,
+    attemptCount: row.attempt_count,
+    availableAt: row.available_at,
+    leaseOwner: row.lease_owner ?? undefined,
+    leaseExpiresAt: row.lease_expires_at ?? undefined,
+    resultJson: row.result_json ?? undefined,
+    lastError: row.last_error ?? undefined,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    completedAt: row.completed_at ?? undefined
   }
 }
 

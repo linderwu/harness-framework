@@ -6,7 +6,7 @@ flowchart LR
   workflow["Workflow Run Routes<br/>Create/read/advance/stop/cancel workflow runs."]
   approval["Approval Gate Routes<br/>Apply approval decisions."]
   health["Protected Agent Health<br/>Probe authenticated Codex/OpenClaw bridge health."]
-  store["Workspace Store<br/>JSON-backed persistence."]
+  store["Workspace Store<br/>Configured data-dir persistence for SQLite and workflow JSON."]
   engine["Workflow Engine<br/>Creates/advances runs and decides gates."]
   codex["Codex Bridge<br/>Authenticated v0.3 health endpoint."]
   openclaw["OpenClaw Bridge<br/>Authenticated v0.3 health endpoint."]

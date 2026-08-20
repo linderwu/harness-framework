@@ -12,12 +12,12 @@ test("database initializes WAL schema and survives restart", async (t) => {
   const first = openHiveDatabase({ dataDir })
   assert.equal(first.health().status, "ready")
   assert.equal(first.pragma("journal_mode"), "wal")
-  assert.equal(first.schemaVersion(), 5)
+  assert.equal(first.schemaVersion(), 6)
   first.close()
 
   const second = openHiveDatabase({ dataDir })
   assert.equal(second.health().status, "ready")
-  assert.equal(second.schemaVersion(), 5)
+  assert.equal(second.schemaVersion(), 6)
   second.close()
 })
 
@@ -26,19 +26,22 @@ test("database opening with an explicit data directory does not mutate process-g
   t.after(() => rm(dataDir, { recursive: true, force: true }))
 
   const previousDataDir = process.env.JORMUNGAND_DATA_DIR
-  process.env.JORMUNGAND_DATA_DIR = "keep-existing-env"
-  t.after(() => {
-    if (previousDataDir === undefined) {
-      delete process.env.JORMUNGAND_DATA_DIR
-      return
-    }
-
-    process.env.JORMUNGAND_DATA_DIR = previousDataDir
+  const database = openHiveDatabase({
+    dataDir,
+    env: { JORMUNGAND_DATA_DIR: "keep-existing-env" }
   })
-
-  const database = openHiveDatabase({ dataDir })
   assert.equal(database.health().status, "ready")
-  assert.equal(process.env.JORMUNGAND_DATA_DIR, "keep-existing-env")
+  assert.equal(process.env.JORMUNGAND_DATA_DIR, previousDataDir)
+  database.close()
+})
+
+test("database without an explicit directory uses the configured env root", async (t) => {
+  const dataDir = await mkdtemp(join(tmpdir(), "jormungand-memory-"))
+  t.after(() => rm(dataDir, { recursive: true, force: true }))
+
+  const database = openHiveDatabase({ env: { JORMUNGAND_DATA_DIR: dataDir } })
+  assert.equal(database.health().status, "ready")
+  assert.equal(database.health().path, join(dataDir, "hive-memory.sqlite"))
   database.close()
 })
 

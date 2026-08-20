@@ -119,7 +119,7 @@ test("schema v5 adds recipient_agent and preserves conversation rows while round
     await rm(dataDir, { recursive: true, force: true })
   })
 
-  assert.equal(database.schemaVersion(), 5)
+  assert.equal(database.schemaVersion(), 6)
   const migratedColumns = database.read((connection) =>
     connection.prepare("PRAGMA table_info(conversation_entries)").all() as Array<{ name: string }>
   )

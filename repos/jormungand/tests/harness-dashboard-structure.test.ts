@@ -112,6 +112,41 @@ test("workflow mutation errors surface failed-run diagnostics", () => {
   assert.match(route, /\{ error: message, latestRun: failedRun \}/)
 })
 
+test("workflow creation clients retain queued job ids instead of assuming immediate runs", () => {
+  assert.match(dashboard, /response\.status === 202/)
+  assert.match(dashboard, /jobId/)
+  assert.match(dashboard, /queued/)
+  assert.match(dashboard, /reportWorkflowRunJobResult\(run, undefined, "Workflow run"\)/)
+})
+
+test("workflow actions keep durable job envelopes out of run selection", () => {
+  assert.match(
+    dashboard,
+    /type WorkflowRunJobStatus = "queued" \| "running" \| "completed" \| "failed" \| "canceled"/
+  )
+  assert.match(dashboard, /function isWorkflowRunJobResult\(result: unknown\)/)
+  assert.match(dashboard, /if \(isWorkflowRunJobResult\(data\)\) \{\s*return data/)
+  assert.match(dashboard, /function reportWorkflowRunJobResult\(/)
+  assert.match(dashboard, /result\.status === "failed"/)
+  assert.match(dashboard, /result\.jobId/)
+  assert.match(dashboard, /reportWorkflowRunJobResult\(run, undefined, "Workflow run"\)/)
+  assert.match(dashboard, /reportWorkflowRunJobResult\(run, runId, "Workflow run update"\)/)
+  assert.match(dashboard, /reportWorkflowRunJobResult\(nextRun, run\.id, "Workflow run cancellation"\)/)
+  assert.match(dashboard, /reportWorkflowRunJobResult\(run, selectedRun\?\.id, "Approval gate decision"\)/)
+})
+
+test("workflow run submissions send idempotency keys", () => {
+  assert.match(
+    dashboard,
+    /function createWorkflowRunIdempotencyKey\(\) \{\s*return \(\s*globalThis\.crypto\?\.randomUUID\?\.\(\)/
+  )
+  assert.match(dashboard, /workflow-run-\$\{Date\.now\(\)\}/)
+  assert.equal(
+    (dashboard.match(/"Idempotency-Key": createWorkflowRunIdempotencyKey\(\)/g) ?? []).length,
+    2
+  )
+})
+
 test("bridge status panel polls quotas and forwards only codex quota to the Arceus row", () => {
   const panel = functionBody("BridgeStatusPanel")
   const card = functionBody("BridgeStatusCard")
@@ -255,6 +290,10 @@ test("task conversation is durable, targeted, and polls only while pending", () 
   assert.match(conversationSource, /\/conversation/)
   assert.match(conversationSource, /artifactIds/)
   assert.match(conversationSource, /memoryIds/)
+  assert.match(conversationSource, /response\.status === 202/)
+  assert.match(conversationSource, /jobId/)
+  assert.match(conversationSource, /queued/)
+  assert.match(conversationSource, /setStatusMessage\(/)
 })
 
 test("conversation composer sends on Enter but preserves Shift+Enter and IME composition", () => {

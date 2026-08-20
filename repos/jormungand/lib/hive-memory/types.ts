@@ -234,3 +234,83 @@ export interface UpdateA2ATaskInput {
   errorMessage?: string
   completedAt?: string
 }
+
+export type ExecutionJobStatus = "queued" | "running" | "completed" | "failed" | "canceled"
+
+export type ExecutionJobJsonValue =
+  | null
+  | boolean
+  | number
+  | string
+  | readonly ExecutionJobJsonValue[]
+  | { readonly [key: string]: ExecutionJobJsonValue }
+
+export interface ExecutionJob {
+  id: string
+  kind: string
+  workflowRunId?: string
+  payloadJson: string
+  idempotencyKey: string
+  status: ExecutionJobStatus
+  attemptCount: number
+  availableAt: string
+  leaseOwner?: string
+  leaseExpiresAt?: string
+  resultJson?: string
+  lastError?: string
+  createdAt: string
+  updatedAt: string
+  completedAt?: string
+}
+
+export interface CreateExecutionJobInput {
+  kind: string
+  workflowRunId?: string
+  payload: ExecutionJobJsonValue
+  idempotencyKey: string
+  availableAt?: string
+}
+
+export interface ClaimNextExecutionJobInput {
+  leaseOwner: string
+  leaseDurationMs: number
+  now?: string
+  kind?: string
+  workflowRunId?: string
+}
+
+export interface ClaimExecutionJobInput {
+  id: string
+  leaseOwner: string
+  leaseDurationMs: number
+  now?: string
+}
+
+export interface CompleteExecutionJobInput {
+  id: string
+  leaseOwner: string
+  result: ExecutionJobJsonValue
+  now?: string
+}
+
+export interface FailExecutionJobInput {
+  id: string
+  leaseOwner: string
+  error: string
+  now?: string
+}
+
+export interface RequeueExecutionJobInput {
+  id: string
+  now?: string
+  availableAt?: string
+}
+
+export interface CancelExecutionJobInput {
+  id: string
+  now?: string
+}
+
+export interface RecoverExpiredExecutionJobsInput {
+  now?: string
+}
