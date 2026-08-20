@@ -328,6 +328,13 @@ function bridgeResponseToAgentResult(
   source: AgentArtifactResult["source"],
   idempotencyKey: string
 ): AgentArtifactResult {
+  const output =
+    typeof data.output === "string"
+      ? data.output
+      : data.error ||
+        data.stderr ||
+        "Codex bridge completed without a final message."
+
   return {
     status: data.status === "failed" ? "failed" : "completed",
     source,
@@ -337,11 +344,7 @@ function bridgeResponseToAgentResult(
     artifacts: data.artifacts,
     capabilities: data.capabilities,
     runtimeSkillBundleResults: data.runtimeSkillBundleResults,
-    body:
-      data.output?.trim() ||
-      data.error ||
-      data.stderr ||
-      "Codex bridge completed without a final message."
+    body: output
   }
 }
 

@@ -1210,7 +1210,9 @@ function stripThinkBlocks(value) {
 function extractStructuredPayloadText(record) {
   return Array.isArray(record?.result?.payloads)
     ? record.result.payloads
-        .map((payload) => normalizeBoundedStructuredText(payload?.text))
+        .map((payload) =>
+          normalizeBoundedStructuredText(stripThinkBlocks(payload?.text))
+        )
         .filter(Boolean)
         .join("\n")
     : undefined

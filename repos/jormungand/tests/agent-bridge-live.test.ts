@@ -653,3 +653,34 @@ test("preserves exact assistant delta whitespace from bridge live records", { co
   assert.equal(assistantDelta.text, " hello \n")
   assert.equal(assistantDelta.delta, " hello \n")
 })
+
+test("preserves exact bridge output whitespace in the final result body", { concurrency: false }, async (t) => {
+  restoreEnv(t, "OPENCLAW_BRIDGE_URL")
+  process.env.OPENCLAW_BRIDGE_URL = "http://openclaw.test"
+
+  installLiveHooks(t)
+
+  __setAgentBridgeTestHooks({
+    fetch: async () =>
+      jsonResponse({
+        id: "bridge-run-output-whitespace",
+        status: "completed",
+        output: " hello \n",
+        statusMessage: "OpenClaw completed."
+      })
+  })
+
+  const result = await invokeConfiguredAgent({
+    run: createOpenClawRun(),
+    executor: "openclaw.rowlet",
+    stage: "implementation",
+    artifactType: "log",
+    title: "Preserve bridge output whitespace",
+    fallbackBody: "fallback",
+    skill: liveSkill,
+    conversationId: "conversation:output-whitespace"
+  })
+
+  assert.equal(result.status, "completed")
+  assert.equal(result.body, " hello \n")
+})

@@ -222,6 +222,10 @@ async function createFakeDocker(t: TestContext) {
       '  writeLine({ text: "<think>private analysis</think> hello \\n" })',
       "}",
       "",
+      "async function runStructuredPayloadWithThinkBlock() {",
+      '  writeLine({ result: { payloads: [{ text: "<think>private</think>visible" }] } })',
+      "}",
+      "",
       "async function runStructuredWhitespaceOnlyText() {",
       '  writeLine({ reasoning_content: "private reasoning" })',
       '  writeLine({ request: { prompt: "do not leak this request" }, toolArgs: { command: "do not leak this tool" } })',
@@ -266,6 +270,11 @@ async function createFakeDocker(t: TestContext) {
       "",
       '  if (mode === "structured-leading-trailing-text") {',
       "    await runStructuredLeadingTrailingText()",
+      "    return",
+      "  }",
+      "",
+      '  if (mode === "structured-payload-with-think-block") {',
+      "    await runStructuredPayloadWithThinkBlock()",
       "    return",
       "  }",
       "",
@@ -645,6 +654,32 @@ test("OpenClaw bridge preserves exact leading and trailing whitespace for struct
         event.type === "assistant_delta" && event.delta === " hello \n"
     )
   )
+})
+
+test("OpenClaw bridge strips closed think blocks from structured payload text", { concurrency: false }, async (t) => {
+  const { commandDir, fixturePath } = await createFakeDocker(t)
+  const commandPath = `${commandDir};${process.env.Path ?? process.env.PATH ?? ""}`
+  const { baseUrl } = await startBridge(t, {
+    PATH: commandPath,
+    Path: commandPath,
+    FAKE_DOCKER_MODE: "structured-payload-with-think-block",
+    OPENCLAW_DOCKER_COMMAND: JSON.stringify([process.execPath, fixturePath])
+  })
+
+  const runResponse = await postRun(baseUrl, {
+    protocolVersion: "harness-agent-bridge/v0.3",
+    idempotencyKey: "structured-payload-with-think-block",
+    workflowRunId: "workflow-structured-payload-with-think-block",
+    executor: "openclaw.rowlet",
+    title: "Structured payload text strips think blocks",
+    requirement: "Verify closed think blocks are removed from final payload text."
+  })
+
+  assert.equal(runResponse.status, 200)
+  const completedRun = await runResponse.json()
+  assert.equal(completedRun.status, "completed")
+  assert.equal(completedRun.output, "visible")
+  assert.equal(completedRun.output.includes("private"), false)
 })
 
 test("OpenClaw bridge keeps whitespace-only structured assistant text without falling back to raw private JSON", { concurrency: false }, async (t) => {
