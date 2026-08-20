@@ -394,6 +394,11 @@ function createOpenClawLiveRelay(
   let cursor = 0
   let stopped = false
   let terminalPublished = false
+  let activePollController: AbortController | undefined
+
+  function shouldStopPolling() {
+    return stopped || terminalPublished
+  }
 
   function publishEvent(payload: {
     id?: string
@@ -427,13 +432,15 @@ function createOpenClawLiveRelay(
   async function pollLiveEvents() {
     const deadline = runtime.now() + runtime.livePollTimeoutMs
 
-    while (!stopped && runtime.now() < deadline) {
+    while (!shouldStopPolling() && runtime.now() < deadline) {
       await runtime.sleep(runtime.livePollIntervalMs)
 
-      if (stopped || runtime.now() >= deadline) {
+      if (shouldStopPolling() || runtime.now() >= deadline) {
         return
       }
 
+      const pollController = new AbortController()
+      activePollController = pollController
       const response = await runtime
         .fetch(
           new URL(
@@ -441,19 +448,33 @@ function createOpenClawLiveRelay(
             normalizeUrl(bridgeUrl)
           ),
           {
-            headers: createBridgeHeaders(input.executor, idempotencyKey)
+            headers: createBridgeHeaders(input.executor, idempotencyKey),
+            signal: pollController.signal
           }
         )
         .catch(() => undefined)
+      if (activePollController === pollController) {
+        activePollController = undefined
+      }
+
+      if (shouldStopPolling()) {
+        return
+      }
 
       if (!response || response.status === 404 || !response.ok) {
         return
       }
 
       const data = (await response.json().catch(() => ({}))) as BridgeLiveEventsResponse
+      if (shouldStopPolling()) {
+        return
+      }
       const highestSequence = publishBridgeEvents(
         Array.isArray(data.events) ? data.events : []
       )
+      if (shouldStopPolling()) {
+        return
+      }
       const nextCursor = readNonNegativeInteger(data.nextCursor)
 
       if (nextCursor !== undefined && nextCursor > cursor) {
@@ -462,7 +483,11 @@ function createOpenClawLiveRelay(
         cursor = highestSequence
       }
 
-      if (data.status === "completed" || data.status === "failed") {
+      if (
+        terminalPublished ||
+        data.status === "completed" ||
+        data.status === "failed"
+      ) {
         return
       }
     }
@@ -514,6 +539,8 @@ function createOpenClawLiveRelay(
     },
     publishFinal(result) {
       stopped = true
+      activePollController?.abort()
+      activePollController = undefined
 
       if (terminalPublished) {
         return
@@ -546,6 +573,9 @@ function normalizeBridgeLiveRecord(
   }
 
   try {
+    const textReader =
+      type === "assistant_delta" ? readOptionalRawString : readOptionalString
+
     return {
       originalSequence,
       event: normalizeAgentLiveEvent({
@@ -554,8 +584,8 @@ function normalizeBridgeLiveRecord(
         conversationId: context.conversationId,
         agentId: context.agentId,
         type,
-        message: readOptionalString(value.message),
-        text: readOptionalString(value.text),
+        message: textReader(value.message),
+        text: textReader(value.text),
         delta: typeof value.delta === "string" ? value.delta : undefined,
         createdAt: readOptionalString(value.createdAt),
         metadata: context.metadata
@@ -581,6 +611,14 @@ function readOptionalString(value: unknown) {
 
   const text = value.trim()
   return text ? text : undefined
+}
+
+function readOptionalRawString(value: unknown) {
+  if (typeof value !== "string" || value.length === 0) {
+    return undefined
+  }
+
+  return value
 }
 
 function readNonNegativeInteger(value: unknown) {

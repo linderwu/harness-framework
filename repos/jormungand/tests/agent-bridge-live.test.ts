@@ -402,3 +402,161 @@ test("does not duplicate the terminal live event when the bridge already supplie
     .events.filter((event) => event.type === "completed")
   assert.equal(terminalEvents.length, 1)
 })
+
+test("ignores a late in-flight events response after the final POST completes and aborts the poll when possible", { concurrency: false }, async (t) => {
+  restoreEnv(t, "OPENCLAW_BRIDGE_URL")
+  process.env.OPENCLAW_BRIDGE_URL = "http://openclaw.test"
+
+  const bus = installLiveHooks(t)
+  const deferredEventsResponse = createDeferred<Response>()
+  let eventsAbortSignal: AbortSignal | undefined
+  let eventsAbortCount = 0
+
+  __setAgentBridgeTestHooks({
+    fetch: async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url === "http://openclaw.test/agent-runs") {
+        return jsonResponse({
+          id: "bridge-run-late-events",
+          status: "completed",
+          output: "Final answer",
+          statusMessage: "OpenClaw completed."
+        })
+      }
+
+      eventsAbortSignal = init?.signal ?? undefined
+      if (eventsAbortSignal) {
+        eventsAbortSignal.addEventListener("abort", () => {
+          eventsAbortCount += 1
+        }, { once: true })
+      }
+
+      return deferredEventsResponse.promise
+    }
+  })
+
+  const invokePromise = invokeConfiguredAgent({
+    run: createOpenClawRun(),
+    executor: "openclaw.rowlet",
+    stage: "implementation",
+    artifactType: "log",
+    title: "Ignore late in-flight events",
+    fallbackBody: "fallback",
+    skill: liveSkill,
+    conversationId: "conversation:late-events"
+  })
+
+  await waitFor(() => eventsAbortSignal !== undefined)
+
+  const result = await invokePromise
+  assert.equal(result.status, "completed")
+  assert.equal(result.body, "Final answer")
+
+  await waitFor(() => eventsAbortSignal?.aborted === true)
+  assert.equal(eventsAbortCount, 1)
+
+  deferredEventsResponse.resolve(
+    jsonResponse({
+      status: "completed",
+      nextCursor: 3,
+      events: [
+        { id: "bridge-reasoning-late", sequence: 2, type: "reasoning", text: "Late reasoning must be ignored" },
+        { id: "bridge-completed-late", sequence: 3, type: "completed", message: "Late completed must be ignored" }
+      ]
+    })
+  )
+
+  await new Promise((resolve) => setTimeout(resolve, 0))
+
+  const snapshot = bus.getSnapshot("conversation:late-events")
+  assert.deepEqual(
+    snapshot.events.map((event) => event.type),
+    ["started", "completed"]
+  )
+  assert.equal(
+    snapshot.events.some(
+      (event) =>
+        event.type === "reasoning" &&
+        event.text === "Late reasoning must be ignored"
+    ),
+    false
+  )
+  assert.equal(
+    snapshot.events.filter((event) => event.type === "completed").length,
+    1
+  )
+})
+
+test("preserves exact assistant delta whitespace from bridge live records", { concurrency: false }, async (t) => {
+  restoreEnv(t, "OPENCLAW_BRIDGE_URL")
+  process.env.OPENCLAW_BRIDGE_URL = "http://openclaw.test"
+
+  const bus = installLiveHooks(t)
+  const postResponse = createDeferred<Response>()
+
+  __setAgentBridgeTestHooks({
+    fetch: async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url === "http://openclaw.test/agent-runs") {
+        return postResponse.promise
+      }
+
+      return jsonResponse({
+        status: "completed",
+        nextCursor: 3,
+        events: [
+          {
+            id: "bridge-delta-whitespace",
+            sequence: 2,
+            type: "assistant_delta",
+            message: "\n",
+            text: " hello \n",
+            delta: " hello \n"
+          },
+          {
+            id: "bridge-completed-whitespace",
+            sequence: 3,
+            type: "completed",
+            message: "Bridge completed"
+          }
+        ]
+      })
+    }
+  })
+
+  const invokePromise = invokeConfiguredAgent({
+    run: createOpenClawRun(),
+    executor: "openclaw.rowlet",
+    stage: "implementation",
+    artifactType: "log",
+    title: "Preserve assistant delta whitespace",
+    fallbackBody: "fallback",
+    skill: liveSkill,
+    conversationId: "conversation:delta-whitespace"
+  })
+
+  await waitFor(() =>
+    bus
+      .getSnapshot("conversation:delta-whitespace")
+      .events.some((event) => event.type === "assistant_delta")
+  )
+
+  postResponse.resolve(
+    jsonResponse({
+      id: "bridge-run-delta-whitespace",
+      status: "completed",
+      output: "Final answer"
+    })
+  )
+
+  const result = await invokePromise
+  assert.equal(result.status, "completed")
+
+  const assistantDelta = bus
+    .getSnapshot("conversation:delta-whitespace")
+    .events.find((event) => event.type === "assistant_delta")
+  assert.ok(assistantDelta)
+  assert.equal(assistantDelta.message, "\n")
+  assert.equal(assistantDelta.text, " hello \n")
+  assert.equal(assistantDelta.delta, " hello \n")
+})
