@@ -104,7 +104,7 @@ export function normalizeAgentLiveEvent(input: unknown): AgentLiveEvent
 export function extractReasoningText(input: unknown): string | undefined
 ```
 
-The implementation must trim and cap strings, allow only declared metadata keys, require non-empty conversation and agent ids, and throw for unsupported event types. `extractReasoningText` prefers explicit `reasoning`, `thinking`, or `reasoning_content`; closed `<think>...</think>` is a fallback.
+The implementation must trim identity/ordinary display strings and cap all text, preserve exact whitespace for `assistant_delta` delta/text/message payloads, allow only declared metadata keys, require a non-empty conversation id and agent id, and throw for unsupported event types. `extractReasoningText` prefers explicit `reasoning`, `thinking`, or `reasoning_content`; closed `<think>...</think>` is a fallback.
 
 - [ ] **Step 4: Run focused tests and existing event-related tests.**
 
@@ -341,4 +341,3 @@ git commit -m "Document OpenClaw live event limitations" -m "Explain the optiona
 ## Completion handoff
 
 After all tasks are complete, dispatch a final code-review subagent against `main...HEAD`. Resolve every Critical or Important finding, rerun the full verification gate, then use the finishing-a-development-branch workflow to merge the feature branch into `main`, verify the merged result, push `main` to `origin`, and report the pushed commit SHA. Preserve unrelated dirty changes that were present on the original `main` worktree.
-
