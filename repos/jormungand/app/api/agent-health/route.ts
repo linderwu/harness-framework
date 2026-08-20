@@ -3,7 +3,7 @@ import { NextResponse } from "next/server"
 type BridgeHealthStatus = "online" | "offline"
 
 interface BridgeHealth {
-  id: "codex-bridge" | "openclaw-bridge"
+  id: "codex-bridge" | "openclaw-bridge" | "minimax-bridge"
   label: string
   status: BridgeHealthStatus
   urlHost: string
@@ -29,6 +29,14 @@ export async function GET() {
       token:
         process.env.OPENCLAW_BRIDGE_TOKEN?.trim() ||
         process.env.OPENCLAW_GATEWAY_TOKEN?.trim()
+    }),
+    createHttpBridgeCheck({
+      id: "minimax-bridge",
+      label: "minimax Bridge",
+      url: process.env.MINIMAX_BRIDGE_URL,
+      token:
+        process.env.MINIMAX_BRIDGE_TOKEN?.trim() ||
+        process.env.MINIMAX_GATEWAY_TOKEN?.trim()
     })
   ].filter((check): check is HttpBridgeCheck => Boolean(check))
   const bridges = await Promise.all(bridgeChecks.map(checkHttpBridge))

@@ -89,6 +89,12 @@ export async function invokeConfiguredAgent(
     return invokeOpenClawA2A(input, a2aCommand, idempotencyKey)
   }
 
+  const minimaxA2ACommand = getMinimaxA2ACommand(input.executor)
+
+  if (minimaxA2ACommand) {
+    return invokeMinimaxA2A(input, minimaxA2ACommand, idempotencyKey)
+  }
+
   const bridgeUrl = getAgentBridgeUrl(input.executor)
   const source = getBridgeSource(input.executor)
 
@@ -348,6 +354,10 @@ function getConfiguredBridgeProtocol(agent: AgentKind) {
     return process.env.OPENCLAW_BRIDGE_PROTOCOL_VERSION ?? bridgeProtocolV3
   }
 
+  if (profile.family === "minimax") {
+    return process.env.MINIMAX_BRIDGE_PROTOCOL_VERSION ?? bridgeProtocolV3
+  }
+
   if (profile.family === "codex") {
     return process.env.CODEX_BRIDGE_PROTOCOL_VERSION ?? bridgeProtocolV3
   }
@@ -407,6 +417,55 @@ async function invokeOpenClawA2A(
     return {
       status: "failed",
       source: "openclaw-a2a",
+      externalRunId: idempotencyKey,
+      idempotencyKey,
+      body: `${profile.label} A2A command failed: ${formatError(error)}`
+    }
+  }
+}
+
+async function invokeMinimaxA2A(
+  input: AgentInvocationInput,
+  command: string,
+  idempotencyKey: string
+): Promise<AgentArtifactResult> {
+  const profile = getAgentProfile(input.executor)
+  const model = process.env.MINIMAX_A2A_MODEL ?? "minimax/MiniMax-M2.7"
+  const sessionKey = `minimax:${profile.id}:${input.run.id}`
+
+  try {
+    const result = await runCommandWithStdin(command, JSON.stringify({
+      agent: profile.id,
+      model,
+      sessionKey,
+      idempotencyKey,
+      prompt: input.fallbackBody,
+      workflowRunId: input.run.id,
+      stage: input.stage,
+      skillId: input.skill.id
+    }), {
+      MINIMAX_A2A_AGENT: profile.id,
+      MINIMAX_A2A_MODEL: model,
+      MINIMAX_A2A_SESSION_KEY: sessionKey
+    })
+    return {
+      status: result.exitCode === 0 ? "completed" : "failed",
+      source: "minimax-a2a",
+      externalRunId: idempotencyKey,
+      idempotencyKey,
+      statusMessage:
+        result.exitCode === 0
+          ? `minimax A2A session ${sessionKey} replied.`
+          : `minimax A2A command exited with ${result.exitCode}.`,
+      body:
+        result.stdout.trim() ||
+        result.stderr.trim() ||
+        "minimax A2A completed without a final message."
+    }
+  } catch (error) {
+    return {
+      status: "failed",
+      source: "minimax-a2a",
       externalRunId: idempotencyKey,
       idempotencyKey,
       body: `${profile.label} A2A command failed: ${formatError(error)}`
@@ -490,7 +549,7 @@ function createMissingBridgeResult(
   return {
     status: "failed",
     source,
-    body: `${getAgentProfile(input.executor).label} has no configured bridge. Set CODEX_BRIDGE_URL, OPENCLAW_BRIDGE_URL, or OPENCLAW_A2A_COMMAND.`
+    body: `${getAgentProfile(input.executor).label} has no configured bridge. Set CODEX_BRIDGE_URL, OPENCLAW_BRIDGE_URL, OPENCLAW_A2A_COMMAND, MINIMAX_BRIDGE_URL, or MINIMAX_A2A_COMMAND.`
   }
 }
 
@@ -514,6 +573,8 @@ function createBridgeHeaders(agent: AgentKind = "codex", idempotencyKey?: string
   const token =
     profile.family === "openclaw"
       ? getOpenClawBridgeToken()
+      : profile.family === "minimax"
+      ? getMinimaxBridgeToken()
       : process.env.CODEX_BRIDGE_TOKEN
 
   if (token) {
@@ -535,6 +596,14 @@ function getOpenClawBridgeToken() {
   )
 }
 
+function getMinimaxBridgeToken() {
+  return (
+    process.env.MINIMAX_BRIDGE_TOKEN?.trim() ||
+    process.env.MINIMAX_GATEWAY_TOKEN?.trim() ||
+    undefined
+  )
+}
+
 function getAgentBridgeUrl(agent: AgentKind) {
   const profile = getAgentProfile(agent)
 
@@ -544,6 +613,10 @@ function getAgentBridgeUrl(agent: AgentKind) {
 
   if (profile.family === "openclaw") {
     return process.env.OPENCLAW_BRIDGE_URL
+  }
+
+  if (profile.family === "minimax") {
+    return process.env.MINIMAX_BRIDGE_URL
   }
 
   return undefined
@@ -557,6 +630,16 @@ function getOpenClawA2ACommand(agent: AgentKind) {
   }
 
   return process.env.OPENCLAW_A2A_COMMAND
+}
+
+function getMinimaxA2ACommand(agent: AgentKind) {
+  const profile = getAgentProfile(agent)
+
+  if (profile.family !== "minimax") {
+    return undefined
+  }
+
+  return process.env.MINIMAX_A2A_COMMAND
 }
 
 type OpenClawSessionHelper = {
@@ -604,9 +687,10 @@ async function loadOpenClawSessionHelper() {
 }
 
 function getBridgeSource(agent: AgentKind): AgentArtifactResult["source"] {
-  return getAgentProfile(agent).family === "openclaw"
-    ? "openclaw-bridge"
-    : "codex-bridge"
+  const family = getAgentProfile(agent).family
+  if (family === "openclaw") return "openclaw-bridge"
+  if (family === "minimax") return "minimax-bridge"
+  return "codex-bridge"
 }
 
 function getIntakeSource(agent: AgentKind): AgentArtifactResult["source"] {

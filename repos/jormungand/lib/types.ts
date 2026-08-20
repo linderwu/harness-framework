@@ -153,6 +153,8 @@ export type OpenClawMainAgent =
 
 export type AgentKind =
   | "codex"
+  | "minimax"
+  | "mavis"
   | `openclaw.${OpenClawMainAgent}`
 
 export type CodexReasoningIntensity = "low" | "medium" | "high" | "auto"
@@ -224,6 +226,8 @@ export type AgentRunSource =
   | "codex-bridge"
   | "openclaw-bridge"
   | "openclaw-a2a"
+  | "minimax-bridge"
+  | "minimax-a2a"
 
 export type RevisionStatus =
   | "requested"

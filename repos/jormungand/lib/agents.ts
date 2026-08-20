@@ -1,6 +1,6 @@
 import type { AgentKind, OpenClawMainAgent } from "./types"
 
-export type AgentFamily = "codex" | "openclaw"
+export type AgentFamily = "codex" | "openclaw" | "minimax"
 
 export interface AgentProfile {
   id: AgentKind
@@ -11,12 +11,23 @@ export interface AgentProfile {
 
 export const defaultAgentKind: AgentKind = "codex"
 export const defaultOpenClawAgentKind: AgentKind = "openclaw.rowlet"
+export const defaultMinimaxAgentKind: AgentKind = "minimax"
 
 export const agentProfiles = [
   {
     id: "codex",
     label: "Arceus",
     family: "codex"
+  },
+  {
+    id: "minimax",
+    label: "minimax",
+    family: "minimax"
+  },
+  {
+    id: "mavis",
+    label: "Lucky",
+    family: "minimax"
   },
   {
     id: "openclaw.rowlet",

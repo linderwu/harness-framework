@@ -6,6 +6,7 @@ import {
   Bot,
   Check,
   ChevronDown,
+  ChevronLeft,
   ChevronRight,
   CircleDot,
   ClipboardList,
@@ -49,6 +50,7 @@ import {
 } from "@/lib/agents"
 import type {
   AgentKind,
+  ApprovalActorType,
   ApprovalGate,
   CodexReasoningIntensity,
   HarnessState,
@@ -128,7 +130,7 @@ const workflowSetupStoragePrefix = "jormungand.workflowSetupProfiles.v2"
 type ApprovalDecision = "approved" | "rejected" | "changes_requested"
 type BridgeHealthStatus = "online" | "offline"
 type BridgePanelStatus = BridgeHealthStatus | "checking" | "stale"
-type BridgeId = "codex-bridge" | "openclaw-bridge"
+type BridgeId = "codex-bridge" | "openclaw-bridge" | "minimax-bridge"
 type MobilePanel = "modes" | "navigation" | "monitoring"
 
 interface BridgeHealth {
@@ -269,37 +271,6 @@ function splitLines(value: string) {
   return value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
 }
 
-function createWorkflowRunIdempotencyKey() {
-  return (
-    globalThis.crypto?.randomUUID?.() ??
-    `workflow-run-${Date.now()}-${Math.random().toString(36).slice(2)}`
-  )
-}
-
-type WorkflowRunJobStatus = "queued" | "running" | "completed" | "failed" | "canceled"
-
-type WorkflowRunJobResult = {
-  status: WorkflowRunJobStatus
-  jobId: string
-  error?: string
-}
-
-function isWorkflowRunJobResult(result: unknown): result is WorkflowRunJobResult {
-  if (typeof result !== "object" || result === null || !("status" in result) || !("jobId" in result)) {
-    return false
-  }
-
-  const candidate = result as { status?: unknown; jobId?: unknown }
-  return (
-    typeof candidate.jobId === "string" &&
-    (candidate.status === "queued" ||
-      candidate.status === "running" ||
-      candidate.status === "completed" ||
-      candidate.status === "failed" ||
-      candidate.status === "canceled")
-  )
-}
-
 export function HarnessDashboard({
   initialState,
   initialHiveHealth
@@ -317,10 +288,8 @@ export function HarnessDashboard({
   const [isMutating, setIsMutating] = useState(false)
   const [isNavigationExpanded, setIsNavigationExpanded] = useState(true)
   const [isMonitoringExpanded, setIsMonitoringExpanded] = useState(true)
-  const [codexActivityMount, setCodexActivityMount] = useState<HTMLDivElement | null>(null)
   const [mobilePanel, setMobilePanel] = useState<MobilePanel>()
   const [mutationError, setMutationError] = useState<string | undefined>()
-  const [mutationNotice, setMutationNotice] = useState<string | undefined>()
 	  const [conversationEntries, setConversationEntries] = useState<ConversationEntry[]>([])
 	  const [conversationVersion, setConversationVersion] = useState(0)
 	  const [openComposeSection, setOpenComposeSection] = useState<
@@ -340,9 +309,11 @@ export function HarnessDashboard({
 	      successCriteria: "",
 	      constraints: "",
 	      nonGoals: "",
-      contextFiles: [] as ProjectContextFile[],
-      selectedAgent: savedProfile.selectedAgent,
-      stageAssignments: savedProfile.stageAssignments
+	      contextFiles: [] as ProjectContextFile[],
+	      selectedAgent: savedProfile.selectedAgent,
+	      stageAssignments: savedProfile.stageAssignments,
+	      designApprovalActor: "independent_agent" as ApprovalActorType,
+	      verificationApprovalActor: "verification_subagent" as ApprovalActorType
 	    }
 	  })
 
@@ -478,7 +449,6 @@ export function HarnessDashboard({
     event.preventDefault()
     setIsMutating(true)
     setMutationError(undefined)
-    setMutationNotice(undefined)
 
     try {
       const response = await fetch("/api/projects", {
@@ -494,17 +464,14 @@ export function HarnessDashboard({
           nonGoals: splitLines(form.nonGoals),
           contextFiles: form.contextFiles
         })
-          })
+      })
       const project = await readProjectMutationResponse(response)
       const codexProfile = getCodexProfileForProject(project.id)
       const run = isAgentTask
         ? await readRunMutationResponse(
             await fetch(`/api/projects/${project.id}/workflow-runs`, {
               method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                "Idempotency-Key": createWorkflowRunIdempotencyKey()
-              },
+              headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
                 selectedAgent: form.selectedAgent,
                 ...codexProfile
@@ -515,11 +482,7 @@ export function HarnessDashboard({
 
       await refreshWorkspace()
       setSelectedProjectId(project.id)
-      if (run && isWorkflowRunJobResult(run)) {
-        reportWorkflowRunJobResult(run, undefined, "Workflow run creation")
-      } else {
-        setSelectedRunId(run?.id)
-      }
+      setSelectedRunId(run?.id)
     } catch (error) {
       setMutationError(error instanceof Error ? error.message : String(error))
     } finally {
@@ -548,30 +511,24 @@ export function HarnessDashboard({
   async function startProjectRun(project: Project) {
     setIsMutating(true)
     setMutationError(undefined)
-    setMutationNotice(undefined)
 
     try {
       const response = await fetch(`/api/projects/${project.id}/workflow-runs`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Idempotency-Key": createWorkflowRunIdempotencyKey()
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           selectedAgent: form.selectedAgent,
           ...getCodexProfileForProject(project.id),
           skillAssignments: stageAssignmentsMap,
-          stageAssignments: form.stageAssignments
+          stageAssignments: form.stageAssignments,
+          designApprovalActor: form.designApprovalActor,
+          verificationApprovalActor: form.verificationApprovalActor
         })
       })
       const run = await readRunMutationResponse(response)
       await refreshWorkspace()
       setSelectedProjectId(project.id)
-      if (isWorkflowRunJobResult(run)) {
-        reportWorkflowRunJobResult(run, undefined, "Workflow run")
-      } else {
-        setSelectedRunId(run.id)
-      }
+      setSelectedRunId(run.id)
     } catch (error) {
       setMutationError(error instanceof Error ? error.message : String(error))
     } finally {
@@ -581,35 +538,23 @@ export function HarnessDashboard({
 
   async function advanceRun(runId: string) {
     setIsMutating(true)
-    setMutationError(undefined)
-    setMutationNotice(undefined)
     const response = await fetch(`/api/workflow-runs/${runId}/advance`, {
       method: "POST"
     })
     const run = await readRunMutationResponse(response)
     await refreshWorkspace()
-    if (isWorkflowRunJobResult(run)) {
-      reportWorkflowRunJobResult(run, runId, "Workflow run update")
-    } else {
-      setSelectedRunId(run.id)
-    }
+    setSelectedRunId(run.id)
     setIsMutating(false)
   }
 
   async function stopRun(runId: string) {
     setIsMutating(true)
-    setMutationError(undefined)
-    setMutationNotice(undefined)
     const response = await fetch(`/api/workflow-runs/${runId}/stop`, {
       method: "POST"
     })
     const run = await readRunMutationResponse(response)
     await refreshWorkspace()
-    if (isWorkflowRunJobResult(run)) {
-      reportWorkflowRunJobResult(run, runId, "Workflow run update")
-    } else {
-      setSelectedRunId(run.id)
-    }
+    setSelectedRunId(run.id)
     setIsMutating(false)
   }
 
@@ -623,18 +568,10 @@ export function HarnessDashboard({
     }
 
     setIsMutating(true)
-    setMutationError(undefined)
-    setMutationNotice(undefined)
-    const response = await fetch(`/api/workflow-runs/${run.id}/cancel`, {
+    await fetch(`/api/workflow-runs/${run.id}/cancel`, {
       method: "POST"
     })
-    const nextRun = await readRunMutationResponse(response)
     await refreshWorkspace()
-    if (isWorkflowRunJobResult(nextRun)) {
-      reportWorkflowRunJobResult(nextRun, run.id, "Workflow run cancellation")
-    } else {
-      setSelectedRunId(nextRun.id)
-    }
     setIsMutating(false)
   }
 
@@ -650,11 +587,7 @@ export function HarnessDashboard({
     })
     const run = await readRunMutationResponse(response)
     await refreshWorkspace()
-    if (isWorkflowRunJobResult(run)) {
-      reportWorkflowRunJobResult(run, selectedRun?.id, "Approval gate decision")
-    } else {
-      setSelectedRunId(run.id)
-    }
+    setSelectedRunId(run.id)
     setIsMutating(false)
   }
 
@@ -767,24 +700,7 @@ export function HarnessDashboard({
   async function readRunMutationResponse(response: Response) {
     const data = (await response.json()) as
       | WorkflowRun
-      | WorkflowRunJobResult
       | { error?: string; latestRun?: WorkflowRun }
-
-    if (isWorkflowRunJobResult(data)) {
-      return data
-    }
-
-    if (response.status === 202) {
-      const queuedData = data as { error?: string; jobId?: string }
-      if (!queuedData.jobId) {
-        throw new Error(queuedData.error || "Workflow mutation failed")
-      }
-
-      return {
-        status: "queued",
-        jobId: queuedData.jobId
-      } satisfies WorkflowRunJobResult
-    }
 
     if (response.ok) {
       return data as WorkflowRun
@@ -795,20 +711,6 @@ export function HarnessDashboard({
     }
 
     throw new Error(("error" in data && data.error) || "Workflow mutation failed")
-  }
-
-  function reportWorkflowRunJobResult(
-    result: WorkflowRunJobResult,
-    selectedRunId: string | undefined,
-    label: string
-  ) {
-    setSelectedRunId(selectedRunId)
-    const message = `${label} ${result.status}. Job ID: ${result.jobId}.`
-    if (result.status === "failed") {
-      setMutationError(result.error ? `${message} ${result.error}` : message)
-    } else {
-      setMutationNotice(message)
-    }
   }
 
   async function readProjectMutationResponse(response: Response) {
@@ -870,6 +772,7 @@ export function HarnessDashboard({
       <section
         className="taskWorkspaceGrid"
         data-left-collapsed={!isNavigationExpanded}
+        data-right-collapsed={!isMonitoringExpanded}
       >
         <aside className={`taskNavigation${isNavigationExpanded ? "" : " collapsed"}${mobilePanel === "navigation" ? " mobilePanelOpen" : ""}`}>
           <div className="mobileDrawerHeader">
@@ -896,7 +799,6 @@ export function HarnessDashboard({
               setMobilePanel(undefined)
             }}
           />
-          <div className="codexActivityMount" ref={setCodexActivityMount} />
           <form className="panel composePanel" onSubmit={createProject}>
           <div className="panelHeader">
             <CircleDot size={18} />
@@ -958,11 +860,11 @@ export function HarnessDashboard({
           </button>
 
           <div className="runActionRow">
-          <button
-            className="primaryButton createRunButton"
-            disabled={isMutating || (isArceusMaintenance && splitLines(form.successCriteria).length === 0)}
-          >
-            <Play size={17} />
+            <button
+              className="primaryButton createRunButton"
+              disabled={isMutating || (isArceusMaintenance && splitLines(form.successCriteria).length === 0)}
+            >
+              <Play size={17} />
               {isAgentTask ? "Run Task" : "Create Project"}
             </button>
             <button
@@ -998,11 +900,6 @@ export function HarnessDashboard({
           {mutationError ? (
             <p className="formError" role="alert">
               {mutationError}
-            </p>
-          ) : null}
-          {mutationNotice ? (
-            <p role="status">
-              {mutationNotice}
             </p>
           ) : null}
 
@@ -1304,6 +1201,29 @@ export function HarnessDashboard({
                         )}
                       </div>
 
+                      {hasApprovalPolicies ? (
+                      <div className="policyGrid assignmentPolicyGrid">
+                        <fieldset>
+                          <legend>Design Approval Policy</legend>
+                          <ActorSelect
+                            value={form.designApprovalActor}
+                            onChange={(designApprovalActor) =>
+                              setForm({ ...form, designApprovalActor })
+                            }
+                          />
+                        </fieldset>
+
+                        <fieldset>
+                          <legend>Verification Approval Policy</legend>
+                          <ActorSelect
+                            value={form.verificationApprovalActor}
+                            onChange={(verificationApprovalActor) =>
+                              setForm({ ...form, verificationApprovalActor })
+                            }
+                          />
+                        </fieldset>
+                      </div>
+                      ) : null}
                     </section>
                     )}
                   </div>
@@ -1341,7 +1261,6 @@ export function HarnessDashboard({
               setSelectedProjectId(binding.projectId)
               setSelectedRunId(binding.workflowRunId)
             }}
-            codexActivityMount={codexActivityMount}
             onNewConversation={handleNewConversation}
           />
           {selectedProject && selectedOverview ? (
@@ -1360,19 +1279,43 @@ export function HarnessDashboard({
             </details>
           ) : null}
         </section>
-        <TaskStatusSidebar
-          bridgeConnections={<BridgeStatusPanel
-            onCodexProfileChange={updateCodexProfileForRun}
+        {selectedRun ? (
+          <TaskStatusSidebar
+            bridgeConnections={<BridgeStatusPanel
+              onCodexProfileChange={updateCodexProfileForRun}
+              run={selectedRun}
+              showHeading={false}
+            />}
+            entries={conversationEntries.filter((entry) => entry.workflowRunId === selectedRun.id)}
+            isExpanded={isMonitoringExpanded}
+            isMobileOpen={mobilePanel === "monitoring"}
+            onMobileClose={() => setMobilePanel(undefined)}
+            onExpandedChange={setIsMonitoringExpanded}
             run={selectedRun}
-            showHeading={false}
-          />}
-          entries={selectedRun ? conversationEntries.filter((entry) => entry.workflowRunId === selectedRun.id) : []}
-          isExpanded={isMonitoringExpanded}
-          isMobileOpen={mobilePanel === "monitoring"}
-          onMobileClose={() => setMobilePanel(undefined)}
-          onExpandedChange={setIsMonitoringExpanded}
-          run={selectedRun}
-        />
+          />
+        ) : (
+          <aside className={`panel taskStatusSidebar${isMonitoringExpanded ? "" : " collapsed"}${mobilePanel === "monitoring" ? " mobilePanelOpen" : ""}`} data-right-collapsed={!isMonitoringExpanded}>
+            <div className="mobileDrawerHeader">
+              <strong>Task monitoring</strong>
+              <button aria-label="Close task monitoring" className="iconButton" onClick={() => setMobilePanel(undefined)} type="button"><X size={18} /></button>
+            </div>
+            <button
+              aria-expanded={isMonitoringExpanded}
+              aria-label={isMonitoringExpanded ? "Collapse task monitoring" : "Expand task monitoring"}
+              className="railToggle monitoringRailToggle"
+              onClick={() => setIsMonitoringExpanded((current) => !current)}
+              type="button"
+            >
+              {isMonitoringExpanded ? <><span>Task monitoring</span><ChevronDown size={16} /></> : <ChevronLeft size={18} />}
+            </button>
+            {isMonitoringExpanded ? (
+              <>
+                <p>No active task.</p>
+                <BridgeStatusPanel />
+              </>
+            ) : null}
+          </aside>
+        )}
       </section>
       {mobilePanel ? <button aria-label="Close open menu" className="mobilePanelBackdrop" onClick={() => setMobilePanel(undefined)} type="button" /> : null}
     </main>
@@ -2356,16 +2299,14 @@ function AgentBridgeRow({
   const [reasoningIntensity, setReasoningIntensity] =
     useState<CodexReasoningIntensity>(initialReasoningIntensity)
 
-  useEffect(() => {
-    // This local control mirrors persisted run profile changes for the active row.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setModelId(run?.selectedModelId ?? "ChatGPT OAuth")
-    setReasoningIntensity(run?.selectedReasoningIntensity ?? "auto")
-  }, [run?.id, run?.selectedModelId, run?.selectedReasoningIntensity])
-
   if (!profile) {
     return null
   }
+
+  useEffect(() => {
+    setModelId(run?.selectedModelId ?? "ChatGPT OAuth")
+    setReasoningIntensity(run?.selectedReasoningIntensity ?? "auto")
+  }, [run?.id, run?.selectedModelId, run?.selectedReasoningIntensity])
 
   const modelOptions = new Set([
     ...codexModelOptions,
@@ -2473,6 +2414,10 @@ function getBridgeAgents(bridgeId: BridgeId): AgentKind[] {
     return ["codex"]
   }
 
+  if (bridgeId === "minimax-bridge") {
+    return ["minimax", "mavis"]
+  }
+
   return [
     "openclaw.rowlet",
     "openclaw.roaringmoon",
@@ -2502,6 +2447,10 @@ function AgentSelect({
     {
       label: "Arceus",
       agents: agentProfiles.filter((agent) => agent.family === "codex")
+    },
+    {
+      label: "minimax",
+      agents: agentProfiles.filter((agent) => agent.family === "minimax")
     },
     {
       label: "OpenClaw",
@@ -2724,7 +2673,80 @@ function AgentIcon({ agent }: { agent: AgentProfile }) {
     )
   }
 
+  if (agent.id === "minimax") {
+    return (
+      <span className="agentSpriteMark" aria-hidden="true">
+        <Image
+          alt=""
+          height={24}
+          src="/agents/minimax.svg"
+          unoptimized
+          width={30}
+        />
+      </span>
+    )
+  }
+
+  if (agent.id === "mavis") {
+    return (
+      <span className="agentSpriteMark" aria-hidden="true">
+        <Image
+          alt=""
+          height={24}
+          src="/agents/mavis.svg"
+          unoptimized
+          width={30}
+        />
+      </span>
+    )
+  }
+
   return null
+}
+
+function ActorSelect({
+  value,
+  onChange
+}: {
+  value: ApprovalActorType
+  onChange: (value: ApprovalActorType) => void
+}) {
+  return (
+    <SegmentedControl
+      value={value}
+      options={[
+        ["human", "Human"],
+        ["verification_subagent", "Verify"],
+        ["independent_agent", "Independent"]
+      ]}
+      onChange={(nextValue) => onChange(nextValue as ApprovalActorType)}
+    />
+  )
+}
+
+function SegmentedControl({
+  value,
+  options,
+  onChange
+}: {
+  value: string
+  options: Array<[string, string]>
+  onChange: (value: string) => void
+}) {
+  return (
+    <div className="segmented">
+      {options.map(([optionValue, label]) => (
+        <button
+          type="button"
+          className={value === optionValue ? "selected" : ""}
+          key={optionValue}
+          onClick={() => onChange(optionValue)}
+        >
+          {label}
+        </button>
+      ))}
+    </div>
+  )
 }
 
 function SkillMeta({ title, values }: { title: string; values: string[] }) {
