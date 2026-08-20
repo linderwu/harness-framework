@@ -641,3 +641,54 @@ test("OpenClaw bridge reserves idempotency during runtime-skill setup and releas
   assert.equal(retryResponse.status, 200)
   assert.equal((await retryResponse.json()).status, "failed")
 })
+
+test("OpenClaw bridge stop is effective during delayed runtime-skill setup", { concurrency: false }, async (t) => {
+  const bundleServer = await createBundleServer(t, {
+    delayMs: 1_000,
+    body: "slow bundle bytes"
+  })
+  const runtimeSkillBundle = {
+    id: "slow-stop-bundle",
+    version: "1.0.0",
+    sourceUrl: bundleServer.url,
+    checksum: {
+      algorithm: "sha256",
+      value: "0".repeat(64)
+    }
+  }
+  const lockPath = await createRuntimeSkillLock(t, [runtimeSkillBundle])
+  const { baseUrl } = await startBridge(t, {
+    OPENCLAW_RUNTIME_SKILL_LOCK: lockPath
+  })
+
+  const runPromise = postRun(baseUrl, {
+    protocolVersion: "harness-agent-bridge/v0.3",
+    idempotencyKey: "runtime-skill-setup-stop",
+    workflowRunId: "workflow-runtime-skill-setup-stop",
+    executor: "openclaw.rowlet",
+    title: "Stop during runtime skill setup",
+    requirement: "Exercise stop during runtime skill bundle download.",
+    runtimeSkillBundles: [runtimeSkillBundle]
+  })
+
+  await waitFor(async () => bundleServer.requestCount > 0)
+
+  const stopResponse = await fetch(
+    `${baseUrl}/workflow-runs/workflow-runtime-skill-setup-stop/stop`,
+    { method: "POST" }
+  )
+  assert.equal(stopResponse.status, 200)
+  assert.deepEqual(await stopResponse.json(), { ok: true, stopped: true })
+
+  const runResponse = await runPromise
+  assert.equal(runResponse.status, 200)
+  assert.equal((await runResponse.json()).status, "failed")
+
+  const eventsResponse = await getJson(
+    baseUrl,
+    "/agent-runs/by-idempotency/runtime-skill-setup-stop/events?after=0"
+  )
+  assert.equal(eventsResponse.status, 200)
+  assert.equal(eventsResponse.body.status, "failed")
+  assert.equal(eventsResponse.body.events.at(-1)?.type, "failed")
+})

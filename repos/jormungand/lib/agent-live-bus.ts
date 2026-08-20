@@ -11,6 +11,7 @@ interface ConversationState {
   listeners: Set<AgentLiveListener>
   terminal: boolean
   lastSequence: number
+  currentRunId?: string
   cleanupTimer?: TimerHandle
 }
 
@@ -38,6 +39,19 @@ export interface AgentLiveBusOptions {
 
 function isTerminalEvent(event: AgentLiveEvent) {
   return event.type === "completed" || event.type === "failed"
+}
+
+function isLifecycleRestart(event: AgentLiveEvent, state: ConversationState) {
+  if (event.type !== "started") {
+    return false
+  }
+
+  const runId = event.metadata?.runId?.trim()
+  if (!runId) {
+    return true
+  }
+
+  return runId !== state.currentRunId
 }
 
 function maybeUnrefTimer(timer: TimerHandle) {
@@ -108,7 +122,16 @@ export function createAgentLiveBus(options: AgentLiveBusOptions = {}): AgentLive
         return false
       }
 
+      if (isLifecycleRestart(event, state)) {
+        state.terminal = false
+      }
+
       state.lastSequence = event.sequence
+      if (event.type === "started") {
+        state.currentRunId = event.metadata?.runId?.trim()
+      } else if (event.metadata?.runId?.trim()) {
+        state.currentRunId = event.metadata.runId.trim()
+      }
       state.terminal = state.terminal || isTerminalEvent(event)
       state.events = [...state.events, event].slice(-maxEvents)
 

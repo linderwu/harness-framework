@@ -24,6 +24,23 @@ function isTerminalEvent(event: AgentLiveEvent) {
   return event.type === "completed" || event.type === "failed"
 }
 
+function startsNewLifecycle(
+  event: AgentLiveEvent,
+  terminalSnapshotEvent?: AgentLiveEvent
+) {
+  if (event.type !== "started") {
+    return false
+  }
+
+  const nextRunId = event.metadata?.runId?.trim()
+  if (!nextRunId) {
+    return true
+  }
+
+  const priorRunId = terminalSnapshotEvent?.metadata?.runId?.trim()
+  return nextRunId !== priorRunId
+}
+
 function createConversationLiveStream(request: Request, conversationId: string, bus: AgentLiveBus) {
   const encoder = new TextEncoder()
   let closeStream: (shouldCloseController?: boolean) => void = () => undefined
@@ -34,6 +51,7 @@ function createConversationLiveStream(request: Request, conversationId: string, 
       let replayComplete = false
       let lastDeliveredSequence = -1
       const pendingEvents: AgentLiveEvent[] = []
+      let replayObservedNewLifecycle = false
       let unsubscribe: () => void = () => undefined
 
       closeStream = (shouldCloseController = true) => {
@@ -55,13 +73,13 @@ function createConversationLiveStream(request: Request, conversationId: string, 
         controller.enqueue(encoder.encode(formatAgentLiveSse(eventName, payload)))
       }
 
-      const deliver = (event: AgentLiveEvent) => {
+      const deliver = (event: AgentLiveEvent, closeOnTerminal = true) => {
         if (event.sequence <= lastDeliveredSequence) {
           return
         }
         lastDeliveredSequence = event.sequence
         enqueue("agent-live", event)
-        if (isTerminalEvent(event)) {
+        if (closeOnTerminal && isTerminalEvent(event)) {
           closeStream()
         }
       }
@@ -87,6 +105,9 @@ function createConversationLiveStream(request: Request, conversationId: string, 
       request.signal.addEventListener("abort", handleAbort, { once: true })
 
       const snapshot = getAgentLiveSnapshot(conversationId, bus)
+      const terminalSnapshotEvent = [...snapshot.events]
+        .reverse()
+        .find(isTerminalEvent)
 
       enqueue("ready", {
         conversationId,
@@ -94,16 +115,17 @@ function createConversationLiveStream(request: Request, conversationId: string, 
       })
 
       for (const event of snapshot.events) {
-        deliver(event)
+        deliver(event, false)
       }
 
       replayComplete = true
 
       for (const event of pendingEvents) {
+        replayObservedNewLifecycle ||= startsNewLifecycle(event, terminalSnapshotEvent)
         deliver(event)
       }
 
-      if (snapshot.terminal) {
+      if (snapshot.terminal && !replayObservedNewLifecycle) {
         closeStream()
       }
     },

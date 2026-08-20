@@ -6,6 +6,7 @@ import { join } from "node:path"
 import test, { describe } from "node:test"
 
 import { createAgentLiveBus } from "../lib/agent-live-bus"
+import type { AgentLiveEvent } from "../lib/agent-live-events"
 import { conversationCookieName } from "../lib/conversation-identity"
 
 type ConversationLiveRouteModule = {
@@ -15,29 +16,13 @@ type ConversationLiveRouteModule = {
     bus?: {
       getSnapshot: (conversationId: string) => {
         conversationId: string
-        events: Array<{
-          id: string
-          sequence: number
-          conversationId: string
-          agentId: "openclaw.rowlet"
-          type: "status"
-          createdAt: string
-          message?: string
-        }>
+        events: AgentLiveEvent[]
         terminal: boolean
         lastSequence: number
       }
       subscribe: (
         conversationId: string,
-        listener: (event: {
-          id: string
-          sequence: number
-          conversationId: string
-          agentId: "openclaw.rowlet"
-          type: "status"
-          createdAt: string
-          message?: string
-        }) => void
+        listener: (event: AgentLiveEvent) => void
       ) => { unsubscribe(): void }
     } | ReturnType<typeof createAgentLiveBus>
   }) => {
@@ -292,6 +277,93 @@ describe("conversation live route", { concurrency: false }, () => {
     await reader.cancel("client closed")
 
     assert.equal(subscribeCalls, 1)
+    assert.equal(unsubscribeCalls, 1)
+  })
+
+  test("a new started event keeps the SSE stream open past an old terminal snapshot", async () => {
+    const route = await importConversationLiveRoute()
+    const requestedConversationId = "conversation:44444444-4444-4444-8444-444444444444"
+    const received: string[] = []
+    let unsubscribeCalls = 0
+    let listener: ((event: AgentLiveEvent) => void) | undefined
+
+    const handlers = route.createConversationLiveRouteHandlers?.({
+      bus: {
+        getSnapshot(conversationId) {
+          return {
+            conversationId,
+            events: [
+              {
+                id: "old-completed",
+                sequence: 2,
+                conversationId,
+                agentId: "openclaw.rowlet",
+                type: "completed",
+                createdAt: "2026-08-20T00:00:02.000Z",
+                message: "old run done",
+                metadata: { runId: "run-1" }
+              }
+            ],
+            terminal: true,
+            lastSequence: 2
+          }
+        },
+        subscribe(conversationId: string, next: (event: AgentLiveEvent) => void) {
+          assert.equal(conversationId, requestedConversationId)
+          listener = next
+          next({
+            id: "new-started",
+            sequence: 3,
+            conversationId,
+            agentId: "openclaw.rowlet",
+            type: "started",
+            createdAt: "2026-08-20T00:00:03.000Z",
+            message: "new run started",
+            metadata: { runId: "run-2" }
+          })
+          return {
+            unsubscribe() {
+              unsubscribeCalls += 1
+            }
+          }
+        }
+      }
+    }) ?? route
+
+    const response = await handlers.GET(
+      new Request(`https://jormungand.test/api/conversation/live?conversationId=${requestedConversationId}`)
+    )
+
+    const reader = response.body?.getReader()
+    assert.ok(reader)
+
+    for (let index = 0; index < 3; index += 1) {
+      const chunk = await reader.read()
+      assert.equal(chunk.done, false)
+      received.push(new TextDecoder().decode(chunk.value))
+    }
+
+    listener?.({
+      id: "new-status",
+      sequence: 4,
+      conversationId: requestedConversationId,
+      agentId: "openclaw.rowlet",
+      type: "status",
+      createdAt: "2026-08-20T00:00:04.000Z",
+      message: "new run still active",
+      metadata: { runId: "run-2" }
+    })
+
+    const fourthChunk = await reader.read()
+    assert.equal(fourthChunk.done, false)
+    received.push(new TextDecoder().decode(fourthChunk.value))
+
+    await reader.cancel("client closed")
+
+    const body = received.join("")
+    assert.match(body, /old run done/)
+    assert.match(body, /new run started/)
+    assert.match(body, /new run still active/)
     assert.equal(unsubscribeCalls, 1)
   })
 })

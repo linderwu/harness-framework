@@ -48,6 +48,13 @@ const completedIdempotencyRuns = new Map()
 const completedRunJournals = new Map()
 let completedRunCleanupTimer
 
+class RunCancellationError extends Error {
+  constructor(message = "Runtime skill installation cancelled.") {
+    super(message)
+    this.name = "RunCancellationError"
+  }
+}
+
 if (!isLoopbackHost(host) && !token) {
   throw new Error("OPENCLAW_BRIDGE_TOKEN is required for non-loopback binding")
 }
@@ -162,20 +169,58 @@ const server = http.createServer(async (request, response) => {
       idempotencyKey,
       workflowRunId: payload.workflowRunId
     })
+    const activeRun = createActiveRunState({
+      id,
+      workflowRunId: payload.workflowRunId,
+      journal
+    })
 
     if (idempotencyKey) {
       reserveIdempotencyKey(idempotencyKey, id, journal)
     }
+    activateRun(activeRun)
 
     try {
-      const runtimeSkillBundleResults = await installRuntimeSkillBundles(
-        payload.runtimeSkillBundles
-      )
+      let runtimeSkillBundleResults
+
+      try {
+        runtimeSkillBundleResults = await installRuntimeSkillBundles(
+          payload.runtimeSkillBundles,
+          activeRun
+        )
+        throwIfRunCancelled(activeRun)
+      } catch (error) {
+        if (!isRunCancellationError(error) && !activeRun.cancelled) {
+          throw error
+        }
+
+        clearActiveRun(activeRun)
+        journal.status = "failed"
+        appendRunEvent(journal, "failed", {
+          message: "Runtime skill installation cancelled."
+        })
+        const failedResponse = {
+          id,
+          idempotencyKey,
+          startedAt,
+          finishedAt: new Date().toISOString(),
+          status: "failed",
+          output: "Runtime skill installation cancelled.",
+          statusMessage: "Runtime skill installation cancelled from the dashboard.",
+          capabilities: bridgeCapabilities(),
+          runtimeSkillBundleResults: []
+        }
+        rememberCompletedRun(idempotencyKey, failedResponse, journal)
+        sendJson(response, 200, failedResponse)
+        return
+      }
+
       const failedRuntimeBundle = runtimeSkillBundleResults.find(
         (result) => result.verified === false
       )
 
       if (failedRuntimeBundle) {
+        clearActiveRun(activeRun)
         journal.status = "failed"
         appendRunEvent(journal, "failed", {
           message: "Runtime skill installation failed."
@@ -210,6 +255,7 @@ const server = http.createServer(async (request, response) => {
       const conversationHistory = sanitizeConversationHistory(
         payload.conversationHistory
       )
+      throwIfRunCancelled(activeRun)
       const message = buildOpenClawMessage(payload, {
         id,
         idempotencyKey: idempotencyKey ?? id,
@@ -230,7 +276,8 @@ const server = http.createServer(async (request, response) => {
           model,
           sessionKey,
           message,
-          journal
+          journal,
+          activeRun
         })
       } catch (error) {
         rememberCompletedRun(
@@ -296,6 +343,11 @@ async function runOpenClawAgent({
     id,
     idempotencyKey,
     workflowRunId
+  }),
+  activeRun = createActiveRunState({
+    id,
+    workflowRunId,
+    journal
   })
 }) {
   appendRunEvent(journal, "started", {
@@ -326,14 +378,12 @@ async function runOpenClawAgent({
   const structuredRecords = []
   const assistantFragments = []
   const timeoutMs = Number(process.env.OPENCLAW_BRIDGE_TIMEOUT_MS ?? 900000)
-  const cancel = () => child.kill("SIGTERM")
-  const timer = setTimeout(cancel, timeoutMs)
+  const stopChild = () => child.kill("SIGTERM")
+  const timer = setTimeout(stopChild, timeoutMs)
 
-  journal.cancel = cancel
-  activeRuns.set(id, { cancel, workflowRunId, journal })
-  if (workflowRunId) {
-    activeWorkflowRuns.set(workflowRunId, id)
-  }
+  journal.cancel = () => activeRun.cancel()
+  activeRun.cancelHandler = stopChild
+  activateRun(activeRun)
 
   const stdoutParser = createStructuredRecordParser((record) => {
     appendBoundedRecord(structuredRecords, record)
@@ -374,10 +424,7 @@ async function runOpenClawAgent({
             ? `${mainAgent} completed through OpenClaw bridge.`
             : `${mainAgent} exited with status ${exitCode}.`
     })
-    activeRuns.delete(id)
-    if (workflowRunId && activeWorkflowRuns.get(workflowRunId) === id) {
-      activeWorkflowRuns.delete(workflowRunId)
-    }
+    clearActiveRun(activeRun)
   }
 
   return {
@@ -411,7 +458,7 @@ function validateProtocol(payload) {
   return undefined
 }
 
-async function installRuntimeSkillBundles(runtimeSkillBundles) {
+async function installRuntimeSkillBundles(runtimeSkillBundles, activeRun) {
   if (!Array.isArray(runtimeSkillBundles) || runtimeSkillBundles.length === 0) {
     return []
   }
@@ -419,13 +466,15 @@ async function installRuntimeSkillBundles(runtimeSkillBundles) {
   const results = []
 
   for (const bundle of runtimeSkillBundles) {
-    results.push(await installRuntimeSkillBundle(bundle))
+    throwIfRunCancelled(activeRun)
+    results.push(await installRuntimeSkillBundle(bundle, activeRun))
   }
 
+  throwIfRunCancelled(activeRun)
   return results
 }
 
-async function installRuntimeSkillBundle(bundle) {
+async function installRuntimeSkillBundle(bundle, activeRun) {
   if (!isLockedRuntimeSkillBundle(bundle)) {
     return runtimeSkillFailure(
       bundle,
@@ -450,14 +499,16 @@ async function installRuntimeSkillBundle(bundle) {
   const containerInstallPath = `${containerRuntimeSkillRoot}/${safeBundleId}/${safeBundleVersion}`
 
   try {
+    throwIfRunCancelled(activeRun)
     await fs.mkdir(archiveDir, { recursive: true })
     let cacheStatus = "hit"
 
     if (!(await fileExists(archivePath))) {
       cacheStatus = "miss"
-      await downloadFile(bundle.sourceUrl, archivePath)
+      await downloadFile(bundle.sourceUrl, archivePath, activeRun?.signal)
     }
 
+    throwIfRunCancelled(activeRun)
     const actualChecksum = await sha256File(archivePath)
 
     if (actualChecksum !== bundle.checksum?.value) {
@@ -472,7 +523,9 @@ async function installRuntimeSkillBundle(bundle) {
 
     await fs.rm(installPath, { recursive: true, force: true })
     await fs.mkdir(installPath, { recursive: true })
+    throwIfRunCancelled(activeRun)
     await runProcess("tar", ["-xzf", archivePath, "-C", installPath])
+    throwIfRunCancelled(activeRun)
     await runProcess("docker", [
       "exec",
       container,
@@ -480,11 +533,13 @@ async function installRuntimeSkillBundle(bundle) {
       "-p",
       containerInstallPath
     ])
+    throwIfRunCancelled(activeRun)
     await runProcess("docker", [
       "cp",
       `${installPath}/.`,
       `${container}:${containerInstallPath}`
     ])
+    throwIfRunCancelled(activeRun)
 
     return {
       id: bundle.id,
@@ -496,6 +551,10 @@ async function installRuntimeSkillBundle(bundle) {
       installedPath: containerInstallPath
     }
   } catch (error) {
+    if (isRunCancellationError(error) || activeRun?.cancelled) {
+      throw createRunCancellationError()
+    }
+
     return runtimeSkillFailure(
       bundle,
       "miss",
@@ -520,7 +579,7 @@ function runtimeSkillFailure(bundle, cacheStatus, errorCode, errorMessage) {
   }
 }
 
-async function downloadFile(sourceUrl, targetPath) {
+async function downloadFile(sourceUrl, targetPath, signal) {
   const headers = {}
   const githubToken =
     process.env.JORMUNGAND_SKILL_DOWNLOAD_TOKEN ?? process.env.GITHUB_TOKEN
@@ -530,7 +589,11 @@ async function downloadFile(sourceUrl, targetPath) {
     headers.Accept = "application/octet-stream"
   }
 
-  const response = await fetch(sourceUrl, { headers, redirect: "follow" })
+  if (signal?.aborted) {
+    throw createRunCancellationError()
+  }
+
+  const response = await fetch(sourceUrl, { headers, redirect: "follow", signal })
 
   if (response.status === 401 || response.status === 403) {
     throw new Error(`download unauthorized with HTTP ${response.status}`)
@@ -538,6 +601,10 @@ async function downloadFile(sourceUrl, targetPath) {
 
   if (!response.ok) {
     throw new Error(`download failed with HTTP ${response.status}`)
+  }
+
+  if (signal?.aborted) {
+    throw createRunCancellationError()
   }
 
   await fs.writeFile(targetPath, Buffer.from(await response.arrayBuffer()))
@@ -1130,6 +1197,55 @@ function releaseIdempotencyKey(idempotencyKey, id) {
 
   if (activeIdempotencyJournals.get(idempotencyKey)?.id === id) {
     activeIdempotencyJournals.delete(idempotencyKey)
+  }
+}
+
+function createActiveRunState({ id, workflowRunId, journal }) {
+  const abortController = new AbortController()
+
+  return {
+    id,
+    workflowRunId,
+    journal,
+    signal: abortController.signal,
+    cancelled: false,
+    cancelHandler: undefined,
+    cancel() {
+      this.cancelled = true
+      abortController.abort(createRunCancellationError())
+      this.cancelHandler?.()
+    }
+  }
+}
+
+function activateRun(activeRun) {
+  activeRuns.set(activeRun.id, activeRun)
+  if (activeRun.workflowRunId) {
+    activeWorkflowRuns.set(activeRun.workflowRunId, activeRun.id)
+  }
+}
+
+function clearActiveRun(activeRun) {
+  activeRuns.delete(activeRun.id)
+  if (
+    activeRun.workflowRunId &&
+    activeWorkflowRuns.get(activeRun.workflowRunId) === activeRun.id
+  ) {
+    activeWorkflowRuns.delete(activeRun.workflowRunId)
+  }
+}
+
+function createRunCancellationError() {
+  return new RunCancellationError()
+}
+
+function isRunCancellationError(error) {
+  return error instanceof RunCancellationError || error?.name === "AbortError"
+}
+
+function throwIfRunCancelled(activeRun) {
+  if (activeRun?.cancelled) {
+    throw createRunCancellationError()
   }
 }
 
