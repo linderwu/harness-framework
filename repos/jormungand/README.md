@@ -51,6 +51,31 @@ The OpenClaw HTTP bridge uses `OPENCLAW_BRIDGE_TOKEN`; when that value is blank,
 the app can reuse `OPENCLAW_GATEWAY_TOKEN` for compatibility with an existing
 single-secret deployment. Separate tokens remain preferable for new installs.
 
+## OpenClaw live events
+
+When OpenClaw is selected in the Live Agent session, the browser opens
+`GET /api/conversation/live?conversationId=...` before the OpenClaw POST is
+dispatched. This conversation-scoped SSE route sends a `ready` frame, replays
+only a bounded recent snapshot, then streams new events until the active run
+reaches `completed` or `failed`, the browser disconnects, or the current submit
+lifecycle settles. Older live activity is not durable transcript history and is
+not replayed beyond that bounded window.
+
+The bridge `live-events` capability is optional. If the configured OpenClaw
+bridge, provider channel, or deployment does not expose live events, Jormungand
+still runs the request and falls back to safe status activity instead of a hard
+failure. In that fallback mode, the UI still receives a started update plus the
+terminal completed or failed update even when no richer provider stream is
+available.
+
+`Reasoning preview` is also optional. The UI shows explicit provider-emitted
+progress or reasoning previews only when the selected OpenClaw model and
+channel expose a `/reasoning` stream, typed thinking channel, or equivalent
+structured live reasoning frames. Many providers emit only status, tool, or
+assistant text updates. Jormungand does not infer hidden chain-of-thought from
+raw stdout, stderr, prompts, or tool arguments, and it does not persist live
+reasoning into conversation entries or Hive memory.
+
 ## A2A v0.3 runtime
 
 Jormungand exposes a public Agent2Agent v0.3 surface for discovery, JSON-RPC

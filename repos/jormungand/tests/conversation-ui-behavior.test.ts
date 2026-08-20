@@ -5,7 +5,14 @@ import { createElement } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
 import test from "node:test"
 import type { AgentKind } from "../lib/types"
+import type { AgentLiveEvent } from "../lib/agent-live-events"
 import { createWorkflowRun } from "../lib/workflow"
+
+type AgentLivePreview = {
+  events: AgentLiveEvent[]
+  reasoning?: string
+  status?: string
+}
 
 async function ensureCompiledAlias() {
   const tmpRoot = join(process.cwd(), ".tmp-tests")
@@ -454,4 +461,498 @@ test("conversation manager lock state disables new conversation while running or
     isControlling: false,
     isTurnRunning: false
   }), false)
+})
+
+test("openclaw live reducer keeps reasoning opt-in while status and tool activity stay visible", async () => {
+  const taskConversationModule = await loadTaskConversationModule()
+  const reduceAgentLivePreview = Reflect.get(taskConversationModule, "reduceAgentLivePreview") as
+    | ((input: AgentLivePreview, event: AgentLiveEvent) => AgentLivePreview)
+    | undefined
+  const isAgentLiveTerminal = Reflect.get(taskConversationModule, "isAgentLiveTerminal") as
+    | ((event: AgentLiveEvent) => boolean)
+    | undefined
+
+  assert.equal(typeof reduceAgentLivePreview, "function")
+  assert.equal(typeof isAgentLiveTerminal, "function")
+
+  let preview: AgentLivePreview = { events: [] }
+  preview = reduceAgentLivePreview!(preview, {
+    id: "started-1",
+    sequence: 1,
+    conversationId: "conversation-1",
+    agentId: "openclaw.rowlet",
+    type: "started",
+    createdAt: "2026-08-20T00:00:01.000Z",
+    message: "OpenClaw started"
+  })
+  preview = reduceAgentLivePreview!(preview, {
+    id: "reasoning-1",
+    sequence: 2,
+    conversationId: "conversation-1",
+    agentId: "openclaw.rowlet",
+    type: "reasoning",
+    createdAt: "2026-08-20T00:00:02.000Z",
+    text: "Thinking through the repository layout"
+  })
+  preview = reduceAgentLivePreview!(preview, {
+    id: "tool-1",
+    sequence: 3,
+    conversationId: "conversation-1",
+    agentId: "openclaw.rowlet",
+    type: "tool",
+    createdAt: "2026-08-20T00:00:03.000Z",
+    message: "Running rg"
+  })
+  preview = reduceAgentLivePreview!(preview, {
+    id: "completed-1",
+    sequence: 4,
+    conversationId: "conversation-1",
+    agentId: "openclaw.rowlet",
+    type: "completed",
+    createdAt: "2026-08-20T00:00:03.500Z",
+    message: "OpenClaw finished"
+  })
+  preview = reduceAgentLivePreview!(preview, {
+    id: "delta-1",
+    sequence: 5,
+    conversationId: "conversation-1",
+    agentId: "openclaw.rowlet",
+    type: "assistant_delta",
+    createdAt: "2026-08-20T00:00:04.000Z",
+    delta: "Partial answer"
+  })
+
+  assert.equal(preview.status, "OpenClaw finished")
+  assert.equal(preview.reasoning, "Thinking through the repository layout")
+  assert.deepEqual(preview.events.map((event) => event.type), ["started", "tool", "completed", "assistant_delta"])
+  assert.deepEqual(
+    preview.events
+      .filter((event) => event.type !== "assistant_delta")
+      .map((event) => event.message ?? event.text ?? event.delta),
+    ["OpenClaw started", "Running rg", "OpenClaw finished"]
+  )
+  assert.equal(isAgentLiveTerminal!({
+    id: "completed-2",
+    sequence: 6,
+    conversationId: "conversation-1",
+    agentId: "openclaw.rowlet",
+    type: "completed",
+    createdAt: "2026-08-20T00:00:05.000Z",
+    message: "done"
+  }), true)
+})
+
+test("assistant delta aggregation preserves exact whitespace, including whitespace-only chunks", async () => {
+  const taskConversationModule = await loadTaskConversationModule()
+  const collectAgentLiveAssistantText = Reflect.get(taskConversationModule, "collectAgentLiveAssistantText") as
+    | ((events: AgentLiveEvent[]) => string | undefined)
+    | undefined
+
+  assert.equal(typeof collectAgentLiveAssistantText, "function")
+  assert.equal(collectAgentLiveAssistantText!([
+    {
+      id: "delta-blank",
+      sequence: 1,
+      conversationId: "conversation-1",
+      agentId: "openclaw.rowlet",
+      type: "assistant_delta",
+      createdAt: "2026-08-20T00:00:01.000Z",
+      delta: " \n"
+    }
+  ]), " \n")
+  assert.equal(collectAgentLiveAssistantText!([
+    {
+      id: "delta-leading",
+      sequence: 1,
+      conversationId: "conversation-1",
+      agentId: "openclaw.rowlet",
+      type: "assistant_delta",
+      createdAt: "2026-08-20T00:00:01.000Z",
+      delta: " hello"
+    },
+    {
+      id: "delta-trailing",
+      sequence: 2,
+      conversationId: "conversation-1",
+      agentId: "openclaw.rowlet",
+      type: "assistant_delta",
+      createdAt: "2026-08-20T00:00:02.000Z",
+      text: " \n"
+    }
+  ]), " hello \n")
+})
+
+test("openclaw live submission lifecycle defers replayed terminal frames until the current POST settles", async () => {
+  const taskConversationModule = await loadTaskConversationModule()
+  const startAgentLiveSubmissionLifecycle = Reflect.get(taskConversationModule, "startAgentLiveSubmissionLifecycle") as
+    | (() => { postPending: boolean; terminalEventReceived: boolean })
+    | undefined
+  const advanceAgentLiveSubmissionLifecycle = Reflect.get(taskConversationModule, "advanceAgentLiveSubmissionLifecycle") as
+    | ((
+        lifecycle: { postPending: boolean; terminalEventReceived: boolean } | undefined,
+        event: AgentLiveEvent
+      ) => {
+        lifecycle: { postPending: boolean; terminalEventReceived: boolean } | undefined
+        shouldCloseSource: boolean
+      })
+    | undefined
+  const settleAgentLiveSubmissionLifecycle = Reflect.get(taskConversationModule, "settleAgentLiveSubmissionLifecycle") as
+    | ((
+        lifecycle: { postPending: boolean; terminalEventReceived: boolean } | undefined
+      ) => {
+        lifecycle: { postPending: boolean; terminalEventReceived: boolean } | undefined
+        shouldCloseSource: boolean
+      })
+    | undefined
+
+  assert.equal(typeof startAgentLiveSubmissionLifecycle, "function")
+  assert.equal(typeof advanceAgentLiveSubmissionLifecycle, "function")
+  assert.equal(typeof settleAgentLiveSubmissionLifecycle, "function")
+
+  const pendingLifecycle = startAgentLiveSubmissionLifecycle!()
+  const replayedTerminal = advanceAgentLiveSubmissionLifecycle!(pendingLifecycle, {
+    id: "completed-old",
+    sequence: 9,
+    conversationId: "conversation-1",
+    agentId: "openclaw.rowlet",
+    type: "completed",
+    createdAt: "2026-08-20T00:00:09.000Z",
+    message: "previous run completed"
+  })
+
+  assert.equal(replayedTerminal.shouldCloseSource, false)
+  assert.deepEqual(replayedTerminal.lifecycle, {
+    postPending: true,
+    terminalEventReceived: true
+  })
+
+  const postSettled = settleAgentLiveSubmissionLifecycle!(replayedTerminal.lifecycle)
+  assert.equal(postSettled.shouldCloseSource, true)
+  assert.equal(postSettled.lifecycle, undefined)
+})
+
+test("openclaw live submission lifecycle keeps the stream open for the current run until its own terminal event arrives", async () => {
+  const taskConversationModule = await loadTaskConversationModule()
+  const startAgentLiveSubmissionLifecycle = Reflect.get(taskConversationModule, "startAgentLiveSubmissionLifecycle") as
+    | (() => { postPending: boolean; terminalEventReceived: boolean })
+    | undefined
+  const advanceAgentLiveSubmissionLifecycle = Reflect.get(taskConversationModule, "advanceAgentLiveSubmissionLifecycle") as
+    | ((
+        lifecycle: { postPending: boolean; terminalEventReceived: boolean } | undefined,
+        event: AgentLiveEvent
+      ) => {
+        lifecycle: { postPending: boolean; terminalEventReceived: boolean } | undefined
+        shouldCloseSource: boolean
+      })
+    | undefined
+  const settleAgentLiveSubmissionLifecycle = Reflect.get(taskConversationModule, "settleAgentLiveSubmissionLifecycle") as
+    | ((
+        lifecycle: { postPending: boolean; terminalEventReceived: boolean } | undefined
+      ) => {
+        lifecycle: { postPending: boolean; terminalEventReceived: boolean } | undefined
+        shouldCloseSource: boolean
+      })
+    | undefined
+
+  assert.equal(typeof startAgentLiveSubmissionLifecycle, "function")
+  assert.equal(typeof advanceAgentLiveSubmissionLifecycle, "function")
+  assert.equal(typeof settleAgentLiveSubmissionLifecycle, "function")
+
+  const pendingLifecycle = startAgentLiveSubmissionLifecycle!()
+  const startedOutcome = advanceAgentLiveSubmissionLifecycle!(pendingLifecycle, {
+    id: "started-new",
+    sequence: 10,
+    conversationId: "conversation-1",
+    agentId: "openclaw.rowlet",
+    type: "started",
+    createdAt: "2026-08-20T00:00:10.000Z",
+    message: "current run started"
+  })
+  assert.equal(startedOutcome.shouldCloseSource, false)
+  assert.deepEqual(startedOutcome.lifecycle, {
+    postPending: true,
+    terminalEventReceived: false
+  })
+
+  const postSettled = settleAgentLiveSubmissionLifecycle!(startedOutcome.lifecycle)
+  assert.equal(postSettled.shouldCloseSource, false)
+  assert.deepEqual(postSettled.lifecycle, {
+    postPending: false,
+    terminalEventReceived: false
+  })
+
+  const terminalOutcome = advanceAgentLiveSubmissionLifecycle!(postSettled.lifecycle, {
+    id: "completed-new",
+    sequence: 11,
+    conversationId: "conversation-1",
+    agentId: "openclaw.rowlet",
+    type: "completed",
+    createdAt: "2026-08-20T00:00:11.000Z",
+    message: "current run completed"
+  })
+  assert.equal(terminalOutcome.shouldCloseSource, true)
+  assert.equal(terminalOutcome.lifecycle, undefined)
+})
+
+test("openclaw live source errors are ignored after a terminal frame until the POST settles", async () => {
+  const taskConversationModule = await loadTaskConversationModule()
+  const startAgentLiveSubmissionLifecycle = Reflect.get(taskConversationModule, "startAgentLiveSubmissionLifecycle") as
+    | (() => { postPending: boolean; terminalEventReceived: boolean })
+    | undefined
+  const advanceAgentLiveSubmissionLifecycle = Reflect.get(taskConversationModule, "advanceAgentLiveSubmissionLifecycle") as
+    | ((
+        lifecycle: { postPending: boolean; terminalEventReceived: boolean } | undefined,
+        event: AgentLiveEvent
+      ) => {
+        lifecycle: { postPending: boolean; terminalEventReceived: boolean } | undefined
+        shouldCloseSource: boolean
+      })
+    | undefined
+  const shouldIgnoreAgentLiveSourceError = Reflect.get(taskConversationModule, "shouldIgnoreAgentLiveSourceError") as
+    | ((lifecycle: { postPending: boolean; terminalEventReceived: boolean } | undefined) => boolean)
+    | undefined
+  const settleAgentLiveSubmissionLifecycle = Reflect.get(taskConversationModule, "settleAgentLiveSubmissionLifecycle") as
+    | ((
+        lifecycle: { postPending: boolean; terminalEventReceived: boolean } | undefined
+      ) => {
+        lifecycle: { postPending: boolean; terminalEventReceived: boolean } | undefined
+        shouldCloseSource: boolean
+      })
+    | undefined
+
+  assert.equal(typeof startAgentLiveSubmissionLifecycle, "function")
+  assert.equal(typeof advanceAgentLiveSubmissionLifecycle, "function")
+  assert.equal(typeof shouldIgnoreAgentLiveSourceError, "function")
+  assert.equal(typeof settleAgentLiveSubmissionLifecycle, "function")
+
+  const pendingLifecycle = startAgentLiveSubmissionLifecycle!()
+  assert.equal(shouldIgnoreAgentLiveSourceError!(pendingLifecycle), false)
+
+  const terminalOutcome = advanceAgentLiveSubmissionLifecycle!(pendingLifecycle, {
+    id: "completed-before-eof",
+    sequence: 12,
+    conversationId: "conversation-1",
+    agentId: "openclaw.rowlet",
+    type: "completed",
+    createdAt: "2026-08-20T00:00:12.000Z",
+    message: "current run completed"
+  })
+
+  assert.equal(terminalOutcome.shouldCloseSource, false)
+  assert.deepEqual(terminalOutcome.lifecycle, {
+    postPending: true,
+    terminalEventReceived: true
+  })
+  assert.equal(shouldIgnoreAgentLiveSourceError!(terminalOutcome.lifecycle), true)
+
+  const settledOutcome = settleAgentLiveSubmissionLifecycle!(terminalOutcome.lifecycle)
+  assert.equal(settledOutcome.shouldCloseSource, true)
+  assert.equal(settledOutcome.lifecycle, undefined)
+  assert.equal(shouldIgnoreAgentLiveSourceError!(settledOutcome.lifecycle), false)
+})
+
+test("codex controls remain available while an OpenClaw preview is active for the same conversation", async () => {
+  const taskConversationModule = await loadTaskConversationModule()
+  const getAgentLivePanelState = Reflect.get(taskConversationModule, "getAgentLivePanelState") as
+    | ((input: {
+        targetAgent: AgentKind
+        liveSourceAgentId?: AgentKind
+        liveEventAgentId?: AgentKind
+        hasActiveSource: boolean
+        hasActiveSubmission: boolean
+        status?: string
+        reasoning?: string
+        eventCount: number
+      }) => {
+        visible: boolean
+        agentId?: AgentKind
+      })
+    | undefined
+  const shouldShowCodexControls = Reflect.get(taskConversationModule, "shouldShowCodexControls") as
+    | ((input: {
+        hasCodexSession: boolean
+        isTurnRunning: boolean
+        isPaused: boolean
+        sessionStatus?: "idle" | "running" | "paused" | "stopped" | "failed"
+      }) => boolean)
+    | undefined
+  const getConversationActivityViewModel = Reflect.get(taskConversationModule, "getConversationActivityViewModel") as
+    | ((input: {
+        hasCodexSession: boolean
+        isTurnRunning: boolean
+        isPaused: boolean
+        sessionStatus?: "idle" | "running" | "paused" | "stopped" | "failed"
+        agentLivePanelState: {
+          visible: boolean
+          agentId?: AgentKind
+        }
+      }) => {
+        hasAgentLiveActivity: boolean
+        showsCodexControls: boolean
+        showsCodexSession: boolean
+      })
+    | undefined
+
+  assert.equal(typeof getAgentLivePanelState, "function")
+  assert.equal(typeof shouldShowCodexControls, "function")
+  assert.equal(typeof getConversationActivityViewModel, "function")
+
+  const panel = getAgentLivePanelState!({
+    targetAgent: "openclaw.rowlet",
+    liveSourceAgentId: "openclaw.rowlet",
+    hasActiveSource: true,
+    hasActiveSubmission: true,
+    status: "Working",
+    eventCount: 1
+  })
+
+  assert.deepEqual(panel, {
+    visible: true,
+    agentId: "openclaw.rowlet"
+  })
+  assert.deepEqual(getConversationActivityViewModel!({
+    hasCodexSession: true,
+    isTurnRunning: true,
+    isPaused: false,
+    sessionStatus: "running",
+    agentLivePanelState: panel
+  }), {
+    hasAgentLiveActivity: true,
+    showsCodexControls: true,
+    showsCodexSession: false
+  })
+  assert.equal(shouldShowCodexControls!({
+    hasCodexSession: true,
+    isTurnRunning: true,
+    isPaused: false,
+    sessionStatus: "running"
+  }), true)
+  assert.equal(shouldShowCodexControls!({
+    hasCodexSession: true,
+    isTurnRunning: false,
+    isPaused: true,
+    sessionStatus: "paused"
+  }), true)
+  assert.equal(shouldShowCodexControls!({
+    hasCodexSession: true,
+    isTurnRunning: true,
+    isPaused: false,
+    sessionStatus: "failed"
+  }), false)
+})
+
+test("agent live panel state follows the active live stream instead of the target selector", async () => {
+  const taskConversationModule = await loadTaskConversationModule()
+  const getAgentLivePanelState = Reflect.get(taskConversationModule, "getAgentLivePanelState") as
+    | ((input: {
+        targetAgent: AgentKind
+        liveSourceAgentId?: AgentKind
+        liveEventAgentId?: AgentKind
+        hasActiveSource: boolean
+        hasActiveSubmission: boolean
+        status?: string
+        reasoning?: string
+        eventCount: number
+      }) => {
+        visible: boolean
+        agentId?: AgentKind
+      })
+    | undefined
+
+  assert.equal(typeof getAgentLivePanelState, "function")
+
+  assert.deepEqual(getAgentLivePanelState!({
+    targetAgent: "codex",
+    liveSourceAgentId: "openclaw.rowlet",
+    hasActiveSource: true,
+    hasActiveSubmission: true,
+    eventCount: 0
+  }), {
+    visible: true,
+    agentId: "openclaw.rowlet"
+  })
+
+  assert.deepEqual(getAgentLivePanelState!({
+    targetAgent: "codex",
+    liveSourceAgentId: "openclaw.rowlet",
+    liveEventAgentId: "openclaw.gengar",
+    hasActiveSource: false,
+    hasActiveSubmission: false,
+    status: "OpenClaw finished",
+    reasoning: "Thinking through the final answer",
+    eventCount: 2
+  }), {
+    visible: false,
+    agentId: "openclaw.gengar"
+  })
+
+  assert.deepEqual(getAgentLivePanelState!({
+    targetAgent: "codex",
+    liveSourceAgentId: "openclaw.rowlet",
+    liveEventAgentId: "openclaw.gengar",
+    hasActiveSource: false,
+    hasActiveSubmission: true,
+    status: "OpenClaw finished",
+    reasoning: "Thinking through the final answer",
+    eventCount: 2
+  }), {
+    visible: true,
+    agentId: "openclaw.gengar"
+  })
+
+  assert.deepEqual(getAgentLivePanelState!({
+    targetAgent: "codex",
+    hasActiveSource: false,
+    hasActiveSubmission: false,
+    eventCount: 0
+  }), {
+    visible: false,
+    agentId: undefined
+  })
+})
+
+test("openclaw live helpers encode the SSE path and bound preview activity", async () => {
+  const taskConversationModule = await loadTaskConversationModule()
+  const buildConversationLivePath = Reflect.get(taskConversationModule, "buildConversationLivePath") as
+    | ((conversationId: string) => string)
+    | undefined
+  const shouldOpenAgentLiveStream = Reflect.get(taskConversationModule, "shouldOpenAgentLiveStream") as
+    | ((agentId: AgentKind) => boolean)
+    | undefined
+  const reduceAgentLivePreview = Reflect.get(taskConversationModule, "reduceAgentLivePreview") as
+    | ((input: AgentLivePreview, event: AgentLiveEvent) => AgentLivePreview)
+    | undefined
+
+  assert.equal(typeof buildConversationLivePath, "function")
+  assert.equal(typeof shouldOpenAgentLiveStream, "function")
+  assert.equal(typeof reduceAgentLivePreview, "function")
+  assert.equal(buildConversationLivePath!("conversation:alpha/beta"), "/api/conversation/live?conversationId=conversation%3Aalpha%2Fbeta")
+  assert.equal(shouldOpenAgentLiveStream!("codex"), false)
+  assert.equal(shouldOpenAgentLiveStream!("openclaw.rowlet"), true)
+
+  let preview: AgentLivePreview = { events: [] }
+  for (let index = 0; index < 24; index += 1) {
+    preview = reduceAgentLivePreview!(preview, {
+      id: `delta-${index}`,
+      sequence: index,
+      conversationId: "conversation-1",
+      agentId: "openclaw.rowlet",
+      type: "assistant_delta",
+      createdAt: "2026-08-20T00:00:04.000Z",
+      delta: `delta-${index}`
+    })
+  }
+  preview = reduceAgentLivePreview!(preview, {
+    id: "reasoning-2",
+    sequence: 30,
+    conversationId: "conversation-1",
+    agentId: "openclaw.rowlet",
+    type: "reasoning",
+    createdAt: "2026-08-20T00:00:05.000Z",
+    text: "x".repeat(20_000)
+  })
+
+  assert.equal(preview.events.length, 18)
+  assert.equal(preview.events[0]?.delta, "delta-6")
+  assert.equal(preview.reasoning?.length, 8_000)
 })

@@ -258,7 +258,7 @@ export class ConversationService {
         workflowRunId: run.id,
         role: managerRouting ? "manager" : "agent",
         agentId: input.targetAgent,
-        content: compactResponse(result.body),
+        content: compactAgentResultBody(result.body),
         importance: result.status === "failed" ? "critical" : "important",
         status: result.status,
         replyToId: userEntry.id,
@@ -350,6 +350,10 @@ export function parseUnboundManagerDecision(raw: string, runs: WorkflowRun[]) {
 function compactResponse(body: string) {
   const normalized = body.trim()
   return normalized.length <= 4_000 ? normalized : normalized.slice(0, 4_000)
+}
+
+function compactAgentResultBody(body: string) {
+  return body.length <= 4_000 ? body : body.slice(0, 4_000)
 }
 
 function toConversationScopedIdempotencyKey(

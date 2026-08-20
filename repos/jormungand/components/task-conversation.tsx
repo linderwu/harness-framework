@@ -3,6 +3,8 @@
 import { createPortal } from "react-dom"
 import { FormEvent, KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { ChevronDown, ChevronLeft, Send } from "lucide-react"
+import type { AgentLiveEvent } from "@/lib/agent-live-events"
+import { MAX_AGENT_LIVE_TEXT, normalizeAgentLiveEvent } from "@/lib/agent-live-events"
 import type {
   CodexConversationEvent,
   CodexConversationState
@@ -49,6 +51,182 @@ function isQueuedMutationResult(
 }
 
 type ConversationManagerAction = "rename" | "archive" | "unarchive" | "delete"
+type AgentLivePreview = {
+  events: AgentLiveEvent[]
+  reasoning?: string
+  status?: string
+}
+type AgentLiveSubmissionLifecycle = {
+  postPending: boolean
+  terminalEventReceived: boolean
+}
+type AgentLivePanelState = {
+  visible: boolean
+  agentId?: AgentKind
+}
+
+export const MAX_VISIBLE_AGENT_LIVE_EVENTS = 18
+
+export function buildConversationLivePath(conversationId: string) {
+  return `/api/conversation/live?conversationId=${encodeURIComponent(conversationId)}`
+}
+
+export function shouldOpenAgentLiveStream(agentId: AgentKind) {
+  return agentId !== "codex"
+}
+
+export function isAgentLiveTerminal(event: AgentLiveEvent) {
+  return event.type === "completed" || event.type === "failed"
+}
+
+export function reduceAgentLivePreview(current: AgentLivePreview, event: AgentLiveEvent): AgentLivePreview {
+  const nextStatus = event.type === "assistant_delta" || event.type === "reasoning"
+    ? current.status
+    : readAgentLiveMessage(event) ?? current.status
+  const nextReasoning = event.type === "reasoning"
+    ? readAgentLiveMessage(event)?.slice(0, MAX_AGENT_LIVE_TEXT) ?? current.reasoning
+    : current.reasoning
+  const nextEvents = event.type === "reasoning"
+    ? current.events
+    : [...current.events, event].slice(-MAX_VISIBLE_AGENT_LIVE_EVENTS)
+
+  return {
+    events: nextEvents,
+    reasoning: nextReasoning,
+    status: nextStatus?.slice(0, MAX_AGENT_LIVE_TEXT)
+  }
+}
+
+export function startAgentLiveSubmissionLifecycle(): AgentLiveSubmissionLifecycle {
+  return {
+    postPending: true,
+    terminalEventReceived: false
+  }
+}
+
+export function advanceAgentLiveSubmissionLifecycle(
+  lifecycle: AgentLiveSubmissionLifecycle | undefined,
+  event: AgentLiveEvent
+) {
+  const terminal = isAgentLiveTerminal(event)
+
+  if (!lifecycle) {
+    return {
+      lifecycle: undefined,
+      shouldCloseSource: terminal
+    }
+  }
+
+  if (terminal && lifecycle.postPending) {
+    return {
+      lifecycle: {
+        ...lifecycle,
+        terminalEventReceived: true
+      },
+      shouldCloseSource: false
+    }
+  }
+
+  return {
+    lifecycle: terminal ? undefined : lifecycle,
+    shouldCloseSource: terminal
+  }
+}
+
+export function settleAgentLiveSubmissionLifecycle(
+  lifecycle: AgentLiveSubmissionLifecycle | undefined
+) {
+  if (!lifecycle) {
+    return {
+      lifecycle: undefined,
+      shouldCloseSource: false
+    }
+  }
+
+  if (lifecycle.terminalEventReceived) {
+    return {
+      lifecycle: undefined,
+      shouldCloseSource: true
+    }
+  }
+
+  return {
+    lifecycle: {
+      ...lifecycle,
+      postPending: false
+    },
+    shouldCloseSource: false
+  }
+}
+
+export function shouldIgnoreAgentLiveSourceError(
+  lifecycle: AgentLiveSubmissionLifecycle | undefined
+) {
+  return !!lifecycle?.postPending && lifecycle.terminalEventReceived
+}
+
+export function getAgentLivePanelState(input: {
+  targetAgent: AgentKind
+  liveSourceAgentId?: AgentKind
+  liveEventAgentId?: AgentKind
+  hasActiveSource: boolean
+  hasActiveSubmission: boolean
+  status?: string
+  reasoning?: string
+  eventCount: number
+}): AgentLivePanelState {
+  const agentId = input.liveEventAgentId
+    ?? input.liveSourceAgentId
+    ?? (shouldOpenAgentLiveStream(input.targetAgent) ? input.targetAgent : undefined)
+  const visible = !!agentId && (input.hasActiveSource || input.hasActiveSubmission)
+
+  return {
+    visible,
+    agentId
+  }
+}
+
+export function collectAgentLiveAssistantText(events: AgentLiveEvent[]) {
+  const text = events
+    .filter((event) => event.type === "assistant_delta")
+    .map((event) => event.delta ?? event.text ?? event.message ?? "")
+    .join("")
+
+  return text.length ? text : undefined
+}
+
+export function shouldShowCodexControls(input: {
+  hasCodexSession: boolean
+  isTurnRunning: boolean
+  isPaused: boolean
+  sessionStatus?: string
+}) {
+  return input.hasCodexSession
+    && input.sessionStatus !== "stopped"
+    && input.sessionStatus !== "failed"
+    && (input.isTurnRunning || input.isPaused)
+}
+
+export function getConversationActivityViewModel(input: {
+  hasCodexSession: boolean
+  isTurnRunning: boolean
+  isPaused: boolean
+  sessionStatus?: string
+  agentLivePanelState: AgentLivePanelState
+}) {
+  const hasAgentLiveActivity = input.agentLivePanelState.visible
+
+  return {
+    hasAgentLiveActivity,
+    showsCodexSession: input.hasCodexSession && !hasAgentLiveActivity,
+    showsCodexControls: shouldShowCodexControls({
+      hasCodexSession: input.hasCodexSession,
+      isTurnRunning: input.isTurnRunning,
+      isPaused: input.isPaused,
+      sessionStatus: input.sessionStatus
+    })
+  }
+}
 
 export function TaskConversation(props: {
   run?: WorkflowRun
@@ -73,6 +251,11 @@ export function TaskConversation(props: {
   const [statusMessage, setStatusMessage] = useState<string>()
   const [session, setSession] = useState<CodexConversationState["session"]>()
   const [events, setEvents] = useState<CodexConversationEvent[]>([])
+  const [agentLiveEvents, setAgentLiveEvents] = useState<AgentLiveEvent[]>([])
+  const [agentLiveReasoning, setAgentLiveReasoning] = useState<string | undefined>()
+  const [agentLiveStatus, setAgentLiveStatus] = useState<string | undefined>()
+  const [activeEventSource, setActiveEventSource] = useState<EventSource | undefined>()
+  const [activeAgentLiveSourceAgentId, setActiveAgentLiveSourceAgentId] = useState<AgentKind | undefined>()
   const [isControlling, setIsControlling] = useState(false)
   const [isCodexActivityExpanded, setIsCodexActivityExpanded] = useState(true)
   const [isLoadingConversation, setIsLoadingConversation] = useState(true)
@@ -95,6 +278,11 @@ export function TaskConversation(props: {
   const deleteTriggerRef = useRef<HTMLButtonElement>(null)
   const deleteCancelRef = useRef<HTMLButtonElement>(null)
   const isRenameFormOpenRef = useRef(false)
+  const activeEventSourceRef = useRef<EventSource | undefined>(undefined)
+  const agentLiveEventListenerRef = useRef<EventListener | undefined>(undefined)
+  const agentLiveErrorListenerRef = useRef<EventListener | undefined>(undefined)
+  const agentLivePreviewRef = useRef<AgentLivePreview>({ events: [] })
+  const agentLiveSubmissionLifecycleRef = useRef<{ postPending: boolean; terminalEventReceived: boolean } | undefined>(undefined)
   const pollingInFlight = useRef<{
     generation: number
     promise: ReturnType<typeof loadConversation>
@@ -132,7 +320,42 @@ export function TaskConversation(props: {
     ?? currentConversationSummary?.title
     ?? (isUnbound ? (isLoadingConversation ? "Loading conversation" : "New conversation") : "Conversation")
 
+  function resetAgentLivePreview() {
+    agentLivePreviewRef.current = { events: [] }
+    setAgentLiveEvents([])
+    setAgentLiveReasoning(undefined)
+    setAgentLiveStatus(undefined)
+  }
+
+  function closeAgentLiveSource(options?: { preservePreview?: boolean }) {
+    const source = activeEventSourceRef.current
+    const handleAgentLiveEvent = agentLiveEventListenerRef.current
+    const handleAgentLiveError = agentLiveErrorListenerRef.current
+
+    if (source && handleAgentLiveEvent) {
+      source.removeEventListener("agent-live", handleAgentLiveEvent)
+    }
+    if (source && handleAgentLiveError) {
+      source.removeEventListener("error", handleAgentLiveError)
+    }
+    if (source) {
+      source.close()
+    }
+
+    activeEventSourceRef.current = undefined
+    agentLiveSubmissionLifecycleRef.current = undefined
+    agentLiveEventListenerRef.current = undefined
+    agentLiveErrorListenerRef.current = undefined
+    setActiveEventSource(undefined)
+    setActiveAgentLiveSourceAgentId(undefined)
+
+    if (!options?.preservePreview) {
+      resetAgentLivePreview()
+    }
+  }
+
   function invalidateConversationRequests() {
+    closeAgentLiveSource()
     requestGeneration.current += 1
     pollingInFlight.current = undefined
   }
@@ -184,6 +407,12 @@ export function TaskConversation(props: {
   }, [isDeleteDialogFallbackOpen])
 
   useEffect(() => {
+    if (activeEventSource) {
+      activeEventSourceRef.current = activeEventSource
+    }
+  }, [activeEventSource])
+
+  useEffect(() => {
     if (shouldSkipUnboundHydration({
       activeConversationId,
       isConversationIdentityUnavailable,
@@ -221,6 +450,7 @@ export function TaskConversation(props: {
       active = false
       invalidateConversationRequests()
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeConversationId, conversationLoadPath, isConversationIdentityUnavailable, isReplacingDeletedConversation, isUnbound, onEntriesChanged, runId])
 
   useEffect(() => {
@@ -259,7 +489,9 @@ export function TaskConversation(props: {
   }, [activeConversationId, isStartingConversation, isUnbound, refreshConversations])
 
   useEffect(() => () => {
+    closeAgentLiveSource()
     invalidateConversationRequests()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   async function submit(event?: FormEvent) {
@@ -292,6 +524,55 @@ export function TaskConversation(props: {
     setError(undefined)
     setStatusMessage(undefined)
     try {
+      if (shouldOpenAgentLiveStream(targetAgent)) {
+        closeAgentLiveSource()
+        agentLiveSubmissionLifecycleRef.current = startAgentLiveSubmissionLifecycle()
+        if (typeof window !== "undefined" && typeof EventSource === "function") {
+          try {
+            const source = new EventSource(buildConversationLivePath(activeConversationId))
+            setActiveAgentLiveSourceAgentId(targetAgent)
+            const handleAgentLiveEvent: EventListener = (rawEvent) => {
+              const nextGeneration = requestGeneration.current
+              if (generation !== nextGeneration) {
+                closeAgentLiveSource()
+                return
+              }
+
+              try {
+                const messageEvent = rawEvent as MessageEvent<string>
+                const event = normalizeAgentLiveEvent(JSON.parse(messageEvent.data))
+                const nextPreview = reduceAgentLivePreview(agentLivePreviewRef.current, event)
+                agentLivePreviewRef.current = nextPreview
+                setAgentLiveEvents(nextPreview.events)
+                setAgentLiveReasoning(nextPreview.reasoning)
+                setAgentLiveStatus(nextPreview.status)
+                const lifecycleResult = advanceAgentLiveSubmissionLifecycle(agentLiveSubmissionLifecycleRef.current, event)
+                agentLiveSubmissionLifecycleRef.current = lifecycleResult.lifecycle
+                if (lifecycleResult.shouldCloseSource) {
+                  closeAgentLiveSource()
+                }
+              } catch {
+                // Ignore malformed or non-agent-live frames so final POST still succeeds.
+              }
+            }
+            const handleAgentLiveError: EventListener = () => {
+              if (shouldIgnoreAgentLiveSourceError(agentLiveSubmissionLifecycleRef.current)) {
+                return
+              }
+              closeAgentLiveSource()
+            }
+
+            agentLiveEventListenerRef.current = handleAgentLiveEvent
+            agentLiveErrorListenerRef.current = handleAgentLiveError
+            source.addEventListener("agent-live", handleAgentLiveEvent)
+            source.addEventListener("error", handleAgentLiveError)
+            activeEventSourceRef.current = source
+            setActiveEventSource(source)
+          } catch {
+            // Silent fallback when EventSource construction is unavailable.
+          }
+        }
+      }
       const response = await fetch(conversationPath, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -326,6 +607,11 @@ export function TaskConversation(props: {
         return
       }
       if (!response.ok || !result.userEntry) throw new Error(result.error ?? "Message dispatch failed")
+      const lifecycleResult = settleAgentLiveSubmissionLifecycle(agentLiveSubmissionLifecycleRef.current)
+      agentLiveSubmissionLifecycleRef.current = lifecycleResult.lifecycle
+      if (lifecycleResult.shouldCloseSource) {
+        closeAgentLiveSource()
+      }
       setConversationId(result.conversationId ?? activeConversationId)
       setEntries((current) => result.entries ?? mergeResult(current, optimistic.id, result.userEntry!, result.responseEntry))
       setSession(result.session)
@@ -334,6 +620,7 @@ export function TaskConversation(props: {
       if (result.binding) props.onBound?.(result.binding)
     } catch (submitError) {
       if (generation !== requestGeneration.current) return
+      closeAgentLiveSource()
       setEntries((current) => current.map((entry) => entry.id === optimistic.id ? { ...entry, status: "failed" } : entry))
       setError(formatError(submitError))
     }
@@ -685,6 +972,38 @@ export function TaskConversation(props: {
     : props.codexActivityMount && codexActivityPanel
       ? createPortal(codexActivityPanel, props.codexActivityMount)
       : null
+  const hasCodexSession = isUnbound && !!session
+  const agentLiveAssistantText = collectAgentLiveAssistantText(agentLiveEvents)
+  const agentLiveVisibleEvents = agentLiveEvents
+    .filter((event) => event.type !== "assistant_delta")
+    .map((event) => ({
+      id: event.id,
+      type: event.type,
+      message: readAgentLiveMessage(event) ?? "Agent activity"
+    }))
+  const agentLivePanelState = getAgentLivePanelState({
+    targetAgent,
+    liveSourceAgentId: activeAgentLiveSourceAgentId,
+    liveEventAgentId: agentLiveEvents.at(-1)?.agentId,
+    hasActiveSource: !!activeEventSource,
+    hasActiveSubmission: !!agentLiveSubmissionLifecycleRef.current,
+    status: agentLiveStatus,
+    reasoning: agentLiveReasoning,
+    eventCount: agentLiveEvents.length
+  })
+  const activityViewModel = getConversationActivityViewModel({
+    hasCodexSession,
+    isTurnRunning,
+    isPaused,
+    sessionStatus: session?.status,
+    agentLivePanelState
+  })
+  const showsCodexSession = activityViewModel.showsCodexSession
+  const selectedAgentLabel = getAgentLabel(
+    activityViewModel.hasAgentLiveActivity
+      ? agentLivePanelState.agentId ?? targetAgent
+      : "codex"
+  )
   const isConversationActionPending = isLoadingConversation || isStartingConversation || !!activeManagerAction
   const areManagerControlsDisabled = isConversationManagerLocked({
     isLoadingConversation,
@@ -863,6 +1182,40 @@ export function TaskConversation(props: {
       ) : null}
       {statusMessage ? <p role="status">{statusMessage}</p> : null}
       {renderedCodexActivity}
+      {isUnbound && activityViewModel.hasAgentLiveActivity ? (
+        <section className="codexActivity" aria-label={showsCodexSession ? "Codex activity" : "Agent activity"}>
+          <div className="codexActivityHeader">
+            <div>
+              <p className="eyebrow">{showsCodexSession ? "Live Codex session" : "Live Agent session"}</p>
+              <strong>{showsCodexSession ? formatSessionStatus(session) : agentLiveStatus ?? "Working"}</strong>
+              <p>{selectedAgentLabel}</p>
+            </div>
+            <div className="codexActivityActions">
+              {activityViewModel.showsCodexControls && isTurnRunning ? <button className="compactPanelButton" disabled={isControlling} onClick={() => void control("interrupt")} type="button">Pause</button> : null}
+              {activityViewModel.showsCodexControls && isPaused ? <button className="compactPanelButton" disabled={isControlling} onClick={() => void control("resume")} type="button">Continue</button> : null}
+              {activityViewModel.showsCodexControls && session && session.status !== "stopped" && session.status !== "failed" && (isTurnRunning || isPaused) ? <button className="compactPanelButton danger" disabled={isControlling} onClick={() => void control("stop")} type="button">Stop</button> : null}
+            </div>
+          </div>
+          {showsCodexSession && visibleActivityEvents.length ? (
+            <ol className="codexActivityEvents" aria-live="polite">
+              {visibleActivityEvents.map((event) => <li key={event.id}><span>{formatActivityType(event.type)}</span><p>{event.message ?? event.text ?? "Codex activity"}</p></li>)}
+            </ol>
+          ) : null}
+          {!showsCodexSession && agentLiveVisibleEvents.length ? (
+            <ol className="codexActivityEvents" aria-live="polite">
+              {agentLiveVisibleEvents.map((event) => <li key={event.id}><span>{formatActivityType(event.type)}</span><p>{event.message}</p></li>)}
+            </ol>
+          ) : null}
+          {showsCodexSession && liveAssistantText ? <pre className="codexLiveResponse" aria-live="polite">{liveAssistantText}</pre> : null}
+          {!showsCodexSession && agentLiveAssistantText ? <pre className="codexLiveResponse" aria-live="polite">{agentLiveAssistantText}</pre> : null}
+          {!showsCodexSession && agentLiveReasoning ? (
+            <details>
+              <summary>Reasoning preview</summary>
+              <pre className="codexLiveResponse" aria-live="polite">{agentLiveReasoning}</pre>
+            </details>
+          ) : null}
+        </section>
+      ) : null}
       <ol className="conversationEntries">
         {entries.length ? entries.map((entry) => (
           <li className={`conversationEntry ${entry.role} ${entry.importance}`} key={entry.id}>
@@ -912,6 +1265,10 @@ function formatSessionStatus(session: CodexConversationState["session"]) {
 
 function formatActivityType(type: string) {
   return type.replaceAll("_", " ")
+}
+
+function readAgentLiveMessage(event: AgentLiveEvent) {
+  return event.message ?? event.text ?? event.delta
 }
 
 function mergeResult(current: ConversationEntry[], optimisticId: string, userEntry: ConversationEntry, responseEntry?: ConversationEntry) {
