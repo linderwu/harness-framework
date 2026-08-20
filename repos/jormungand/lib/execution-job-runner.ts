@@ -1,14 +1,14 @@
-import type { ExecutionJob, ExecutionJobJsonValue } from "./execution-jobs"
+import { isExecutionJobLeaseExpired, type ExecutionJob, type ExecutionJobJsonValue } from "./execution-jobs"
 import type { HiveMemoryRepository } from "./hive-memory/repository"
 
 export type ExecutionJobRunnerRepository = Pick<
   HiveMemoryRepository,
-  "getExecutionJob" | "claimExecutionJob" | "completeExecutionJob" | "failExecutionJob"
+  "getExecutionJob" | "recoverExpiredExecutionJobs" | "claimExecutionJob" | "completeExecutionJob" | "failExecutionJob"
 >
 
 export type ExecutionJobRouteResponse = {
   body: {
-    status: "queued" | "completed" | "failed" | "canceled"
+    status: "queued" | "running" | "completed" | "failed" | "canceled"
     jobId: string
     error?: string
   }
@@ -16,12 +16,15 @@ export type ExecutionJobRouteResponse = {
   shouldScheduleDrain: boolean
 }
 
-export function getExecutionJobRouteResponse(job: ExecutionJob): ExecutionJobRouteResponse {
+export function getExecutionJobRouteResponse(job: ExecutionJob, now = new Date().toISOString()): ExecutionJobRouteResponse {
   if (job.status === "queued") {
     return { body: { status: "queued", jobId: job.id }, httpStatus: 202, shouldScheduleDrain: true }
   }
   if (job.status === "running") {
-    return { body: { status: "queued", jobId: job.id }, httpStatus: 202, shouldScheduleDrain: false }
+    if (isExecutionJobLeaseExpired(job, now)) {
+      return { body: { status: "queued", jobId: job.id }, httpStatus: 202, shouldScheduleDrain: true }
+    }
+    return { body: { status: "running", jobId: job.id }, httpStatus: 202, shouldScheduleDrain: false }
   }
   if (job.status === "completed") {
     return { body: { status: "completed", jobId: job.id }, httpStatus: 200, shouldScheduleDrain: false }
@@ -43,6 +46,7 @@ export async function runNextExecutionJob(input: {
   leaseDurationMs: number
   handlers: Record<string, (job: ExecutionJob) => Promise<ExecutionJobJsonValue>>
 }) {
+  await input.repository.recoverExpiredExecutionJobs()
   const target = input.repository.getExecutionJob(input.jobId)
   if (!target || target.status !== "queued") {
     return target

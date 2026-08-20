@@ -24,6 +24,7 @@ type ProjectWorkflowRunsRouteDependencies = {
   getProject?: (id: string) => Promise<Project | undefined>
   repository?: DefaultHiveServices["repository"]
   scheduler?: Pick<DefaultHiveServices["scheduler"], "enqueue" | "runNext">
+  upsertWorkflowRun?: typeof upsertWorkflowRun
   scheduleExecutionJobDrain?: (jobId: string) => Promise<void> | void
 }
 
@@ -46,6 +47,7 @@ async function postProjectWorkflowRun(
   const permissionMode = getAgentPermissionMode()
   const defaultServices = dependencies.repository ? undefined : getDefaultHiveServices()
   const repository = dependencies.repository ?? defaultServices!.repository
+  const persistWorkflowRun = dependencies.upsertWorkflowRun ?? upsertWorkflowRun
   const scheduler = dependencies.scheduler ?? defaultServices?.scheduler ?? {
     enqueue: (input: { workflowRunId: string; reason: string; idempotencyKey: string }) =>
       repository.enqueueManagerWake(input),
@@ -114,17 +116,19 @@ async function postProjectWorkflowRun(
       return respondWithExecutionJob(existingJob, scheduleExecutionJobDrain)
     }
 
+    let createdJob: ExecutionJob | undefined
     try {
-      const { job, inserted } = await repository.createExecutionJob({
+      const created = await repository.createExecutionJob({
         kind: "workflow_run_start",
         workflowRunId: managedRun.id,
         payload: { reason: "mission_created" },
         idempotencyKey: executionJobIdempotencyKey
       })
-      if (!inserted) {
-        return respondWithExecutionJob(job, scheduleExecutionJobDrain)
+      if (!created.inserted) {
+        return respondWithExecutionJob(created.job, scheduleExecutionJobDrain)
       }
-      const runningRun = await upsertWorkflowRun({
+      createdJob = created.job
+      const runningRun = await persistWorkflowRun({
         ...managedRun,
         status: "running",
         updatedAt: new Date().toISOString()
@@ -142,10 +146,13 @@ async function postProjectWorkflowRun(
         reason: "mission_created",
         idempotencyKey: executionJobIdempotencyKey
       })
-      return respondWithExecutionJob(job, scheduleExecutionJobDrain)
+      return respondWithExecutionJob(createdJob, scheduleExecutionJobDrain)
     } catch (error) {
+      if (createdJob) {
+        await repository.cancelExecutionJob({ id: createdJob.id }).catch(() => undefined)
+      }
       const message = error instanceof Error ? error.message : String(error)
-      const failedRun = await upsertWorkflowRun({
+      const failedRun = await persistWorkflowRun({
         ...managedRun,
         status: "failed",
         eventLogWarning: `Hive control plane unavailable: ${message}`,
@@ -174,22 +181,30 @@ async function postProjectWorkflowRun(
       return respondWithExecutionJob(existingJob, scheduleExecutionJobDrain)
     }
 
-    const runningRun = await upsertWorkflowRun({
-      ...agentTaskRun,
-      status: "running",
-      updatedAt: new Date().toISOString()
-    })
-
-    const { job, inserted } = await repository.createExecutionJob({
-      kind: "agent_task_advance",
-      workflowRunId: runningRun.id,
-      payload: { version: runningRun.version },
-      idempotencyKey: executionJobIdempotencyKey
-    })
-    if (!inserted) {
-      return respondWithExecutionJob(job, scheduleExecutionJobDrain)
+    let createdJob: ExecutionJob | undefined
+    try {
+      const created = await repository.createExecutionJob({
+        kind: "agent_task_advance",
+        workflowRunId: agentTaskRun.id,
+        payload: { version: agentTaskRun.version },
+        idempotencyKey: executionJobIdempotencyKey
+      })
+      if (!created.inserted) {
+        return respondWithExecutionJob(created.job, scheduleExecutionJobDrain)
+      }
+      createdJob = created.job
+      await persistWorkflowRun({
+        ...agentTaskRun,
+        status: "running",
+        updatedAt: new Date().toISOString()
+      })
+      return respondWithExecutionJob(createdJob, scheduleExecutionJobDrain)
+    } catch (error) {
+      if (createdJob) {
+        await repository.cancelExecutionJob({ id: createdJob.id }).catch(() => undefined)
+      }
+      throw error
     }
-    return respondWithExecutionJob(job, scheduleExecutionJobDrain)
   }
 
   const intakeRun = await advanceWorkflow(run, {
@@ -199,7 +214,7 @@ async function postProjectWorkflowRun(
     permissionMode
   })
 
-  await upsertWorkflowRun(intakeRun)
+  await persistWorkflowRun(intakeRun)
   return NextResponse.json(intakeRun, { status: 201 })
 }
 

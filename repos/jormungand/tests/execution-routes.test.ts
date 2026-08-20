@@ -37,12 +37,17 @@ type WorkflowRunManagerMessageRouteModule = RouteHandler & {
 type ProjectWorkflowRunsRouteDependencies = {
   getProject?: (id: string) => Promise<Project | undefined>
   repository: ReturnType<typeof createHiveMemoryRepository>
+  upsertWorkflowRun?: (run: WorkflowRun) => Promise<WorkflowRun>
   scheduleExecutionJobDrain?: (jobId: string) => Promise<void> | void
 }
 
 type WorkflowRunManagerRouteDependencies = {
   getWorkflowRun?: (id: string) => Promise<WorkflowRun | undefined>
   repository: ReturnType<typeof createHiveMemoryRepository>
+  scheduler?: {
+    enqueue: (input: { workflowRunId: string; reason: string; idempotencyKey: string }) => Promise<void> | void
+    runNext: (workflowRunId: string) => Promise<unknown>
+  }
   scheduleExecutionJobDrain?: (jobId: string) => Promise<void> | void
 }
 
@@ -132,6 +137,38 @@ test("execution job drain claims the requested job when same-run jobs are queued
   assert.equal(completed?.status, "completed")
   assert.equal(repository.getExecutionJob(first.job.id)?.status, "queued")
   assert.equal(repository.getExecutionJob(second.job.id)?.status, "completed")
+})
+
+test("execution job drain recovers an expired running job before claiming it", async (t) => {
+  const { repository } = await openRepository(t)
+  const created = await repository.createExecutionJob({
+    kind: "manager_wake",
+    workflowRunId: "expired-run",
+    payload: { reason: "health_check" },
+    idempotencyKey: "expired-runner-job",
+    availableAt: "2020-01-01T00:00:00.000Z"
+  })
+  const claimed = await repository.claimExecutionJob({
+    id: created.job.id,
+    leaseOwner: "expired-worker",
+    leaseDurationMs: 1,
+    now: "2020-01-01T00:00:00.000Z"
+  })
+  assert.equal(claimed?.status, "running")
+
+  const completed = await runNextExecutionJob({
+    repository,
+    jobId: created.job.id,
+    leaseOwner: "replacement-worker",
+    leaseDurationMs: 30_000,
+    handlers: {
+      manager_wake: async () => ({ status: "recovered" })
+    }
+  })
+
+  assert.equal(completed?.id, created.job.id)
+  assert.equal(completed?.status, "completed")
+  assert.equal(repository.getExecutionJob(created.job.id)?.status, "completed")
 })
 
 function makeExecutionJobCreationFail(repository: ReturnType<typeof createHiveMemoryRepository>) {
@@ -532,6 +569,89 @@ test("manager wake and message do not append side effects when execution job cre
   assert.equal(repository.listManagerWakes(messageRun.id).length, 0)
 })
 
+test("manager duplicate reports running while active and re-drains an expired lease", async (t) => {
+  const { repository } = await openRepository(t)
+  const managedRun = createManagedRun()
+  const drainCalls: string[] = []
+  let drainExpiredJob = false
+  const routeModule = await importWorkflowRunManagerWakeRoute()
+  const handlers = routeModule.createWorkflowRunManagerWakeRouteHandlers?.({
+    getWorkflowRun: async (id) => (id === managedRun.id ? managedRun : undefined),
+    repository,
+    scheduleExecutionJobDrain: async (jobId) => {
+      drainCalls.push(jobId)
+      if (drainExpiredJob) {
+        await runNextExecutionJob({
+          repository,
+          jobId,
+          leaseOwner: "replacement-route-worker",
+          leaseDurationMs: 30_000,
+          handlers: {
+            manager_wake: async () => ({ status: "recovered" })
+          }
+        })
+      }
+    }
+  }) ?? routeModule
+
+  const activeRequest = () => handlers.POST(
+    new Request(`https://jormungand.test/api/workflow-runs/${managedRun.id}/manager/wake`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reason: "health_check", idempotencyKey: "active-wake" })
+    }),
+    { params: Promise.resolve({ id: managedRun.id }) }
+  )
+
+  const activeResponse = await activeRequest()
+  const activeBody = await activeResponse.json() as { status?: string; jobId?: string }
+  assert.ok(activeBody.jobId)
+  const activeClaim = await repository.claimExecutionJob({
+    id: activeBody.jobId,
+    leaseOwner: "active-worker",
+    leaseDurationMs: 30_000
+  })
+  assert.equal(activeClaim?.status, "running")
+
+  const activeDuplicateResponse = await activeRequest()
+  const activeDuplicateBody = await activeDuplicateResponse.json() as { status?: string; jobId?: string }
+  assert.equal(activeDuplicateResponse.status, 202)
+  assert.equal(activeDuplicateBody.status, "running")
+  assert.equal(activeDuplicateBody.jobId, activeBody.jobId)
+  assert.equal(drainCalls.length, 1)
+
+  const expiredJob = await repository.createExecutionJob({
+    kind: "manager_wake",
+    workflowRunId: managedRun.id,
+    payload: { reason: "operator_resume" },
+    idempotencyKey: `workflow-run-manager-wake:${managedRun.id}:expired-wake`,
+    availableAt: "2020-01-01T00:00:00.000Z"
+  })
+  await repository.claimExecutionJob({
+    id: expiredJob.job.id,
+    leaseOwner: "expired-worker",
+    leaseDurationMs: 1,
+    now: "2020-01-01T00:00:00.000Z"
+  })
+  drainExpiredJob = true
+
+  const expiredResponse = await handlers.POST(
+    new Request(`https://jormungand.test/api/workflow-runs/${managedRun.id}/manager/wake`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reason: "operator_resume", idempotencyKey: "expired-wake" })
+    }),
+    { params: Promise.resolve({ id: managedRun.id }) }
+  )
+  const expiredBody = await expiredResponse.json() as { status?: string; jobId?: string }
+
+  assert.equal(expiredResponse.status, 202)
+  assert.equal(expiredBody.status, "queued")
+  assert.equal(expiredBody.jobId, expiredJob.job.id)
+  assert.equal(repository.getExecutionJob(expiredJob.job.id)?.status, "completed")
+  assert.equal(drainCalls.length, 2)
+})
+
 test("agent task workflow runs enqueue a durable advance job before returning", async (t) => {
   const { repository } = await openRepository(t)
   const project = createProject({
@@ -594,6 +714,154 @@ test("agent task workflow runs enqueue a durable advance job before returning", 
   assert.equal(duplicateResponse.status, 202)
   assert.equal(duplicateBody.jobId, body.jobId)
   assert.deepEqual(drainCalls, [job?.id, job?.id])
+})
+
+test("agent task job insertion failure does not persist a running workflow", async (t) => {
+  const { repository } = await openRepository(t)
+  const project = createProject({
+    name: "Agent task insert boundary",
+    type: "agent_task",
+    goal: "Do not persist a run before its durable job.",
+    repository: "github.com/acme/agent-task-insert-boundary",
+    source: "dashboard"
+  })
+  let upsertCalls = 0
+  makeExecutionJobCreationFail(repository)
+  const routeModule = await importProjectWorkflowRunsRoute()
+  const handlers = routeModule.createProjectWorkflowRunsRouteHandlers?.({
+    getProject: async (id) => (id === project.id ? project : undefined),
+    repository,
+    upsertWorkflowRun: async () => {
+      upsertCalls += 1
+      throw new Error("workflow run should not be persisted")
+    },
+    scheduleExecutionJobDrain: async () => undefined
+  }) ?? routeModule
+
+  await assert.rejects(
+    handlers.POST(
+      new Request(`https://jormungand.test/api/projects/${project.id}/workflow-runs`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": "agent-task-insert-boundary"
+        },
+        body: JSON.stringify({ selectedAgent: "codex" })
+      }),
+      { params: Promise.resolve({ id: project.id }) }
+    ),
+    /execution job insert failed/
+  )
+
+  assert.equal(upsertCalls, 0)
+})
+
+test("agent task run persistence failure cancels its queued execution job", async (t) => {
+  const { repository } = await openRepository(t)
+  const project = createProject({
+    name: "Agent task persistence boundary",
+    type: "agent_task",
+    goal: "Cancel the job if run persistence fails.",
+    repository: "github.com/acme/agent-task-persistence-boundary",
+    source: "dashboard"
+  })
+  let createdJobId: string | undefined
+  const originalCreateExecutionJob = repository.createExecutionJob.bind(repository)
+  repository.createExecutionJob = async (input) => {
+    const created = await originalCreateExecutionJob(input)
+    createdJobId = created.job.id
+    return created
+  }
+  const routeModule = await importProjectWorkflowRunsRoute()
+  const handlers = routeModule.createProjectWorkflowRunsRouteHandlers?.({
+    getProject: async (id) => (id === project.id ? project : undefined),
+    repository,
+    upsertWorkflowRun: async () => {
+      throw new Error("workflow run persistence failed")
+    },
+    scheduleExecutionJobDrain: async () => undefined
+  }) ?? routeModule
+
+  await assert.rejects(
+    handlers.POST(
+      new Request(`https://jormungand.test/api/projects/${project.id}/workflow-runs`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": "agent-task-persistence-boundary"
+        },
+        body: JSON.stringify({ selectedAgent: "codex" })
+      }),
+      { params: Promise.resolve({ id: project.id }) }
+    ),
+    /workflow run persistence failed/
+  )
+
+  assert.ok(createdJobId)
+  assert.equal(repository.getExecutionJob(createdJobId)?.status, "canceled")
+})
+
+test("manager side-effect failures cancel queued wake and message jobs", async (t) => {
+  const { repository } = await openRepository(t)
+  const wakeRun = createManagedRun()
+  const messageRun = createManagedRun()
+  const wakeRouteModule = await importWorkflowRunManagerWakeRoute()
+  const messageRouteModule = await importWorkflowRunManagerMessageRoute()
+  const failingScheduler = {
+    enqueue: async () => {
+      throw new Error("wake scheduler failed")
+    },
+    runNext: async () => {
+      throw new Error("manager scheduler should not run")
+    }
+  }
+  const wakeHandlers = wakeRouteModule.createWorkflowRunManagerWakeRouteHandlers?.({
+    getWorkflowRun: async (id) => (id === wakeRun.id ? wakeRun : undefined),
+    repository,
+    scheduler: failingScheduler,
+    scheduleExecutionJobDrain: async () => undefined
+  }) ?? wakeRouteModule
+  repository.appendEvent = async () => {
+    throw new Error("message event append failed")
+  }
+  const messageHandlers = messageRouteModule.createWorkflowRunManagerMessageRouteHandlers?.({
+    getWorkflowRun: async (id) => (id === messageRun.id ? messageRun : undefined),
+    repository,
+    scheduler: {
+      enqueue: async () => undefined,
+      runNext: async () => {
+        throw new Error("manager scheduler should not run")
+      }
+    },
+    scheduleExecutionJobDrain: async () => undefined
+  }) ?? messageRouteModule
+
+  await assert.rejects(
+    wakeHandlers.POST(
+      new Request(`https://jormungand.test/api/workflow-runs/${wakeRun.id}/manager/wake`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason: "health_check", idempotencyKey: "wake-side-effect-failure" })
+      }),
+      { params: Promise.resolve({ id: wakeRun.id }) }
+    ),
+    /wake scheduler failed/
+  )
+
+  await assert.rejects(
+    messageHandlers.POST(
+      new Request(`https://jormungand.test/api/workflow-runs/${messageRun.id}/manager/message`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content: "Continue.", idempotencyKey: "message-side-effect-failure" })
+      }),
+      { params: Promise.resolve({ id: messageRun.id }) }
+    ),
+    /message event append failed/
+  )
+
+  assert.equal(repository.getExecutionJobByIdempotencyKey(`workflow-run-manager-wake:${wakeRun.id}:wake-side-effect-failure`)?.status, "canceled")
+  assert.equal(repository.getExecutionJobByIdempotencyKey(`workflow-run-manager-message:${messageRun.id}:message-side-effect-failure`)?.status, "canceled")
 })
 
 test("manager message duplicate reports a failed execution job", async (t) => {

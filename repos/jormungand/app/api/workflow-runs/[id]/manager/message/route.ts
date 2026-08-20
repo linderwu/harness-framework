@@ -56,21 +56,30 @@ async function postManagerMessage(
     return respondWithExecutionJob(existingJob, scheduleExecutionJobDrain)
   }
 
-  const { job, inserted } = await repository.createExecutionJob({
-    kind: "manager_message",
-    workflowRunId: id,
-    payload: { eventType: "manager_operator_message" },
-    idempotencyKey: executionJobIdempotencyKey
-  })
-  if (!inserted) {
-    return respondWithExecutionJob(job, scheduleExecutionJobDrain)
+  let createdJob: ExecutionJob | undefined
+  try {
+    const created = await repository.createExecutionJob({
+      kind: "manager_message",
+      workflowRunId: id,
+      payload: { eventType: "manager_operator_message" },
+      idempotencyKey: executionJobIdempotencyKey
+    })
+    if (!created.inserted) {
+      return respondWithExecutionJob(created.job, scheduleExecutionJobDrain)
+    }
+    createdJob = created.job
+    await repository.appendEvent({
+      eventType: "manager_operator_message", actor: "human", workflowRunId: id,
+      payload: { content: body.content.trim() }, idempotencyKey
+    })
+    await scheduler.enqueue({ workflowRunId: id, reason: "operator_message", idempotencyKey: `wake:${idempotencyKey}` })
+    return respondWithExecutionJob(createdJob, scheduleExecutionJobDrain)
+  } catch (error) {
+    if (createdJob) {
+      await repository.cancelExecutionJob({ id: createdJob.id }).catch(() => undefined)
+    }
+    throw error
   }
-  await repository.appendEvent({
-    eventType: "manager_operator_message", actor: "human", workflowRunId: id,
-    payload: { content: body.content.trim() }, idempotencyKey
-  })
-  await scheduler.enqueue({ workflowRunId: id, reason: "operator_message", idempotencyKey: `wake:${idempotencyKey}` })
-  return respondWithExecutionJob(job, scheduleExecutionJobDrain)
 }
 
 async function respondWithExecutionJob(

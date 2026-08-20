@@ -64,17 +64,26 @@ async function postManagerWake(
     return respondWithExecutionJob(existingJob, scheduleExecutionJobDrain)
   }
 
-  const { job, inserted } = await repository.createExecutionJob({
-    kind: "manager_wake",
-    workflowRunId: id,
-    payload: { reason: body.reason },
-    idempotencyKey: executionJobIdempotencyKey
-  })
-  if (!inserted) {
-    return respondWithExecutionJob(job, scheduleExecutionJobDrain)
+  let createdJob: ExecutionJob | undefined
+  try {
+    const created = await repository.createExecutionJob({
+      kind: "manager_wake",
+      workflowRunId: id,
+      payload: { reason: body.reason },
+      idempotencyKey: executionJobIdempotencyKey
+    })
+    if (!created.inserted) {
+      return respondWithExecutionJob(created.job, scheduleExecutionJobDrain)
+    }
+    createdJob = created.job
+    await scheduler.enqueue({ workflowRunId: id, reason: body.reason, idempotencyKey })
+    return respondWithExecutionJob(createdJob, scheduleExecutionJobDrain)
+  } catch (error) {
+    if (createdJob) {
+      await repository.cancelExecutionJob({ id: createdJob.id }).catch(() => undefined)
+    }
+    throw error
   }
-  await scheduler.enqueue({ workflowRunId: id, reason: body.reason, idempotencyKey })
-  return respondWithExecutionJob(job, scheduleExecutionJobDrain)
 }
 
 async function respondWithExecutionJob(
