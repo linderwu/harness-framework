@@ -31,7 +31,7 @@ test("conversation submission stays gated until the server identity hydrates", (
   assert.match(taskConversation, /const \[isLoadingConversation, setIsLoadingConversation\] = useState\(true\)/)
   assert.match(taskConversation, /if \(!message \|\| allowedAgents\.length === 0 \|\| !activeConversationId \|\| isLoadingConversation \|\| isStartingConversation\) return/)
   assert.match(taskConversation, /if \(activeManagerAction\) return/)
-  assert.match(taskConversation, /disabled=\{!content\.trim\(\) \|\| !allowedAgents\.length \|\| !activeConversationId \|\| isTurnRunning \|\| isLoadingConversation \|\| isStartingConversation \|\| !!activeManagerAction\}/)
+  assert.match(taskConversation, /disabled=\{!content\.trim\(\) \|\| !allowedAgents\.length \|\| !activeConversationId \|\| isLoadingConversation \|\| isStartingConversation \|\| !!activeManagerAction\}/)
   assert.match(taskConversation, /if \(requireConversationId && !data\.conversationId\) \{[\s\S]*throw new Error\(/)
 })
 

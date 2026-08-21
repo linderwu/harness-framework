@@ -10,6 +10,7 @@ import type {
 export interface ConversationManagementDependencies {
   repository: HiveMemoryRepository
   stopSession: (conversationId: string) => Promise<void>
+  cancelQueuedMessages?: (conversationId: string) => Promise<unknown>
 }
 
 export class ConversationManagementError extends Error {
@@ -58,16 +59,6 @@ export class ConversationManagementService {
     }
 
     const nextState = parseConversationState(input.state)
-    if (
-      nextState !== metadata.state &&
-      this.dependencies.repository.isConversationRunning(metadata.conversationId)
-    ) {
-      throw new ConversationManagementError(
-        "Running conversations cannot change state.",
-        409
-      )
-    }
-
     await this.dependencies.repository.setConversationState(
       metadata.conversationId,
       nextState
@@ -84,12 +75,7 @@ export class ConversationManagementService {
     }
 
     const metadata = this.requireManagedConversation(input.conversationId)
-    if (this.dependencies.repository.isConversationRunning(metadata.conversationId)) {
-      throw new ConversationManagementError(
-        "Running conversations cannot be deleted.",
-        409
-      )
-    }
+    await this.dependencies.cancelQueuedMessages?.(metadata.conversationId)
 
     if (this.dependencies.repository.getCodexSession(metadata.conversationId)) {
       try {

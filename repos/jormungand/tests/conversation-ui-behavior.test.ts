@@ -406,7 +406,7 @@ test("replacement hydration guard skips unbound GET while delete replacement is 
   }), true)
 })
 
-test("conversation manager lock state disables new conversation while running or controlling", async () => {
+test("conversation manager lock state stays available while running but blocks active mutations", async () => {
   const taskConversationModule = await loadTaskConversationModule()
   const isConversationManagerLocked = (
     Reflect.get(taskConversationModule, "isConversationManagerLocked")
@@ -444,7 +444,7 @@ test("conversation manager lock state disables new conversation while running or
     isReplacingDeletedConversation: false,
     isControlling: false,
     isTurnRunning: true
-  }), true)
+  }), false)
   assert.equal(isConversationManagerLocked!({
     isLoadingConversation: false,
     isStartingConversation: false,

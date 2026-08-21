@@ -6,14 +6,14 @@ import {
   setConversationCookie
 } from "@/lib/conversation-identity"
 import {
-  CodexConversationError,
-  getCodexConversationState,
-  postCodexConversationMessage
+  getCodexConversationState
 } from "@/lib/codex-conversation"
 import { getAgentPermissionMode } from "@/lib/agent-permissions"
 import { getDefaultHiveServices } from "@/lib/hive-services"
 import { agentProfiles } from "@/lib/agents"
 import type { AgentKind } from "@/lib/types"
+
+// postCodexConversationMessage remains available as a migration helper; new requests use the durable queue below.
 
 export async function GET(request?: Request) {
   const requestedConversationId = request ? new URL(request.url).searchParams.get("conversationId") : undefined
@@ -24,6 +24,7 @@ export async function GET(request?: Request) {
     legacyMode: "rotate"
   })
   const services = getDefaultHiveServices()
+  void services.conversationDispatcher.drain(identity.conversationId).catch(() => undefined)
   const metadata = identity.conversationId.startsWith("conversation:")
     ? services.repository.getConversationMetadata(identity.conversationId)
       ?? await services.repository.createConversation({
@@ -73,27 +74,13 @@ export async function POST(request: Request) {
       legacyBodyMode: "reject"
     })
     const services = getDefaultHiveServices()
-    if ((body.targetAgent ?? "codex") === "codex") {
-      const result = await postCodexConversationMessage({
-        repository: services.repository,
-        conversationId: identity.conversationId,
-        content: body.content,
-        idempotencyKey: body.idempotencyKey
-      })
-      const response = NextResponse.json(result, {
-        status: result.duplicate ? 200 : 202
-      })
-      return identity.shouldSetCookie
-        ? setConversationCookie(response, identity.conversationId, request)
-        : response
-    }
-
-    const result = await services.conversation.postUnboundMessage({
+    const result = await services.conversation.enqueueUnboundMessage({
       conversationId: identity.conversationId,
       content: body.content,
       targetAgent: body.targetAgent as AgentKind | undefined,
       idempotencyKey: body.idempotencyKey
     })
+    void services.conversationDispatcher.drain(identity.conversationId).catch(() => undefined)
     const response = NextResponse.json(result, {
       status: result.duplicate ? 200 : 202
     })
@@ -102,9 +89,6 @@ export async function POST(request: Request) {
       : response
   } catch (error) {
     if (error instanceof ConversationIdentityError) {
-      return NextResponse.json({ error: error.message }, { status: error.status })
-    }
-    if (error instanceof CodexConversationError) {
       return NextResponse.json({ error: error.message }, { status: error.status })
     }
     if (error instanceof ConversationError) {

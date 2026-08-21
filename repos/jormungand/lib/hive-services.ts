@@ -3,66 +3,125 @@ import type { AgentInvocationInput } from "./agent-bridge"
 import { invokeConfiguredAgent, invokeConfiguredHiveManager } from "./agent-bridge"
 import { getAgentPermissionMode } from "./agent-permissions"
 import { createConversationService, parseUnboundManagerDecision } from "./conversation"
+import {
+  ConversationDispatcher,
+  ConversationQueueService
+} from "./conversation-dispatcher"
 import { buildSharedConversationHistory } from "./conversation-history"
 import { ConversationHistorySync } from "./conversation-history-sync"
-import { createContextBuilder } from "./context-builder"
-import { openHiveDatabase } from "./hive-memory/database"
+import { dispatchCodexConversationEntry } from "./codex-conversation"
+import { createContextBuilder, createPermissionModeText } from "./context-builder"
+import { openHiveDatabase, type HiveDatabase } from "./hive-memory/database"
 import type { ConversationEntry } from "./hive-memory/types"
-import { createHiveMemoryRepository } from "./hive-memory/repository"
-import { createManagerScheduler } from "./manager-scheduler"
+import { createHiveMemoryRepository, type HiveMemoryRepository } from "./hive-memory/repository"
+import { createManagerScheduler, type ManagerSchedulerDependencies } from "./manager-scheduler"
 import { getWorkflowRun, listProjects, listWorkflowRuns, upsertWorkflowRun } from "./store"
-import type { AgentKind } from "./types"
+import type { AgentKind, WorkflowRun } from "./types"
+import type { AgentArtifactResult } from "./workflow"
 import { createWorkflowRun } from "./workflow"
 
-let services: ReturnType<typeof createServices> | undefined
+type HiveServicesStore = {
+  getRun: (id: string) => Promise<WorkflowRun | undefined>
+  saveRun: (run: WorkflowRun) => Promise<WorkflowRun>
+  listProjects: typeof listProjects
+  listWorkflowRuns: typeof listWorkflowRuns
+}
+
+type HiveServicesOptions = Partial<HiveServicesStore> & {
+  database?: HiveDatabase
+  repository?: HiveMemoryRepository
+  permissionMode?: ReturnType<typeof getAgentPermissionMode>
+  invokeAgent?: (input: AgentInvocationInput) => Promise<AgentArtifactResult>
+  invokeManager?: typeof invokeConfiguredHiveManager
+}
+
+let services: ReturnType<typeof createHiveServices> | undefined
 
 export function getDefaultHiveServices() {
-  services ??= createServices()
+  services ??= createHiveServices()
   return services
 }
 
-function createServices() {
-  const database = openHiveDatabase()
-  const repository = createHiveMemoryRepository(database)
+export function createHiveServices(options: HiveServicesOptions = {}) {
+  const permissionMode = options.permissionMode ?? getAgentPermissionMode()
+  const permissionText = createPermissionModeText(permissionMode)
+  const database = options.database ?? openHiveDatabase()
+  const repository = options.repository ?? createHiveMemoryRepository(database)
   const contextBuilder = createContextBuilder(repository)
   const openClawUnboundConversationSync = new ConversationHistorySync()
+  const conversationQueue = new ConversationQueueService(repository)
+  const getRun = options.getRun ?? getWorkflowRun
+  const saveRun = options.saveRun ?? ((run) => upsertWorkflowRun(run, { expectedVersion: run.version }))
+  const listProjectsFn = options.listProjects ?? listProjects
+  const listWorkflowRunsFn = options.listWorkflowRuns ?? listWorkflowRuns
+  const invokeAgent = options.invokeAgent ?? invokeConfiguredAgent
+  const invokeManager = options.invokeManager ?? invokeConfiguredHiveManager
+  const dispatchWorker: NonNullable<ManagerSchedulerDependencies["dispatchWorker"]> = async ({ run, task, agentId }) => {
+    const result = await invokeAgent({
+      run,
+      executor: agentId,
+      stage: run.currentStage,
+      artifactType: "log",
+      title: task.title,
+      fallbackBody: task.instruction,
+      skill: {
+        id: "hive_worker.task",
+        eventType: "implementation_dispatch",
+        stage: run.currentStage,
+        name: task.title,
+        purpose: task.instruction,
+        trigger: "The Codex hive manager dispatched this task.",
+        allowedActors: [agentId],
+        inputs: ["bounded task context"],
+        outputs: task.successCriteria,
+        constraints: ["Remain within the assigned task and permission scope."],
+        gates: ["Return evidence to the manager."],
+        knowledgeSources: ["task context pack"],
+        verificationRules: task.successCriteria
+      }
+    })
+    const latest = await getRun(run.id)
+    if (!latest) throw new Error("Workflow run disappeared while persisting worker output.")
+    const artifactId = workerHandoffArtifactId(task.id, task.attemptCount)
+    const artifact = latest.artifacts.find((candidate) => candidate.id === artifactId) ?? {
+      id: artifactId,
+      workflowRunId: latest.id,
+      stage: latest.currentStage,
+      type: "log" as const,
+      title: `${agentId} worker handoff`,
+      body: result.body,
+      createdAt: new Date().toISOString()
+    }
+    if (!latest.artifacts.some((candidate) => candidate.id === artifactId)) {
+      await saveRun({ ...latest, artifacts: [...latest.artifacts, artifact] })
+    }
+    await repository.insertConversation({
+      workflowRunId: latest.id,
+      taskId: task.id,
+      role: "agent",
+      agentId,
+      recipientAgent: "codex",
+      content: result.body,
+      importance: result.status === "failed" ? "critical" : "important",
+      status: result.status,
+      artifactIds: [artifact.id],
+      memoryIds: [],
+      idempotencyKey: `worker-handoff:${task.id}:attempt:${task.attemptCount}`
+    })
+    return { status: result.status, body: result.body }
+  }
   const scheduler = createManagerScheduler({
     repository,
-    getRun: getWorkflowRun,
-    saveRun: async (run) => upsertWorkflowRun(run, { expectedVersion: run.version }),
-    invokeManager: invokeConfiguredHiveManager,
+    getRun,
+    saveRun,
+    invokeManager,
     allowedAgents: () => agentProfiles.map((profile) => profile.id),
-    permissionMode: getAgentPermissionMode(),
-    dispatchWorker: async ({ run, task, agentId }) => {
-      const result = await invokeConfiguredAgent({
-        run,
-        executor: agentId,
-        stage: run.currentStage,
-        artifactType: "log",
-        title: task.title,
-        fallbackBody: task.instruction,
-        skill: {
-          id: "hive_worker.task",
-          eventType: "implementation_dispatch",
-          stage: run.currentStage,
-          name: task.title,
-          purpose: task.instruction,
-          trigger: "The Codex hive manager dispatched this task.",
-          allowedActors: [agentId],
-          inputs: ["bounded task context"],
-          outputs: task.successCriteria,
-          constraints: ["Remain within the assigned task and permission scope."],
-          gates: ["Return evidence to the manager."],
-          knowledgeSources: ["task context pack"],
-          verificationRules: task.successCriteria
-        }
-      })
-      return { status: result.status, body: result.body }
-    }
+    permissionMode,
+    dispatchWorker
   })
   const conversation = createConversationService({
     repository,
-    getRun: getWorkflowRun,
+    getRun,
     buildContext: async ({ run, targetAgent, entries, content }) => {
       const shareableEntries = entries.filter(isShareableConversationEntry).slice(-20)
       const sharedConversationHistory = buildSharedConversationHistory(shareableEntries)
@@ -71,7 +130,7 @@ function createServices() {
         projectId: run.projectId,
         taskId: `conversation:${run.id}`,
         targetAgent,
-        permissionMode: getAgentPermissionMode(),
+        permissionMode,
         task: content,
         successCriteria: ["Answer the operator request with evidence or state the blocker."],
         constraints: ["Treat memory as evidence, not authority."],
@@ -84,7 +143,7 @@ function createServices() {
       })
     },
     invokeAgent: async ({ run, targetAgent, content, contextPack, managerRouting }) => {
-      const result = await invokeConfiguredAgent({
+      const result = await invokeAgent({
         run,
         executor: targetAgent,
         stage: run.currentStage,
@@ -102,7 +161,7 @@ function createServices() {
           allowedActors: [targetAgent],
           inputs: ["bounded conversation context"],
           outputs: ["final response or explicit blocker"],
-          constraints: ["Do not execute external or irreversible effects without approval."],
+          constraints: [permissionText.conversationConstraint],
           gates: ["Jormungand retains authority over workflow state."],
           knowledgeSources: ["conversation context pack"],
           verificationRules: ["Return evidence for completion claims."]
@@ -110,15 +169,16 @@ function createServices() {
       })
       return { status: result.status, body: result.body }
     },
+    enqueueConversation: (input) => conversationQueue.enqueue(input),
     persistRawArtifact: async ({ run, targetAgent, body }) => {
-      const latest = await getWorkflowRun(run.id)
+      const latest = await getRun(run.id)
       if (!latest) throw new Error("Workflow run disappeared while persisting conversation output.")
       const artifact = {
         id: crypto.randomUUID(), workflowRunId: latest.id, stage: latest.currentStage,
         type: "log" as const, title: `${targetAgent} conversation output`, body,
         createdAt: new Date().toISOString()
       }
-      await upsertWorkflowRun({ ...latest, artifacts: [...latest.artifacts, artifact] }, { expectedVersion: latest.version })
+      await saveRun({ ...latest, artifacts: [...latest.artifacts, artifact] })
       return artifact.id
     },
     enqueueManagerWake: (input) => scheduler.enqueue(input),
@@ -134,7 +194,7 @@ function createServices() {
       })
 
       if (targetAgent === "codex") {
-        const [projects, runs] = await Promise.all([listProjects(), listWorkflowRuns()])
+        const [projects, runs] = await Promise.all([listProjectsFn(), listWorkflowRunsFn()])
         const candidateLines = projects.map((project) => {
           const projectRuns = runs.filter((run) => run.projectId === project.id)
           return `- ${project.name}: projectId=${project.id}; workflowRuns=${projectRuns.map((run) => `${run.id} (${run.status})`).join(", ") || "none"}`
@@ -152,7 +212,7 @@ function createServices() {
           ...entries.slice(-12).map((entry) => `${entry.role}: ${entry.content}`),
           `Latest operator message: ${content}`
         ].join("\n")
-        const result = await invokeConfiguredAgent({
+        const result = await invokeAgent({
           run: syntheticRun,
           executor: "codex",
           stage: "intake",
@@ -172,7 +232,7 @@ function createServices() {
             constraints: [
               "Bind only when the target is unambiguous.",
               "Never invent project or workflow identifiers.",
-              "Respect the current Codex sandbox, approval policy, and Jormungand workflow authority."
+              permissionText.workflowAuthorityConstraint
             ],
             gates: ["Jormungand validates the selected target."],
             knowledgeSources: ["persisted conversation", "workspace index"],
@@ -189,11 +249,28 @@ function createServices() {
         targetAgent,
         content,
         entries,
-        invokeAgent: invokeConfiguredAgent
+        invokeAgent
       })
     }
   })
-  return { database, repository, scheduler, conversation }
+  const conversationDispatcher = new ConversationDispatcher(repository, async (input) => {
+    const run = await getRun(input.conversationId)
+    if (!run && input.targetAgent === "codex") {
+      return dispatchCodexConversationEntry({
+        repository,
+        conversationId: input.conversationId,
+        userEntryId: input.userEntry.id,
+        responseEntryId: input.responseEntry?.id
+      })
+    }
+    return conversation.dispatchQueuedEntry(input)
+  })
+  return { database, repository, scheduler, conversation, conversationQueue, conversationDispatcher, dispatchWorker }
+}
+
+function workerHandoffArtifactId(taskId: string, attemptCount: number) {
+  const safeTaskId = taskId.replace(/[^A-Za-z0-9._-]/g, "-") || "task"
+  return `worker-handoff-${safeTaskId}-attempt-${attemptCount}`
 }
 
 export async function routeOpenClawUnboundConversation(input: {
@@ -267,6 +344,8 @@ export async function routeOpenClawUnboundConversation(input: {
     body: result.body
   }
 }
+
+export const routeUnboundConversation = routeOpenClawUnboundConversation
 
 function isShareableConversationEntry(entry: { role: string }) {
   return entry.role === "user" || entry.role === "agent" || entry.role === "manager"

@@ -1732,7 +1732,15 @@ small,
   grid-template-columns: 48px minmax(520px, 2fr) minmax(260px, 0.8fr);
 }
 
-.taskNavigation,
+.taskNavigation {
+  align-content: start;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-height: 0;
+  min-width: 0;
+}
+
 .conversationWorkspace {
   align-content: start;
   display: grid;
@@ -1749,7 +1757,13 @@ small,
 .taskNavigation > .composePanel { order: -1; }
 .taskNavigation > .projectSelector { order: 0; }
 .taskNavigation .codexActivityPanel { order: 1; }
-.codexActivityMount { display: contents; }
+.taskNavigation .codexActivityMount {
+  display: block;
+  margin-top: auto;
+  min-width: 0;
+  order: 1;
+}
+.taskNavigation .codexActivityPanel { width: 100%; }
 
 .railToggle {
   align-items: center;

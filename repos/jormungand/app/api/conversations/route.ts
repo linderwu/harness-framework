@@ -56,7 +56,9 @@ function getConversationManagementService() {
   return createConversationManagementService({
     repository: services.repository,
     stopSession: (conversationId) =>
-      stopCodexConversationSession(services.repository, conversationId)
+      stopCodexConversationSession(services.repository, conversationId),
+    cancelQueuedMessages: (conversationId) =>
+      services.conversationQueue.cancelPending(conversationId)
   })
 }
 

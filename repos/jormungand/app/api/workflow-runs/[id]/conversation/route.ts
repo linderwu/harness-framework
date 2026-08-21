@@ -7,7 +7,9 @@ import type { AgentKind } from "@/lib/types"
 export async function GET(_request: Request, context: { params: Promise<{ id: string }> }) {
   const { id } = await context.params
   try {
-    return NextResponse.json(await getDefaultHiveServices().conversation.getConversation(id))
+    const services = getDefaultHiveServices()
+    void services.conversationDispatcher.drain(id).catch(() => undefined)
+    return NextResponse.json(await services.conversation.getConversation(id))
   } catch (error) {
     return conversationErrorResponse(error)
   }
@@ -28,13 +30,15 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     return NextResponse.json({ error: "targetAgent is invalid" }, { status: 403 })
   }
   try {
-    const result = await getDefaultHiveServices().conversation.postMessage({
+    const services = getDefaultHiveServices()
+    const result = await services.conversation.enqueueMessage({
       workflowRunId: id,
       targetAgent: body.targetAgent as AgentKind,
       content: body.content,
       replyToId: body.replyToId,
       idempotencyKey: body.idempotencyKey
     })
+    void services.conversationDispatcher.drain(id).catch(() => undefined)
     return NextResponse.json(result, { status: result.duplicate ? 200 : 202 })
   } catch (error) {
     return conversationErrorResponse(error)
