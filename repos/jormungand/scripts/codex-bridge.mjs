@@ -285,7 +285,8 @@ const server = http.createServer(async (request, response) => {
     const builtPrompt = buildPrompt(
       payload,
       contextDir,
-      runtimeSkillBundleResults
+      runtimeSkillBundleResults,
+      executor
     )
     const result = await (isMinimaxExecutor(executor)
       ? runMinimaxAgent(
@@ -1017,7 +1018,12 @@ function sanitizePathSegment(value) {
   return sanitized || "bundle"
 }
 
-function buildPrompt(payload, contextDir, runtimeSkillBundleResults = []) {
+function buildPrompt(
+  payload,
+  contextDir,
+  runtimeSkillBundleResults = [],
+  executor = "codex"
+) {
   const skill = payload.skill ?? {}
   if (skill.id === "agent_task.response") {
     return buildAgentTaskPrompt(payload, contextDir, runtimeSkillBundleResults)
@@ -1025,6 +1031,19 @@ function buildPrompt(payload, contextDir, runtimeSkillBundleResults = []) {
   if (skill.id === "hive_manager.cycle") {
     return buildHiveManagerPrompt(payload)
   }
+
+  const isMinimax = executor === "minimax" || executor === "mavis"
+  const introLines = isMinimax
+    ? [
+        "You are the Jormungand minimax agent handling a workflow event.",
+        "Handle only the event described below and respect its constraints.",
+        "You are not the Codex executor; do not claim Codex identity or use the Codex CLI."
+      ]
+    : [
+        "You are the local Codex executor for a Jormungandr workflow event.",
+        "Handle only the event described below and respect its constraints."
+      ]
+  const protocolBlock = isMinimax ? "" : ouroborosAgentContract
 
   const artifacts = Array.isArray(payload.artifacts) ? payload.artifacts : []
   const contextFiles = Array.isArray(payload.contextFiles)
@@ -1060,10 +1079,9 @@ function buildPrompt(payload, contextDir, runtimeSkillBundleResults = []) {
     : "No authorized context pack."
 
   return [
-    "You are the local Codex executor for a Jormungandr workflow event.",
-    "Handle only the event described below and respect its constraints.",
+    ...introLines,
     "",
-    ouroborosAgentContract,
+    protocolBlock,
     "",
     `Project: ${payload.projectName ?? "unknown"}`,
     `Repository reference: ${payload.repository ?? "unknown"}`,
