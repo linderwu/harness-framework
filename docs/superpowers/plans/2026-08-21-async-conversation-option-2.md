@@ -63,11 +63,8 @@ Expected: the new queue assertions compile and later pass with the repository/di
 ### Task 2: Add durable queue persistence and per-conversation claim semantics
 
 **Files:**
-- Modify: `repos/jormungand/lib/hive-memory/schema.ts`
 - Modify: `repos/jormungand/lib/hive-memory/types.ts`
 - Modify: `repos/jormungand/lib/hive-memory/repository.ts`
-- Modify: `repos/jormungand/lib/execution-jobs.ts`
-- Modify: `repos/jormungand/lib/execution-job-runner.ts`
 - Test: `repos/jormungand/tests/conversation-queue.test.ts`
 
 - [ ] **Step 1: Test durable message/job creation and exclusive claims**
@@ -92,7 +89,9 @@ Run: `node --test .tmp-tests/tests/conversation-queue.test.js`
 
 Expected: FAIL because the migration and repository claim method are absent.
 
-- [ ] **Step 3: Add migration V7 and repository methods**
+- [ ] **Step 3: Reuse the existing execution-job schema and add repository methods**
+
+The repository already has durable `execution_jobs` storage from migration V6, so this delivery does not add another migration.
 
 Add an index for conversation dispatch jobs and repository methods with these contracts:
 
@@ -325,4 +324,3 @@ Run: `git fetch origin main`
 Run: `git push origin HEAD:main`
 
 Expected: remote `main` advances from the fetched tip without force-push.
-

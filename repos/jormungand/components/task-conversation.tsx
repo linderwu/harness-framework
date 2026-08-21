@@ -1235,8 +1235,8 @@ export function TaskConversation(props: {
       </ol>
       <form className="conversationComposer" onSubmit={submit}>
         <label><span>Agent</span><select value={targetAgent} disabled={props.run?.projectType === "arceus_maintenance" || allowedAgents.length <= 1} onChange={(event) => setTargetAgent(event.target.value as AgentKind)}>{allowedAgents.map((agent) => <option value={agent} key={agent}>{getAgentLabel(agent)}</option>)}</select></label>
-        <label className="conversationInput"><span>Message</span><textarea disabled={isTurnRunning || isConversationActionPending} onKeyDown={handleComposerKeyDown} value={content} onChange={(event) => setContent(event.target.value)} placeholder={isTurnRunning ? "Codex is working. Pause or wait for the turn to finish." : props.run ? "Ask for progress, evidence, or a scoped action" : targetAgent === "codex" ? "Ask Codex to inspect or use the harness" : `Ask ${getAgentLabel(targetAgent)} for a response`} /></label>
-        <button className="primaryButton" disabled={!content.trim() || !allowedAgents.length || !activeConversationId || isTurnRunning || isLoadingConversation || isStartingConversation || !!activeManagerAction}><Send size={16} />Send</button>
+        <label className="conversationInput"><span>Message</span><textarea disabled={isConversationActionPending} onKeyDown={handleComposerKeyDown} value={content} onChange={(event) => setContent(event.target.value)} placeholder={isTurnRunning ? "Codex is working. Queue another message or cancel the current turn." : props.run ? "Ask for progress, evidence, or a scoped action" : targetAgent === "codex" ? "Ask Codex to inspect or use the harness" : `Ask ${getAgentLabel(targetAgent)} for a response`} /></label>
+        <button className="primaryButton" disabled={!content.trim() || !allowedAgents.length || !activeConversationId || isLoadingConversation || isStartingConversation || !!activeManagerAction}><Send size={16} />Send</button>
       </form>
       {error ? <p className="formError" role="alert">{error}</p> : null}
     </section>
@@ -1430,7 +1430,6 @@ export function isConversationManagerLocked(input: {
     || input.isStartingConversation
     || input.isReplacingDeletedConversation
     || input.isControlling
-    || input.isTurnRunning
     || !!input.activeManagerAction
 }
 

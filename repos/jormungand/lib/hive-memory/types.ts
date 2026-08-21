@@ -143,7 +143,13 @@ export interface AgentIdentity {
 
 export type ConversationRole = "user" | "agent" | "manager" | "system"
 export type ConversationImportance = "normal" | "important" | "critical"
-export type ConversationStatus = "queued" | "running" | "completed" | "failed"
+export type ConversationStatus =
+  | "queued"
+  | "running"
+  | "completed"
+  | "interrupted"
+  | "canceled"
+  | "failed"
 export type ConversationState = "active" | "archived"
 
 export interface ConversationEntry {

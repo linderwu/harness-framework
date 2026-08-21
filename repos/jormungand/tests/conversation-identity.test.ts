@@ -6,6 +6,7 @@ import assert from "node:assert/strict"
 import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { setTimeout as delay } from "node:timers/promises"
 import test from "node:test"
 import { unboundConversationId } from "../lib/conversation"
 import {
@@ -59,6 +60,8 @@ async function importRouteWithIsolatedDataDir<T>(
   const previousDataDir = process.env.JORMUNGAND_DATA_DIR
   process.env.JORMUNGAND_DATA_DIR = dataDir
   t.after(async () => {
+    // POST now returns before the durable dispatcher finishes; let the isolated worker settle before closing SQLite.
+    await delay(300)
     closeRouteDatabase()
     clearRouteModuleCache(routeModulePath)
     if (previousDataDir === undefined) {
@@ -312,10 +315,14 @@ test("conversation POST accepts a validated body conversation id and echoes it b
   }))
   const body = await response.json() as {
     conversationId?: string
+    status?: string
+    jobId?: string
     userEntry?: { workflowRunId?: string }
   }
 
   assert.equal(response.status, 202)
+  assert.equal(body.status, "queued")
+  assert.match(body.jobId ?? "", /^[0-9a-f-]{36}$/i)
   assert.equal(body.conversationId, conversationId)
   assert.equal(body.userEntry?.workflowRunId, conversationId)
 })

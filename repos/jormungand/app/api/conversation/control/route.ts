@@ -31,6 +31,9 @@ export async function POST(request: Request) {
       requireExplicit: true
     })
     const services = getDefaultHiveServices()
+    if (body.action === "interrupt" || body.action === "stop") {
+      await services.conversationQueue.cancelPending(identity.conversationId)
+    }
     const response = NextResponse.json(
       await controlCodexConversation(
         services.repository,

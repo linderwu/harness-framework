@@ -4,6 +4,10 @@ import {
   legacyConversationId
 } from "./conversation-identity"
 import type { ContextPack } from "./context-builder"
+import type {
+  ConversationDispatchOutcome,
+  ConversationQueueResult
+} from "./conversation-dispatcher"
 import type { HiveMemoryRepository } from "./hive-memory/repository"
 import type { ConversationEntry } from "./hive-memory/types"
 import type { ManagerWakeReason } from "./manager-scheduler"
@@ -70,6 +74,13 @@ interface ConversationDependencies {
     reason: ManagerWakeReason
     idempotencyKey: string
   }) => Promise<unknown>
+  enqueueConversation?: (input: {
+    conversationId: string
+    targetAgent: AgentKind
+    content: string
+    idempotencyKey: string
+    responseRole?: "agent" | "manager"
+  }) => Promise<ConversationQueueResult>
   routeUnbound?: (input: {
     conversationId: string
     content: string
@@ -188,6 +199,37 @@ export class ConversationService {
     }
   }
 
+  async enqueueUnboundMessage(input: {
+    conversationId?: string
+    content: string
+    targetAgent?: AgentKind
+    idempotencyKey: string
+  }) {
+    const conversationId = input.conversationId ?? unboundConversationId
+    const content = input.content.trim()
+    const targetAgent = normalizeAgentKind(input.targetAgent)
+    const health = await this.dependencies.getHealth?.() ?? {}
+    const allowedAgents = listAllowedAgents("development", health)
+
+    if (!content) throw new ConversationError("content is required", 400)
+    if (!input.idempotencyKey.trim()) throw new ConversationError("idempotencyKey is required", 400)
+    if (!allowedAgents.includes(targetAgent)) {
+      throw new ConversationError("Target agent is not allowed for unbound conversation", 403)
+    }
+    if (!this.dependencies.enqueueConversation) {
+      throw new ConversationError("Conversation queue is unavailable", 503)
+    }
+
+    const queued = await this.dependencies.enqueueConversation({
+      conversationId,
+      targetAgent,
+      content,
+      idempotencyKey: input.idempotencyKey,
+      responseRole: "agent"
+    })
+    return { conversationId, status: queued.jobStatus, ...queued }
+  }
+
   async postMessage(input: {
     workflowRunId: string
     targetAgent: AgentKind
@@ -289,6 +331,136 @@ export class ConversationService {
       await this.dependencies.repository.updateConversation({ id: userEntry.id, status: "failed" })
       throw error
     }
+  }
+
+  async enqueueMessage(input: {
+    workflowRunId: string
+    targetAgent: AgentKind
+    content: string
+    replyToId?: string
+    idempotencyKey: string
+  }) {
+    const content = input.content.trim()
+    if (!content) throw new ConversationError("content is required", 400)
+    if (!input.idempotencyKey.trim()) throw new ConversationError("idempotencyKey is required", 400)
+    if (!this.dependencies.enqueueConversation) {
+      throw new ConversationError("Conversation queue is unavailable", 503)
+    }
+
+    const existing = this.dependencies.repository.getConversationByIdempotencyKey(input.idempotencyKey)
+    if (existing) return this.duplicateResult(existing)
+
+    const run = await this.requireRun(input.workflowRunId)
+    const health = await this.dependencies.getHealth?.() ?? {}
+    if (!listAllowedAgents(run.projectType, health).includes(input.targetAgent)) {
+      throw new ConversationError("Target agent is not allowed for this workflow run", 403)
+    }
+    if (input.replyToId) {
+      const reply = this.dependencies.repository.getConversationEntry(input.replyToId)
+      if (!reply || reply.workflowRunId !== run.id) throw new ConversationError("replyToId is not part of this workflow run", 400)
+    }
+
+    const managerRouting = run.projectType === "hive_mission" && input.targetAgent === "codex"
+    const workerDirected = run.projectType === "hive_mission" && input.targetAgent !== "codex"
+    const queued = await this.dependencies.enqueueConversation({
+      conversationId: run.id,
+      targetAgent: input.targetAgent,
+      content,
+      idempotencyKey: input.idempotencyKey,
+      responseRole: managerRouting ? "manager" : "agent"
+    })
+
+    if (workerDirected) {
+      await this.dependencies.repository.appendEvent({
+        eventType: "worker_message_visible_to_manager",
+        actor: "human",
+        workflowRunId: run.id,
+        payload: { conversationEntryId: queued.userEntry.id, targetAgent: input.targetAgent },
+        idempotencyKey: `manager-visible:${input.idempotencyKey}`
+      })
+      await this.dependencies.enqueueManagerWake({
+        workflowRunId: run.id,
+        reason: "worker_message",
+        idempotencyKey: `conversation-wake:${input.idempotencyKey}`
+      })
+    }
+
+    return { status: queued.jobStatus, ...queued }
+  }
+
+  async dispatchQueuedEntry(input: {
+    conversationId: string
+    targetAgent: AgentKind
+    userEntry: ConversationEntry
+    responseEntry?: ConversationEntry
+  }): Promise<ConversationDispatchOutcome> {
+    const { conversationId, targetAgent, userEntry, responseEntry } = input
+    const allEntries = this.dependencies.repository.listConversation(conversationId)
+    const userIndex = allEntries.findIndex((entry) => entry.id === userEntry.id)
+    const entriesThroughCurrent = userIndex === -1
+      ? [userEntry]
+      : allEntries.slice(0, userIndex + 1)
+    const run = await this.dependencies.getRun(conversationId)
+    if (!run) {
+      if (!this.dependencies.routeUnbound) {
+        throw new ConversationError("Conversation manager is unavailable", 503)
+      }
+      const decision = await this.dependencies.routeUnbound({
+        conversationId,
+        targetAgent,
+        content: userEntry.content,
+        entries: entriesThroughCurrent
+      })
+      if (targetAgent === "codex" && decision.binding) {
+        await this.dependencies.repository.moveConversation(conversationId, decision.binding.workflowRunId)
+      }
+      return { status: decision.status, body: decision.body }
+    }
+
+    const managerRouting = run.projectType === "hive_mission" && targetAgent === "codex"
+    const contextPack = await this.dependencies.buildContext({
+      run,
+      targetAgent,
+      entries: entriesThroughCurrent,
+      content: userEntry.content
+    })
+    await this.dependencies.repository.updateConversation({
+      id: userEntry.id,
+      status: "running",
+      memoryIds: contextPack?.memoryIds ?? []
+    })
+    const result = await this.dependencies.invokeAgent({
+      run,
+      targetAgent,
+      content: userEntry.content,
+      contextPack,
+      managerRouting
+    })
+    const artifactId = await this.dependencies.persistRawArtifact({
+      run,
+      targetAgent,
+      body: result.body
+    })
+    if (responseEntry) {
+      await this.dependencies.repository.updateConversation({
+        id: responseEntry.id,
+        artifactIds: [artifactId],
+        memoryIds: contextPack?.memoryIds ?? []
+      })
+    }
+    await this.dependencies.repository.updateConversation({
+      id: userEntry.id,
+      artifactIds: [artifactId],
+      memoryIds: contextPack?.memoryIds ?? []
+    })
+    if (managerRouting) {
+      await this.dependencies.enqueueManagerWake({
+        workflowRunId: run.id,
+        reason: "operator_message",
+        idempotencyKey: `conversation-wake:${userEntry.idempotencyKey}`
+      })
+    }
+    return { status: result.status, body: compactAgentResultBody(result.body) }
   }
 
   private async requireRun(id: string) {

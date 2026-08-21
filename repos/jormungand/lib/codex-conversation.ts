@@ -205,13 +205,100 @@ export async function postCodexConversationMessage(input: {
   }
 }
 
+export async function dispatchCodexConversationEntry(input: {
+  repository: HiveMemoryRepository
+  conversationId: string
+  userEntryId: string
+  responseEntryId?: string
+  pollIntervalMs?: number
+  maxPollAttempts?: number
+}) {
+  const userEntry = input.repository.getConversationEntry(input.userEntryId)
+  if (!userEntry || userEntry.workflowRunId !== input.conversationId) {
+    throw new CodexConversationError("Conversation message could not be found", 404)
+  }
+  const responseEntry = input.responseEntryId
+    ? input.repository.getConversationEntry(input.responseEntryId)
+    : undefined
+  await input.repository.updateConversation({ id: userEntry.id, status: "running" })
+  if (responseEntry) {
+    await input.repository.updateConversation({ id: responseEntry.id, status: "running" })
+  }
+
+  const session = await ensureCodexSession(input.repository, input.conversationId)
+  const entries = input.repository.listConversation(input.conversationId)
+  const userIndex = entries.findIndex((entry) => entry.id === userEntry.id)
+  const entriesThroughCurrent = userIndex === -1 ? [userEntry] : entries.slice(0, userIndex + 1)
+  const sessionIdentity = `${session.bridgeSessionId}:${session.codexThreadId}`
+  const syncKey = `codex:${input.conversationId}`
+  const delta = codexConversationSync.getDelta({
+    key: syncKey,
+    sessionIdentity,
+    targetAgent: "codex",
+    entries: entriesThroughCurrent
+  })
+  const requestContent = formatSharedConversationPrompt(delta.history)
+
+  await bridgeRequest(`/sessions/${encodeURIComponent(session.bridgeSessionId)}/turns`, {
+    method: "POST",
+    body: JSON.stringify({ content: requestContent })
+  })
+  codexConversationSync.markDelivered({
+    key: syncKey,
+    sessionIdentity,
+    cursorEntryId: delta.cursorEntryId
+  })
+  await input.repository.updateCodexSession({
+    conversationId: input.conversationId,
+    status: "running",
+    turnStatus: "inProgress"
+  })
+
+  const pollIntervalMs = Math.max(1, input.pollIntervalMs ?? 1_000)
+  const maxPollAttempts = input.maxPollAttempts ?? 300
+  for (let attempt = 0; attempt < maxPollAttempts; attempt += 1) {
+    const state = await getCodexConversationState(input.repository, input.conversationId)
+    const turnStatus = state.session?.turnStatus
+    if (turnStatus && turnStatus !== "inProgress") {
+      const responseEntry = input.responseEntryId
+        ? input.repository.getConversationEntry(input.responseEntryId)
+        : [...state.entries].reverse().find(
+          (entry) => entry.role === "agent" && entry.replyToId === input.userEntryId
+        )
+      const status = turnStatus === "completed"
+        ? "completed" as const
+        : turnStatus === "interrupted"
+          || turnStatus === "stopped"
+          || state.session?.status === "paused"
+          || state.session?.status === "stopped"
+          ? "interrupted" as const
+          : "failed" as const
+      return {
+        status,
+        body: responseEntry?.content
+          ?? state.session?.finalText
+          ?? state.session?.liveText
+          ?? (status === "interrupted" ? "Codex response interrupted." : "Codex response failed.")
+      }
+    }
+    await delay(pollIntervalMs)
+  }
+
+  throw new CodexConversationError("Codex turn did not reach a terminal state.", 504)
+}
+
 export async function controlCodexConversation(
   repository: HiveMemoryRepository,
   action: "interrupt" | "resume" | "stop",
   conversationId = codexConversationId
 ) {
   const session = repository.getCodexSession(conversationId)
-  if (!session) throw new CodexConversationError("Codex conversation has not started", 404)
+  if (!session) {
+    if (action === "resume") {
+      throw new CodexConversationError("Codex conversation has not started", 404)
+    }
+    return getCodexConversationState(repository, conversationId)
+  }
 
   await bridgeRequest(`/sessions/${encodeURIComponent(session.bridgeSessionId)}/${action}`, {
     method: "POST",
@@ -378,6 +465,12 @@ function toSessionState(
 
 function normalizeUrl(value: string) {
   return value.endsWith("/") ? value : `${value}/`
+}
+
+function delay(milliseconds: number) {
+  return new Promise<void>((resolve) => {
+    setTimeout(resolve, milliseconds)
+  })
 }
 
 function toConversationScopedIdempotencyKey(

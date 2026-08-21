@@ -32,7 +32,7 @@ import type {
   SubmitMemoryCandidate,
   UpdateA2ATaskInput
 } from "./types"
-import type { ManagerCheckpoint, ManagerProposal } from "../types"
+import type { AgentKind, ManagerCheckpoint, ManagerProposal } from "../types"
 import {
   canonicalizeJson,
   normalizeA2ATaskStatus,
@@ -1269,6 +1269,10 @@ export class HiveMemoryRepository {
   async deleteConversation(id: string): Promise<void> {
     this.assertDeletableConversationId(id)
     await this.database.transaction((connection) => {
+      connection.prepare(`
+        DELETE FROM execution_jobs
+        WHERE kind = 'conversation_dispatch' AND workflow_run_id = ?
+      `).run(id)
       connection.prepare("DELETE FROM codex_sessions WHERE conversation_id = ?").run(id)
       connection.prepare("DELETE FROM conversation_entries WHERE workflow_run_id = ?").run(id)
       connection.prepare("DELETE FROM conversations WHERE id = ?").run(id)
@@ -1491,6 +1495,26 @@ export class HiveMemoryRepository {
     })
   }
 
+  async createConversationDispatch(input: {
+    conversationId: string
+    entryId: string
+    responseEntryId?: string
+    targetAgent: AgentKind
+    idempotencyKey: string
+  }) {
+    return this.createExecutionJob({
+      kind: "conversation_dispatch",
+      workflowRunId: input.conversationId,
+      payload: {
+        conversationId: input.conversationId,
+        entryId: input.entryId,
+        responseEntryId: input.responseEntryId ?? null,
+        targetAgent: input.targetAgent
+      },
+      idempotencyKey: input.idempotencyKey
+    })
+  }
+
   getExecutionJob(id: string) {
     return this.database.read((connection) => {
       const row = connection.prepare("SELECT * FROM execution_jobs WHERE id = ?").get(id) as ExecutionJobRow | undefined
@@ -1558,6 +1582,106 @@ export class HiveMemoryRepository {
       }
 
       return next
+    })
+  }
+
+  async claimNextConversationDispatch(input: {
+    conversationId: string
+    leaseOwner: string
+    leaseDurationMs: number
+  }) {
+    const now = new Date().toISOString()
+    return this.database.transaction((connection) => {
+      this.recoverExpiredExecutionJobsOnConnection(connection, {
+        now,
+        kind: "conversation_dispatch",
+        workflowRunId: input.conversationId
+      })
+      const running = connection.prepare(`
+        SELECT 1 AS present FROM execution_jobs
+        WHERE kind = 'conversation_dispatch'
+          AND workflow_run_id = ?
+          AND status = 'running'
+        LIMIT 1
+      `).get(input.conversationId) as { present: number } | undefined
+      if (running) return undefined
+
+      const row = connection.prepare(`
+        SELECT * FROM execution_jobs
+        WHERE kind = 'conversation_dispatch'
+          AND workflow_run_id = ?
+          AND status = 'queued'
+          AND available_at <= ?
+        ORDER BY created_at ASC, rowid ASC, id ASC
+        LIMIT 1
+      `).get(input.conversationId, now) as ExecutionJobRow | undefined
+      if (!row) return undefined
+
+      const next = claimQueuedExecutionJob(executionJobFromRow(row), {
+        leaseOwner: input.leaseOwner,
+        leaseDurationMs: input.leaseDurationMs,
+        now
+      })
+      const result = connection.prepare(`
+        UPDATE execution_jobs SET
+          status = ?, attempt_count = ?, available_at = ?, lease_owner = ?,
+          lease_expires_at = ?, result_json = ?, last_error = ?, updated_at = ?
+        WHERE id = ? AND status = 'queued'
+      `).run(
+        next.status,
+        next.attemptCount,
+        next.availableAt,
+        next.leaseOwner ?? null,
+        next.leaseExpiresAt ?? null,
+        next.resultJson ?? null,
+        next.lastError ?? null,
+        next.updatedAt,
+        next.id
+      )
+      if (result.changes === 0) throw new Error(`Execution job ${next.id} was not claimable.`)
+      return next
+    })
+  }
+
+  async renewExecutionJobLease(input: {
+    id: string
+    leaseOwner: string
+    leaseDurationMs: number
+  }) {
+    const now = new Date().toISOString()
+    const leaseExpiresAt = new Date(Date.now() + input.leaseDurationMs).toISOString()
+    await this.database.write((connection) => {
+      const result = connection.prepare(`
+        UPDATE execution_jobs
+        SET lease_expires_at = ?, updated_at = ?
+        WHERE id = ? AND status = 'running' AND lease_owner = ?
+      `).run(leaseExpiresAt, now, input.id, input.leaseOwner)
+      if (result.changes === 0) {
+        throw new Error(`Execution job ${input.id} is not running under lease ${input.leaseOwner}.`)
+      }
+    })
+    return this.getExecutionJob(input.id)!
+  }
+
+  async cancelQueuedConversationDispatches(conversationId: string) {
+    const now = new Date().toISOString()
+    return this.database.transaction((connection) => {
+      const rows = connection.prepare(`
+        SELECT * FROM execution_jobs
+        WHERE kind = 'conversation_dispatch'
+          AND workflow_run_id = ?
+          AND status = 'queued'
+      `).all(conversationId) as ExecutionJobRow[]
+      for (const row of rows) {
+        const next = cancelQueuedExecutionJob(executionJobFromRow(row), { id: row.id, now })
+        connection.prepare(`
+          UPDATE execution_jobs SET
+            status = ?, lease_owner = NULL, lease_expires_at = NULL,
+            result_json = NULL, completed_at = ?, updated_at = ?
+          WHERE id = ? AND status = 'queued'
+        `).run(next.status, next.completedAt ?? null, next.updatedAt, next.id)
+      }
+      return rows.length
     })
   }
 

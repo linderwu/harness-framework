@@ -379,7 +379,7 @@ test("conversation move rolls back when metadata move cleanup fails", async (t) 
   assert.equal(repository.getConversationMetadata(targetWorkflowRunId), undefined)
 })
 
-test("conversation management service validates updates, blocks running transitions, and hides bound ids", async (t) => {
+test("conversation management service validates updates, allows running state changes, and hides bound ids", async (t) => {
   const repository = await createRepositoryFixture(t)
   const conversationManagementModule = await loadConversationManagementModule()
   assert.equal(
@@ -422,14 +422,8 @@ test("conversation management service validates updates, blocks running transiti
     status: "running",
     turnStatus: "inProgress"
   })
-  await assert.rejects(
-    service.updateConversation({ conversationId, state: "archived" }),
-    (error: unknown) =>
-      typeof error === "object" &&
-      error !== null &&
-      "status" in error &&
-      (error as { status?: number }).status === 409
-  )
+  const archived = await service.updateConversation({ conversationId, state: "archived" })
+  assert.equal(archived.state, "archived")
 
   await repository.insertConversation({
     workflowRunId: "run-bound-service",
