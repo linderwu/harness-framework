@@ -967,6 +967,7 @@ function getOpenClawBridgeToken() {
 
 function getMinimaxBridgeToken() {
   return (
+    process.env.LUCKY_BRIDGE_TOKEN?.trim() ||
     process.env.CODEX_BRIDGE_TOKEN?.trim() ||
     process.env.HARNESS_BRIDGE_TOKEN?.trim() ||
     process.env.MINIMAX_BRIDGE_TOKEN?.trim() ||
@@ -978,7 +979,13 @@ function getMinimaxBridgeToken() {
 function getAgentBridgeUrl(agent: AgentKind) {
   const profile = getAgentProfile(agent)
 
-  if (profile.family === "codex" || profile.family === "minimax") {
+  if (profile.family === "minimax") {
+    // Lucky / Mavis / mavis uses its own bridge with a function-calling
+    // tool loop, not the Codex bridge.
+    return process.env.LUCKY_BRIDGE_URL ?? "http://127.0.0.1:4198"
+  }
+
+  if (profile.family === "codex") {
     return process.env.CODEX_BRIDGE_URL
   }
 

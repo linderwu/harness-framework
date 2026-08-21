@@ -33,9 +33,13 @@ export async function GET() {
     createHttpBridgeCheck({
       id: "minimax-bridge",
       label: "Lucky",
-      url: process.env.MINIMAX_BRIDGE_URL,
+      url:
+        process.env.LUCKY_BRIDGE_URL?.trim() ||
+        process.env.MINIMAX_BRIDGE_URL?.trim(),
       token:
+        process.env.LUCKY_BRIDGE_TOKEN?.trim() ||
         process.env.MINIMAX_BRIDGE_TOKEN?.trim() ||
+        process.env.HARNESS_BRIDGE_TOKEN?.trim() ||
         process.env.MINIMAX_GATEWAY_TOKEN?.trim()
     })
   ].filter((check): check is HttpBridgeCheck => Boolean(check))

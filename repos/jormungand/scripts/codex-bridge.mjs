@@ -5,11 +5,6 @@ import { promises as fs } from "node:fs"
 import { spawn } from "node:child_process"
 import { createHash, randomUUID } from "node:crypto"
 import { normalizePermissionMode } from "./agent-permissions.mjs"
-import {
-  startRun as startLuckyStoreRun,
-  endRun as endLuckyStoreRun,
-  readQuota as readLuckyStoreQuota
-} from "./lucky-quota-store.mjs"
 
 const host = process.env.CODEX_BRIDGE_HOST ?? "127.0.0.1"
 const port = Number(process.env.CODEX_BRIDGE_PORT ?? 4177)
@@ -41,8 +36,6 @@ const codexSessions = new Map()
 const completedAgentRunTtlMs = Number(
   process.env.CODEX_BRIDGE_COMPLETED_RUN_TTL_MS ?? 3600000
 )
-const luckyQuotaStorePath =
-  process.env.LUCKY_QUOTA_STORE_PATH ?? null
 const ouroborosAgentContract = `Ouroboros Knowledge Protocol:
 - Before substantial work, count important source files and choose an operating level.
 - S (<5 important source files): do not activate full Ouroboros; read code directly.
@@ -71,12 +64,7 @@ const server = http.createServer(async (request, response) => {
     }
 
     if (request.method === "GET" && requestUrl.pathname === "/agent-quota") {
-      const quotaExecutor = requestUrl.searchParams.get("executor") ?? "codex"
-      if (quotaExecutor === "mavis") {
-        sendJson(response, 200, await readLuckyQuota())
-      } else {
-        sendJson(response, 200, await readCodexQuota())
-      }
+      sendJson(response, 200, await readCodexQuota())
       return
     }
 
@@ -286,22 +274,14 @@ const server = http.createServer(async (request, response) => {
       runtimeSkillBundleResults,
       executor
     )
-    const result = await (isMinimaxExecutor(executor)
-      ? runMinimaxAgent(
-          builtPrompt,
-          id,
-          idempotencyKey,
-          payload.workflowRunId,
-          normalizedPermissionMode
-        )
-      : runCodex(
-          builtPrompt,
-          id,
-          idempotencyKey,
-          payload.workflowRunId,
-          workspace.path,
-          normalizedPermissionMode
-        )).finally(async () => {
+    const result = await runCodex(
+      builtPrompt,
+      id,
+      idempotencyKey,
+      payload.workflowRunId,
+      workspace.path,
+      normalizedPermissionMode
+    ).finally(async () => {
       if (idempotencyKey) {
         activeIdempotencyKeys.delete(idempotencyKey)
       }
@@ -483,189 +463,16 @@ async function runCodex(
   }
 }
 
-function isMinimaxExecutor(executor) {
-  return executor === "minimax" || executor === "mavis"
+function isMinimaxExecutor() {
+  // Lucky / mavis is no longer dispatched on codex-bridge. The minimax
+  // executor is handled by the dedicated lucky-mavis-server.
+  return false
 }
 
-async function runMinimaxAgent(
-  prompt,
-  id,
-  idempotencyKey,
-  workflowRunId,
-  permissionModeInput = permissionMode
-) {
-  const backendUrl = process.env.MINIMAX_BACKEND_URL?.trim()
-  const backendCommand = process.env.MINIMAX_BACKEND_COMMAND?.trim()
-  const defaultModel =
-    process.env.MINIMAX_BACKEND_MODEL ?? "minimax/MiniMax-M2.7"
-  const timeoutMs = Number(process.env.MINIMAX_BRIDGE_TIMEOUT_MS ?? 900000)
-  const backendToken = process.env.MINIMAX_BACKEND_TOKEN?.trim()
-  normalizePermissionMode(permissionModeInput)
-
-  const cancel = () => {}
-  activeAgentRuns.set(id, {
-    cancel,
-    idempotencyKey,
-    startedAt: new Date().toISOString(),
-    workflowRunId
-  })
-  if (workflowRunId) {
-    activeWorkflowRuns.set(workflowRunId, id)
-  }
-  await startLuckyRun(id)
-
-  try {
-    if (backendUrl) {
-      const url = backendUrl.endsWith("/")
-        ? `${backendUrl}chat/completions`
-        : `${backendUrl}/chat/completions`
-      const response = await fetch(url, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(backendToken ? { Authorization: `Bearer ${backendToken}` } : {})
-        },
-        body: JSON.stringify({
-          model: defaultModel,
-          messages: [
-            {
-              role: "system",
-              content: "You are the Jormungand harness minimax agent."
-            },
-            { role: "user", content: prompt }
-          ]
-        }),
-        signal: AbortSignal.timeout(timeoutMs)
-      }).catch((error) => {
-        throw new Error(
-          `minimax backend HTTP request failed: ${
-            error?.message ?? String(error)
-          }`
-        )
-      })
-      const data = await response.json().catch(() => ({}))
-      if (!response.ok) {
-        return {
-          status: "failed",
-          output: data?.error?.message ?? data?.error ?? `HTTP ${response.status}`,
-          error: data?.error?.message ?? data?.error ?? `HTTP ${response.status}`,
-          stderr: "",
-          statusMessage: `minimax backend returned HTTP ${response.status}.`
-        }
-      }
-      const output =
-        data?.choices?.[0]?.message?.content ??
-        data?.output ??
-        data?.text ??
-        JSON.stringify(data)
-      return {
-        status: "completed",
-        output,
-        stderr: "",
-        statusMessage: "minimax backend completed via HTTP."
-      }
-    }
-
-    if (backendCommand) {
-      const child = spawn(backendCommand, {
-        shell: true,
-        stdio: ["pipe", "pipe", "pipe"],
-        env: {
-          ...process.env,
-          MINIMAX_AGENT: "minimax",
-          MINIMAX_MODEL: defaultModel,
-          MINIMAX_PROMPT: prompt,
-          MINIMAX_PERMISSION_MODE: permissionModeInput
-        }
-      })
-      let stdout = ""
-      let stderr = ""
-      const timer = setTimeout(() => child.kill("SIGTERM"), timeoutMs)
-      child.stdout.on("data", (chunk) => {
-        stdout += chunk.toString()
-      })
-      child.stderr.on("data", (chunk) => {
-        stderr += chunk.toString()
-      })
-      child.stdin.end(
-        JSON.stringify({ prompt, model: defaultModel, permissionMode: permissionModeInput })
-      )
-      let exitCode = 1
-      try {
-        exitCode = await new Promise((resolve, reject) => {
-          child.on("error", reject)
-          child.on("close", (code) => resolve(code ?? 1))
-        })
-      } finally {
-        clearTimeout(timer)
-      }
-      if (exitCode !== 0) {
-        return {
-          status: "failed",
-          output: stderr || stdout || `command exited with ${exitCode}`,
-          error: stderr || `minimax command exited with ${exitCode}`,
-          stderr,
-          statusMessage: `minimax backend command exited with ${exitCode}.`
-        }
-      }
-      return {
-        status: "completed",
-        output: stdout.trim() || "(no output)",
-        stderr,
-        statusMessage: "minimax backend command completed."
-      }
-    }
-
-    return {
-      status: "completed",
-      output: prompt,
-      stderr: "",
-      statusMessage:
-        "minimax bridge has no backend configured; echoed prompt back."
-    }
-  } finally {
-    activeAgentRuns.delete(id)
-    if (
-      workflowRunId &&
-      activeWorkflowRuns.get(workflowRunId) === id
-    ) {
-      activeWorkflowRuns.delete(workflowRunId)
-    }
-    await endLuckyRun(id)
-  }
-}
-
-function startLuckyRun(id) {
-  return startLuckyStoreRun(id).catch((error) => {
-    console.error(`lucky-quota-store startRun failed: ${formatError(error)}`)
-  })
-}
-
-function endLuckyRun(id) {
-  return endLuckyStoreRun(id).catch((error) => {
-    console.error(`lucky-quota-store endRun failed: ${formatError(error)}`)
-  })
-}
-
-async function readLuckyQuota() {
-  try {
-    return await readLuckyStoreQuota("mavis")
-  } catch (error) {
-    return {
-      agentId: "mavis",
-      provider: "minimax",
-      model:
-        process.env.MINIMAX_BACKEND_MODEL ?? "minimax/MiniMax-M3",
-      weeklyLimit: 5 * 3600,
-      weeklyUsed: 0,
-      weeklyRemaining: 5 * 3600,
-      remainingPercent: 100,
-      unit: "seconds",
-      resetAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      status: "unavailable"
-    }
-  }
+async function runMinimaxAgent() {
+  throw new Error(
+    "runMinimaxAgent is no longer supported on codex-bridge. Use lucky-mavis-server instead."
+  )
 }
 
 function validateProtocol(payload) {
@@ -992,18 +799,11 @@ function buildPrompt(
     return buildHiveManagerPrompt(payload)
   }
 
-  const isMinimax = executor === "minimax" || executor === "mavis"
-  const introLines = isMinimax
-    ? [
-        "You are the Jormungand minimax agent handling a workflow event.",
-        "Handle only the event described below and respect its constraints.",
-        "You are not the Codex executor; do not claim Codex identity or use the Codex CLI."
-      ]
-    : [
-        "You are the local Codex executor for a Jormungandr workflow event.",
-        "Handle only the event described below and respect its constraints."
-      ]
-  const protocolBlock = isMinimax ? "" : ouroborosAgentContract
+  const introLines = [
+    "You are the local Codex executor for a Jormungandr workflow event.",
+    "Handle only the event described below and respect its constraints."
+  ]
+  const protocolBlock = ouroborosAgentContract
 
   const artifacts = Array.isArray(payload.artifacts) ? payload.artifacts : []
   const contextFiles = Array.isArray(payload.contextFiles)

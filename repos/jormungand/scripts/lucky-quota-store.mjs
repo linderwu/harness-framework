@@ -146,7 +146,10 @@ export async function readQuota(agentId = "mavis") {
   return {
     agentId,
     provider: "minimax",
-    model: process.env.MINIMAX_BACKEND_MODEL ?? "minimax/MiniMax-M3",
+    model:
+      process.env.LUCKY_BACKEND_MODEL ??
+      process.env.MINIMAX_BACKEND_MODEL ??
+      "minimax/MiniMax-M3",
     weeklyLimit: WINDOW_SECONDS,
     weeklyUsed: state.totalUsedSeconds,
     weeklyRemaining: remaining,
