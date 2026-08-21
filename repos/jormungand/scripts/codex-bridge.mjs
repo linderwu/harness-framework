@@ -5,6 +5,11 @@ import { promises as fs } from "node:fs"
 import { spawn } from "node:child_process"
 import { createHash, randomUUID } from "node:crypto"
 import { normalizePermissionMode } from "./agent-permissions.mjs"
+import {
+  startRun as startLuckyStoreRun,
+  endRun as endLuckyStoreRun,
+  readQuota as readLuckyStoreQuota
+} from "./lucky-quota-store.mjs"
 
 const host = process.env.CODEX_BRIDGE_HOST ?? "127.0.0.1"
 const port = Number(process.env.CODEX_BRIDGE_PORT ?? 4177)
@@ -36,15 +41,8 @@ const codexSessions = new Map()
 const completedAgentRunTtlMs = Number(
   process.env.CODEX_BRIDGE_COMPLETED_RUN_TTL_MS ?? 3600000
 )
-const luckyQuotaWindowSeconds = Number(
-  process.env.LUCKY_QUOTA_WINDOW_SECONDS ?? 5 * 3600
-)
-const luckyState = {
-  windowStartedAt: null,
-  totalUsedSeconds: 0,
-  activeRunId: null,
-  activeRunStart: null
-}
+const luckyQuotaStorePath =
+  process.env.LUCKY_QUOTA_STORE_PATH ?? null
 const ouroborosAgentContract = `Ouroboros Knowledge Protocol:
 - Before substantial work, count important source files and choose an operating level.
 - S (<5 important source files): do not activate full Ouroboros; read code directly.
@@ -75,7 +73,7 @@ const server = http.createServer(async (request, response) => {
     if (request.method === "GET" && requestUrl.pathname === "/agent-quota") {
       const quotaExecutor = requestUrl.searchParams.get("executor") ?? "codex"
       if (quotaExecutor === "mavis") {
-        sendJson(response, 200, readLuckyQuota())
+        sendJson(response, 200, await readLuckyQuota())
       } else {
         sendJson(response, 200, await readCodexQuota())
       }
@@ -514,7 +512,7 @@ async function runMinimaxAgent(
   if (workflowRunId) {
     activeWorkflowRuns.set(workflowRunId, id)
   }
-  startLuckyRun(id)
+  await startLuckyRun(id)
 
   try {
     if (backendUrl) {
@@ -633,78 +631,40 @@ async function runMinimaxAgent(
     ) {
       activeWorkflowRuns.delete(workflowRunId)
     }
-    endLuckyRun(id)
+    await endLuckyRun(id)
   }
 }
 
 function startLuckyRun(id) {
-  luckyState.activeRunId = id
-  luckyState.activeRunStart = Date.now()
+  return startLuckyStoreRun(id).catch((error) => {
+    console.error(`lucky-quota-store startRun failed: ${formatError(error)}`)
+  })
 }
 
 function endLuckyRun(id) {
-  if (luckyState.activeRunId === id && luckyState.activeRunStart) {
-    const durationSeconds = Math.max(
-      0,
-      Math.floor((Date.now() - luckyState.activeRunStart) / 1000)
-    )
-    luckyState.totalUsedSeconds += durationSeconds
-    luckyState.activeRunId = null
-    luckyState.activeRunStart = null
-  }
+  return endLuckyStoreRun(id).catch((error) => {
+    console.error(`lucky-quota-store endRun failed: ${formatError(error)}`)
+  })
 }
 
-function getLuckyQuotaWindow(nowMs = Date.now()) {
-  if (!luckyState.windowStartedAt) {
-    luckyState.windowStartedAt = new Date(nowMs).toISOString()
-  }
-  const startMs = Date.parse(luckyState.windowStartedAt)
-  const endMs = startMs + luckyQuotaWindowSeconds * 1000
-
-  if (nowMs >= endMs) {
-    luckyState.windowStartedAt = new Date(nowMs).toISOString()
-    luckyState.totalUsedSeconds = 0
+async function readLuckyQuota() {
+  try {
+    return await readLuckyStoreQuota("mavis")
+  } catch (error) {
     return {
-      startMs: nowMs,
-      endMs: nowMs + luckyQuotaWindowSeconds * 1000,
-      usedSeconds: 0
+      agentId: "mavis",
+      provider: "minimax",
+      model:
+        process.env.MINIMAX_BACKEND_MODEL ?? "minimax/MiniMax-M3",
+      weeklyLimit: 5 * 3600,
+      weeklyUsed: 0,
+      weeklyRemaining: 5 * 3600,
+      remainingPercent: 100,
+      unit: "seconds",
+      resetAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      status: "unavailable"
     }
-  }
-
-  return {
-    startMs,
-    endMs,
-    usedSeconds: luckyState.totalUsedSeconds
-  }
-}
-
-function readLuckyQuota() {
-  const window = getLuckyQuotaWindow()
-  const limit = luckyQuotaWindowSeconds
-  const remaining = Math.max(0, limit - window.usedSeconds)
-  const remainingPercent =
-    limit > 0
-      ? Math.min(100, Math.max(0, (remaining / limit) * 100))
-      : 0
-
-  let status = "healthy"
-  if (remaining === 0) status = "exhausted"
-  else if (remainingPercent < 20) status = "critical"
-  else if (remainingPercent <= 50) status = "warning"
-
-  return {
-    agentId: "mavis",
-    provider: "minimax",
-    model:
-      process.env.MINIMAX_BACKEND_MODEL ?? "minimax/MiniMax-M3",
-    weeklyLimit: limit,
-    weeklyUsed: window.usedSeconds,
-    weeklyRemaining: remaining,
-    remainingPercent,
-    unit: "seconds",
-    resetAt: new Date(window.endMs).toISOString(),
-    updatedAt: new Date().toISOString(),
-    status
   }
 }
 

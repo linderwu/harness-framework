@@ -9,6 +9,10 @@ import {
   sanitizeConversationHistory
 } from "./openclaw-session.mjs"
 import { normalizePermissionMode } from "./agent-permissions.mjs"
+import {
+  startRun as startLuckyStoreRun,
+  endRun as endLuckyStoreRun
+} from "./lucky-quota-store.mjs"
 
 const host = process.env.OPENCLAW_BRIDGE_HOST ?? "127.0.0.1"
 const port = Number(process.env.OPENCLAW_BRIDGE_PORT ?? 4188)
@@ -362,6 +366,7 @@ async function runOpenClawAgent({
   appendRunEvent(journal, "started", {
     message: `Starting ${mainAgent} through OpenClaw bridge.`
   })
+  await startLuckyStoreRun(id)
   const args = [
     "exec",
     container,
@@ -440,6 +445,7 @@ async function runOpenClawAgent({
             : `${mainAgent} exited with status ${exitCode}.`
     })
     clearActiveRun(activeRun)
+    await endLuckyStoreRun(id)
   }
 
   return {

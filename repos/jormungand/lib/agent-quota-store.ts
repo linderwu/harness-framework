@@ -78,29 +78,22 @@ export async function getAgentQuotas(): Promise<AgentQuota[]> {
   const now = new Date()
   const resetAt = nextMondayUtc(now)
 
-  const quotas = agentProfiles.map((profile, index): AgentQuota | null => {
-    if (profile.id === "codex" || profile.id === "mavis") return null
-    const weeklyLimit = 100000
-    const weeklyUsed = [18000, 42000, 76000, 93000, 1000, 51000][index] ?? 0
-    const updatedAt = now.toISOString()
-    const state = calculateQuotaState({ weeklyLimit, weeklyUsed, updatedAt })
-
-    return {
-      agentId: profile.id as AgentKind,
-      provider: profile.family === "openclaw" ? "OpenClaw" : "Manual",
-      model: "Configured model",
-      weeklyLimit,
-      weeklyUsed,
-      ...state,
-      unit: "tokens",
-      resetAt,
-      updatedAt
-    }
-  }).filter((quota): quota is AgentQuota => quota !== null)
-
   const [codexQuota, luckyQuota] = await Promise.all([
     getCodexQuota(),
     getLuckyQuota()
   ])
-  return [codexQuota, luckyQuota, ...quotas]
+
+  // OpenClaw agents share the same minimax account as Lucky, so all five
+  // cards on openclaw-bridge display the identical 5h quota bar. We clone
+  // luckyQuota per agent so each AgentQuota entry has the right agentId.
+  const openclawProfiles = agentProfiles.filter(
+    (profile) => profile.family === "openclaw"
+  )
+  const openclawQuotas: AgentQuota[] = openclawProfiles.map((profile) => ({
+    ...luckyQuota,
+    agentId: profile.id as AgentKind,
+    provider: "minimax"
+  }))
+
+  return [codexQuota, luckyQuota, ...openclawQuotas]
 }
