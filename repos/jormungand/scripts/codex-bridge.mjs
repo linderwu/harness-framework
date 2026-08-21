@@ -36,6 +36,15 @@ const codexSessions = new Map()
 const completedAgentRunTtlMs = Number(
   process.env.CODEX_BRIDGE_COMPLETED_RUN_TTL_MS ?? 3600000
 )
+const luckyQuotaWindowSeconds = Number(
+  process.env.LUCKY_QUOTA_WINDOW_SECONDS ?? 5 * 3600
+)
+const luckyState = {
+  windowStartedAt: null,
+  totalUsedSeconds: 0,
+  activeRunId: null,
+  activeRunStart: null
+}
 const ouroborosAgentContract = `Ouroboros Knowledge Protocol:
 - Before substantial work, count important source files and choose an operating level.
 - S (<5 important source files): do not activate full Ouroboros; read code directly.
@@ -64,7 +73,12 @@ const server = http.createServer(async (request, response) => {
     }
 
     if (request.method === "GET" && requestUrl.pathname === "/agent-quota") {
-      sendJson(response, 200, await readCodexQuota())
+      const quotaExecutor = requestUrl.searchParams.get("executor") ?? "codex"
+      if (quotaExecutor === "mavis") {
+        sendJson(response, 200, readLuckyQuota())
+      } else {
+        sendJson(response, 200, await readCodexQuota())
+      }
       return
     }
 
@@ -264,14 +278,31 @@ const server = http.createServer(async (request, response) => {
     if (idempotencyKey) {
       activeIdempotencyKeys.set(idempotencyKey, id)
     }
-    const result = await runCodex(
-      buildPrompt(payload, contextDir, runtimeSkillBundleResults),
-      id,
-      idempotencyKey,
-      payload.workflowRunId,
-      workspace.path,
-      normalizePermissionMode(payload.permissionMode ?? permissionMode)
-    ).finally(async () => {
+    const executor = payload.executor ?? "codex"
+    const normalizedPermissionMode = normalizePermissionMode(
+      payload.permissionMode ?? permissionMode
+    )
+    const builtPrompt = buildPrompt(
+      payload,
+      contextDir,
+      runtimeSkillBundleResults
+    )
+    const result = await (isMinimaxExecutor(executor)
+      ? runMinimaxAgent(
+          builtPrompt,
+          id,
+          idempotencyKey,
+          payload.workflowRunId,
+          normalizedPermissionMode
+        )
+      : runCodex(
+          builtPrompt,
+          id,
+          idempotencyKey,
+          payload.workflowRunId,
+          workspace.path,
+          normalizedPermissionMode
+        )).finally(async () => {
       if (idempotencyKey) {
         activeIdempotencyKeys.delete(idempotencyKey)
       }
@@ -450,6 +481,229 @@ async function runCodex(
         : exitCode === 0
           ? "Codex produced no final message."
           : `Codex exited with status ${exitCode}.`
+  }
+}
+
+function isMinimaxExecutor(executor) {
+  return executor === "minimax" || executor === "mavis"
+}
+
+async function runMinimaxAgent(
+  prompt,
+  id,
+  idempotencyKey,
+  workflowRunId,
+  permissionModeInput = permissionMode
+) {
+  const backendUrl = process.env.MINIMAX_BACKEND_URL?.trim()
+  const backendCommand = process.env.MINIMAX_BACKEND_COMMAND?.trim()
+  const defaultModel =
+    process.env.MINIMAX_BACKEND_MODEL ?? "minimax/MiniMax-M2.7"
+  const timeoutMs = Number(process.env.MINIMAX_BRIDGE_TIMEOUT_MS ?? 900000)
+  const backendToken = process.env.MINIMAX_BACKEND_TOKEN?.trim()
+  normalizePermissionMode(permissionModeInput)
+
+  const cancel = () => {}
+  activeAgentRuns.set(id, {
+    cancel,
+    idempotencyKey,
+    startedAt: new Date().toISOString(),
+    workflowRunId
+  })
+  if (workflowRunId) {
+    activeWorkflowRuns.set(workflowRunId, id)
+  }
+  startLuckyRun(id)
+
+  try {
+    if (backendUrl) {
+      const url = backendUrl.endsWith("/")
+        ? `${backendUrl}chat/completions`
+        : `${backendUrl}/chat/completions`
+      const response = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(backendToken ? { Authorization: `Bearer ${backendToken}` } : {})
+        },
+        body: JSON.stringify({
+          model: defaultModel,
+          messages: [
+            {
+              role: "system",
+              content: "You are the Jormungand harness minimax agent."
+            },
+            { role: "user", content: prompt }
+          ]
+        }),
+        signal: AbortSignal.timeout(timeoutMs)
+      }).catch((error) => {
+        throw new Error(
+          `minimax backend HTTP request failed: ${
+            error?.message ?? String(error)
+          }`
+        )
+      })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        return {
+          status: "failed",
+          output: data?.error?.message ?? data?.error ?? `HTTP ${response.status}`,
+          error: data?.error?.message ?? data?.error ?? `HTTP ${response.status}`,
+          stderr: "",
+          statusMessage: `minimax backend returned HTTP ${response.status}.`
+        }
+      }
+      const output =
+        data?.choices?.[0]?.message?.content ??
+        data?.output ??
+        data?.text ??
+        JSON.stringify(data)
+      return {
+        status: "completed",
+        output,
+        stderr: "",
+        statusMessage: "minimax backend completed via HTTP."
+      }
+    }
+
+    if (backendCommand) {
+      const child = spawn(backendCommand, {
+        shell: true,
+        stdio: ["pipe", "pipe", "pipe"],
+        env: {
+          ...process.env,
+          MINIMAX_AGENT: "minimax",
+          MINIMAX_MODEL: defaultModel,
+          MINIMAX_PROMPT: prompt,
+          MINIMAX_PERMISSION_MODE: permissionModeInput
+        }
+      })
+      let stdout = ""
+      let stderr = ""
+      const timer = setTimeout(() => child.kill("SIGTERM"), timeoutMs)
+      child.stdout.on("data", (chunk) => {
+        stdout += chunk.toString()
+      })
+      child.stderr.on("data", (chunk) => {
+        stderr += chunk.toString()
+      })
+      child.stdin.end(
+        JSON.stringify({ prompt, model: defaultModel, permissionMode: permissionModeInput })
+      )
+      let exitCode = 1
+      try {
+        exitCode = await new Promise((resolve, reject) => {
+          child.on("error", reject)
+          child.on("close", (code) => resolve(code ?? 1))
+        })
+      } finally {
+        clearTimeout(timer)
+      }
+      if (exitCode !== 0) {
+        return {
+          status: "failed",
+          output: stderr || stdout || `command exited with ${exitCode}`,
+          error: stderr || `minimax command exited with ${exitCode}`,
+          stderr,
+          statusMessage: `minimax backend command exited with ${exitCode}.`
+        }
+      }
+      return {
+        status: "completed",
+        output: stdout.trim() || "(no output)",
+        stderr,
+        statusMessage: "minimax backend command completed."
+      }
+    }
+
+    return {
+      status: "completed",
+      output: prompt,
+      stderr: "",
+      statusMessage:
+        "minimax bridge has no backend configured; echoed prompt back."
+    }
+  } finally {
+    activeAgentRuns.delete(id)
+    if (
+      workflowRunId &&
+      activeWorkflowRuns.get(workflowRunId) === id
+    ) {
+      activeWorkflowRuns.delete(workflowRunId)
+    }
+    endLuckyRun(id)
+  }
+}
+
+function startLuckyRun(id) {
+  luckyState.activeRunId = id
+  luckyState.activeRunStart = Date.now()
+}
+
+function endLuckyRun(id) {
+  if (luckyState.activeRunId === id && luckyState.activeRunStart) {
+    const durationSeconds = Math.max(
+      0,
+      Math.floor((Date.now() - luckyState.activeRunStart) / 1000)
+    )
+    luckyState.totalUsedSeconds += durationSeconds
+    luckyState.activeRunId = null
+    luckyState.activeRunStart = null
+  }
+}
+
+function getLuckyQuotaWindow(nowMs = Date.now()) {
+  if (!luckyState.windowStartedAt) {
+    luckyState.windowStartedAt = new Date(nowMs).toISOString()
+  }
+  const startMs = Date.parse(luckyState.windowStartedAt)
+  const endMs = startMs + luckyQuotaWindowSeconds * 1000
+
+  if (nowMs >= endMs) {
+    luckyState.windowStartedAt = new Date(nowMs).toISOString()
+    luckyState.totalUsedSeconds = 0
+    return {
+      startMs: nowMs,
+      endMs: nowMs + luckyQuotaWindowSeconds * 1000,
+      usedSeconds: 0
+    }
+  }
+
+  return {
+    startMs,
+    endMs,
+    usedSeconds: luckyState.totalUsedSeconds
+  }
+}
+
+function readLuckyQuota() {
+  const window = getLuckyQuotaWindow()
+  const limit = luckyQuotaWindowSeconds
+  const remaining = Math.max(0, limit - window.usedSeconds)
+  const remainingPercent =
+    limit > 0
+      ? Math.min(100, Math.max(0, (remaining / limit) * 100))
+      : 0
+
+  let status = "healthy"
+  if (remaining === 0) status = "exhausted"
+  else if (remainingPercent < 20) status = "critical"
+  else if (remainingPercent <= 50) status = "warning"
+
+  return {
+    agentId: "mavis",
+    provider: "minimax",
+    model:
+      process.env.MINIMAX_BACKEND_MODEL ?? "minimax/MiniMax-M3",
+    weeklyLimit: limit,
+    weeklyUsed: window.usedSeconds,
+    weeklyRemaining: remaining,
+    remainingPercent,
+    unit: "seconds",
+    resetAt: new Date(window.endMs).toISOString(),
+    updatedAt: new Date().toISOString(),
+    status
   }
 }
 

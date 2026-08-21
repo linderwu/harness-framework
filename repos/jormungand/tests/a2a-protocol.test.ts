@@ -1,15 +1,13 @@
 import assert from "node:assert/strict"
-import { lstat, mkdir, realpath, rm, symlink } from "node:fs/promises"
-import { join } from "node:path"
 import test from "node:test"
 
 import { createOpenClawA2AEnvelope } from "../lib/a2a-protocol"
 import { buildSharedConversationHistory } from "../lib/conversation-history"
 import { ConversationHistorySync } from "../lib/conversation-history-sync"
+import { routeOpenClawUnboundConversation } from "../lib/hive-services"
 import type { ConversationEntry } from "../lib/hive-memory/types"
 import type { AgentInvocationInput } from "../lib/agent-bridge"
 import type { Artifact, WorkflowEventSkill, WorkflowRun } from "../lib/types"
-type HiveServicesModule = typeof import("../lib/hive-services")
 
 const conversationHistory = [
   { role: "user" as const, content: "[operator] status update" },
@@ -51,19 +49,19 @@ const workflowRun: WorkflowRun = {
 }
 
 const workflowSkill: WorkflowEventSkill = {
-  id: "conversation.unbound",
+  id: "conversation.unbound_limited",
   eventType: "requirement_intake",
-  stage: "intake",
-  name: "Unbound agent execution",
-  purpose: "Execute the operator request directly without requiring project or workflow binding.",
-  trigger: "The operator posted to an unbound conversation.",
+  stage: "implementation",
+  name: "OpenClaw conversation",
+  purpose: "Reply to the operator",
+  trigger: "The operator sent a message.",
   allowedActors: ["openclaw.gengar"],
-  inputs: ["recent conversation text", "agent style guidance"],
-  outputs: ["agent response and requested execution results"],
-  constraints: ["Report execution results and side effects accurately."],
-  gates: ["Server authentication and bridge authorization remain required."],
-  knowledgeSources: ["persisted unbound conversation"],
-  verificationRules: ["Return the agent response and preserve the conversation identity."]
+  inputs: ["conversation history"],
+  outputs: ["reply"],
+  constraints: ["Stay read-only."],
+  gates: ["No workflow mutation."],
+  knowledgeSources: ["persisted conversation"],
+  verificationRules: ["Return one concise text response."]
 }
 
 function createEnvelopeInput() {
@@ -73,7 +71,7 @@ function createEnvelopeInput() {
     executor: "openclaw.gengar",
     stage: "implementation",
     artifactType: "log" as Artifact["type"],
-    title: "Unbound agent execution",
+    title: "Unbound limited conversation",
     fallbackBody: "fallback body",
     idempotencyKey: "idem-123",
     sessionKey: "session-123",
@@ -90,36 +88,6 @@ function makeEntry(input: {
   agentId?: ConversationEntry["agentId"]
 }) {
   return input
-}
-
-async function ensureCompiledAlias() {
-  const tmpRoot = join(process.cwd(), ".tmp-tests")
-  const scopedRoot = join(tmpRoot, "node_modules", "@")
-  const libLink = join(scopedRoot, "lib")
-  const expectedTarget = join(tmpRoot, "lib")
-
-  await mkdir(scopedRoot, { recursive: true })
-  const existingLink = await lstat(libLink).catch(() => undefined)
-  const existingTarget = existingLink?.isSymbolicLink()
-    ? await realpath(libLink).catch(() => undefined)
-    : undefined
-  const expectedRealTarget = await realpath(expectedTarget).catch(() => undefined)
-  if (existingTarget && expectedRealTarget && existingTarget === expectedRealTarget) {
-    return
-  }
-  if (existingLink) {
-    await rm(libLink, { recursive: true, force: true })
-  }
-  await symlink(expectedTarget, libLink, "junction").catch(async (error) => {
-    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error
-  })
-}
-
-async function loadRouteOpenClawUnboundConversation() {
-  await ensureCompiledAlias()
-  const { routeOpenClawUnboundConversation } =
-    await import("../lib/hive-services") as HiveServicesModule
-  return routeOpenClawUnboundConversation
 }
 
 test("legacy OpenClaw A2A envelope includes conversationId and conversationHistory in the task payload", () => {
@@ -187,7 +155,6 @@ test("ConversationHistorySync returns only the post-delivery delta for the same 
 })
 
 test("unbound OpenClaw routing seeds once, then sends only delta, and failed delivery does not advance cursor", async () => {
-  const routeOpenClawUnboundConversation = await loadRouteOpenClawUnboundConversation()
   const sync = new ConversationHistorySync()
   const capturedInputs: AgentInvocationInput[] = []
   const statuses: Array<"completed" | "failed"> = [
@@ -269,7 +236,6 @@ test("unbound OpenClaw routing seeds once, then sends only delta, and failed del
 })
 
 test("unbound OpenClaw routing keeps an independent seed and cursor per agent in the same conversation", async () => {
-  const routeOpenClawUnboundConversation = await loadRouteOpenClawUnboundConversation()
   const sync = new ConversationHistorySync()
   const capturedInputs: AgentInvocationInput[] = []
   const baseEntries = [

@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 30 30" width="30" height="30" role="img" aria-label="Mavis the axolotl">
+  <defs>
+    <radialGradient id="mavisBody" cx="50%" cy="40%" r="60%">
+      <stop offset="0%" stop-color="#FFE4EC" />
+      <stop offset="100%" stop-color="#F5B5C8" />
+    </radialGradient>
+  </defs>
+  <!-- gills -->
+  <ellipse cx="6" cy="11" rx="3.2" ry="1.6" fill="#F5B5C8" />
+  <ellipse cx="6" cy="15" rx="3.2" ry="1.6" fill="#F5B5C8" />
+  <ellipse cx="6" cy="19" rx="3.2" ry="1.6" fill="#F5B5C8" />
+  <ellipse cx="24" cy="11" rx="3.2" ry="1.6" fill="#F5B5C8" />
+  <ellipse cx="24" cy="15" rx="3.2" ry="1.6" fill="#F5B5C8" />
+  <ellipse cx="24" cy="19" rx="3.2" ry="1.6" fill="#F5B5C8" />
+  <!-- body -->
+  <ellipse cx="15" cy="17" rx="8.5" ry="9" fill="url(#mavisBody)" />
+  <!-- egg -->
+  <ellipse cx="15" cy="22" rx="3.5" ry="2.5" fill="#FFFFFF" stroke="#E8C9D6" stroke-width="0.4" />
+  <!-- eyes -->
+  <ellipse cx="12" cy="13" rx="1" ry="1.4" fill="#1A1A1A" />
+  <ellipse cx="18" cy="13" rx="1" ry="1.4" fill="#1A1A1A" />
+  <circle cx="12.3" cy="12.5" r="0.35" fill="#FFFFFF" />
+  <circle cx="18.3" cy="12.5" r="0.35" fill="#FFFFFF" />
+  <!-- smile -->
+  <path d="M 12.5 16.5 Q 15 18 17.5 16.5" fill="none" stroke="#1A1A1A" stroke-width="0.6" stroke-linecap="round" />
+</svg>
