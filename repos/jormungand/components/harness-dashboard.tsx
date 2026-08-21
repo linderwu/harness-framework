@@ -2384,29 +2384,44 @@ function AgentBridgeRow({
         </div>
       ) : null}
       {agent === "codex" || agent === "mavis" || isOpenClawAgent(agent) ? (
-        <AgentQuotaBar quota={quota} />
+        <AgentQuotaBar
+          quota={quota}
+          windowLabel={agent === "codex" ? "Weekly" : "5h"}
+        />
       ) : null}
     </div>
   )
 }
 
-function AgentQuotaBar({ quota }: { quota?: AgentQuota }) {
+function AgentQuotaBar({
+  quota,
+  windowLabel = "Weekly"
+}: {
+  quota?: AgentQuota
+  windowLabel?: string
+}) {
   const status = quota?.status ?? "unavailable"
   const isUnavailable = !quota || status === "unavailable"
   const remainingPercent = Math.max(
     0,
     Math.min(100, Math.round(quota?.remainingPercent ?? 0))
   )
-  const label = isUnavailable ? "Unavailable" : `${remainingPercent}%`
+  const remainingSeconds = Math.max(0, quota?.weeklyRemaining ?? 0)
+  const label = isUnavailable
+    ? "Unavailable"
+    : `${formatRemainingDuration(remainingSeconds)} left`
+  const ariaLabel = isUnavailable
+    ? `${windowLabel} remaining quota unavailable`
+    : `${windowLabel} remaining quota: ${formatRemainingDuration(remainingSeconds)} (${remainingPercent}%)`
 
   return (
     <div className={`agentQuotaBar status-${status}`}>
       <div className="agentQuotaTrackLabel">
-        <span>Weekly HP</span>
+        <span>{windowLabel} HP</span>
         <strong>{label}</strong>
       </div>
       <div
-        aria-label="Arceus remaining weekly quota"
+        aria-label={ariaLabel}
         aria-valuemax={100}
         aria-valuemin={0}
         aria-valuenow={quota ? remainingPercent : undefined}
@@ -2418,6 +2433,16 @@ function AgentQuotaBar({ quota }: { quota?: AgentQuota }) {
       </div>
     </div>
   )
+}
+
+function formatRemainingDuration(seconds: number): string {
+  if (seconds <= 0) return "0m"
+  const totalMinutes = Math.floor(seconds / 60)
+  const hours = Math.floor(totalMinutes / 60)
+  const minutes = totalMinutes % 60
+  if (hours === 0) return `${minutes}m`
+  if (minutes === 0) return `${hours}h`
+  return `${hours}h ${minutes}m`
 }
 
 function getBridgeAgents(bridgeId: BridgeId): AgentKind[] {

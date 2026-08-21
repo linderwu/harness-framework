@@ -159,10 +159,11 @@ test("bridge status panel polls quotas and forwards only codex quota to the Arce
   assert.match(card, /isOpenClawAgent\(agent\)/)
   assert.match(
     row,
-    /agent === \"codex\" \| agent === \"mavis\" \| isOpenClawAgent\(agent\)/
+    /windowLabel=\{agent === \"codex\" \? \"Weekly\" : \"5h\"\}/
   )
   assert.match(quotaBar, /role="progressbar"/)
-  assert.match(quotaBar, /Weekly HP/)
+  assert.match(quotaBar, /\{windowLabel\} HP/)
+  assert.match(quotaBar, /formatRemainingDuration\(remainingSeconds\)/)
 })
 
 test("agent run rows expose a stop button for active task runs", () => {
