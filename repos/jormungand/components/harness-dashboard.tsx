@@ -2300,20 +2300,12 @@ function AgentBridgeRow({
   const profile = agentProfiles.find((candidate) => candidate.id === agent)
   const status = latestAgentRun?.status ?? "idle"
   const statusLabel = status === "failed" ? "FAIL" : status.toUpperCase()
-  const initialModelId = run?.selectedModelId ?? "ChatGPT OAuth"
-  const initialReasoningIntensity = run?.selectedReasoningIntensity ?? "auto"
-  const [modelId, setModelId] = useState(initialModelId)
-  const [reasoningIntensity, setReasoningIntensity] =
-    useState<CodexReasoningIntensity>(initialReasoningIntensity)
+  const selectedModelId = run?.selectedModelId ?? "ChatGPT OAuth"
+  const selectedReasoningIntensity = run?.selectedReasoningIntensity ?? "auto"
 
   if (!profile) {
     return null
   }
-
-  useEffect(() => {
-    setModelId(run?.selectedModelId ?? "ChatGPT OAuth")
-    setReasoningIntensity(run?.selectedReasoningIntensity ?? "auto")
-  }, [run?.id, run?.selectedModelId, run?.selectedReasoningIntensity])
 
   const modelOptions = new Set([
     ...codexModelOptions,
@@ -2345,11 +2337,10 @@ function AgentBridgeRow({
             <select
               aria-label="Codex model"
               className="plainSelect bridgeAgentSmallSelect"
-              value={modelId}
+              value={selectedModelId}
               onChange={(event) => {
                 const nextModelId = event.target.value
-                setModelId(nextModelId)
-                applyProfile(nextModelId, reasoningIntensity)
+                applyProfile(nextModelId, selectedReasoningIntensity)
               }}
             >
               {Array.from(modelOptions).map((optionModelId) => (
@@ -2364,12 +2355,11 @@ function AgentBridgeRow({
             <select
               aria-label="Codex reasoning intensity"
               className="plainSelect bridgeAgentSmallSelect"
-              value={reasoningIntensity}
+              value={selectedReasoningIntensity}
               onChange={(event) => {
                 const nextReasoningIntensity =
                   event.target.value as CodexReasoningIntensity
-                setReasoningIntensity(nextReasoningIntensity)
-                applyProfile(modelId, nextReasoningIntensity)
+                applyProfile(selectedModelId, nextReasoningIntensity)
               }}
             >
               {codexReasoningIntensityOptions.map((option) => (
