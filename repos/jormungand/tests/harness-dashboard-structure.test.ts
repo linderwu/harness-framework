@@ -163,7 +163,7 @@ test("bridge status panel polls quotas and forwards only codex quota to the Arce
   )
   assert.match(quotaBar, /role="progressbar"/)
   assert.match(quotaBar, /\{windowLabel\} HP/)
-  assert.match(quotaBar, /formatRemainingDuration\(remainingSeconds\)/)
+  assert.match(quotaBar, /\$\{remainingPercent\}%/)
 })
 
 test("agent run rows expose a stop button for active task runs", () => {

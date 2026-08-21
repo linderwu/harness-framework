@@ -2406,13 +2406,10 @@ function AgentQuotaBar({
     0,
     Math.min(100, Math.round(quota?.remainingPercent ?? 0))
   )
-  const remainingSeconds = Math.max(0, quota?.weeklyRemaining ?? 0)
-  const label = isUnavailable
-    ? "Unavailable"
-    : `${formatRemainingDuration(remainingSeconds)} left`
+  const label = isUnavailable ? "Unavailable" : `${remainingPercent}%`
   const ariaLabel = isUnavailable
     ? `${windowLabel} remaining quota unavailable`
-    : `${windowLabel} remaining quota: ${formatRemainingDuration(remainingSeconds)} (${remainingPercent}%)`
+    : `${windowLabel} remaining quota: ${remainingPercent}%`
 
   return (
     <div className={`agentQuotaBar status-${status}`}>
@@ -2433,16 +2430,6 @@ function AgentQuotaBar({
       </div>
     </div>
   )
-}
-
-function formatRemainingDuration(seconds: number): string {
-  if (seconds <= 0) return "0m"
-  const totalMinutes = Math.floor(seconds / 60)
-  const hours = Math.floor(totalMinutes / 60)
-  const minutes = totalMinutes % 60
-  if (hours === 0) return `${minutes}m`
-  if (minutes === 0) return `${hours}h`
-  return `${hours}h ${minutes}m`
 }
 
 function getBridgeAgents(bridgeId: BridgeId): AgentKind[] {
