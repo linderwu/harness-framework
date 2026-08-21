@@ -65,13 +65,38 @@ function createHttpBridgeCheck(input: {
     return undefined
   }
 
+  const url = coerceBridgeUrl(input.url)
+  if (!url) {
+    return undefined
+  }
+
+  let urlHost: string
+  try {
+    urlHost = new URL(url).host
+  } catch {
+    return undefined
+  }
+
   return {
     id: input.id,
     label: input.label,
-    url: input.url,
+    url,
     token: input.token,
-    urlHost: new URL(input.url).host
+    urlHost
   }
+}
+
+/**
+ * Coerce a raw bridge URL into a string that URL() can parse.
+ * Accepts values with or without an explicit scheme. If the scheme is
+ * missing, defaults to https:// (the common case for bridge backends).
+ * Returns undefined for empty or unparseable values.
+ */
+function coerceBridgeUrl(raw: string): string | undefined {
+  const trimmed = raw.trim()
+  if (!trimmed) return undefined
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed)) return trimmed
+  return `https://${trimmed}`
 }
 
 async function checkHttpBridge(input: HttpBridgeCheck): Promise<BridgeHealth> {
