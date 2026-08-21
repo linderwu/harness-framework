@@ -288,6 +288,7 @@ export function HarnessDashboard({
   const [isMutating, setIsMutating] = useState(false)
   const [isNavigationExpanded, setIsNavigationExpanded] = useState(true)
   const [isMonitoringExpanded, setIsMonitoringExpanded] = useState(true)
+  const [codexActivityMount, setCodexActivityMount] = useState<HTMLDivElement | null>(null)
   const [mobilePanel, setMobilePanel] = useState<MobilePanel>()
   const [mutationError, setMutationError] = useState<string | undefined>()
 	  const [conversationEntries, setConversationEntries] = useState<ConversationEntry[]>([])
@@ -1242,6 +1243,7 @@ export function HarnessDashboard({
             </div>
           ) : null}
           </form>
+          <div className="codexActivityMount" ref={setCodexActivityMount} />
           </> : null}
         </aside>
 
@@ -1261,6 +1263,7 @@ export function HarnessDashboard({
               setSelectedProjectId(binding.projectId)
               setSelectedRunId(binding.workflowRunId)
             }}
+            codexActivityMount={codexActivityMount}
             onNewConversation={handleNewConversation}
           />
           {selectedProject && selectedOverview ? (
