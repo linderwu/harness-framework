@@ -156,8 +156,11 @@ test("bridge status panel polls quotas and forwards only codex quota to the Arce
   assert.match(panel, /const agentQuotaPollIntervalMs = 5 \* 60 \* 1000/)
   assert.match(panel, /refreshCodexQuota/)
   assert.match(panel, /bridge.id === "codex-bridge" \? codexQuota : undefined/)
-  assert.match(card, /quota={agent === \"codex\" \? quota : undefined}/)
-  assert.match(row, /agent === \"codex\" \? <AgentQuotaBar quota={quota} \/> : null/)
+  assert.match(card, /isOpenClawAgent\(agent\)/)
+  assert.match(
+    row,
+    /agent === \"codex\" \| agent === \"mavis\" \| isOpenClawAgent\(agent\)/
+  )
   assert.match(quotaBar, /role="progressbar"/)
   assert.match(quotaBar, /Weekly HP/)
 })

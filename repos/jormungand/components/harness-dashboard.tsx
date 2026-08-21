@@ -45,6 +45,7 @@ import {
   agentProfiles,
   defaultAgentKind,
   getAgentLabel,
+  isOpenClawAgent,
   normalizeAgentKind,
   type AgentProfile
 } from "@/lib/agents"
@@ -2268,15 +2269,23 @@ function BridgeStatusCard({
       </div>
       {health?.message ? <p>{health.message}</p> : null}
       <div className="bridgeAgentRows">
-        {agents.map((agent) => (
-          <AgentBridgeRow
-            agent={agent}
-            key={agent}
-            quota={quotas[agent]}
-            run={run}
-            onCodexProfileChange={onCodexProfileChange}
-          />
-        ))}
+        {agents.map((agent) => {
+          // OpenClaw agents don't have a backend quota endpoint; reuse the
+          // Lucky (mavis) quota so every openclaw card shows the same
+          // Weekly HP bar without changing backend reporting.
+          const displayQuota = isOpenClawAgent(agent)
+            ? quotas.mavis ?? quotas[agent]
+            : quotas[agent]
+          return (
+            <AgentBridgeRow
+              agent={agent}
+              key={agent}
+              quota={displayQuota}
+              run={run}
+              onCodexProfileChange={onCodexProfileChange}
+            />
+          )
+        })}
       </div>
     </article>
   )
@@ -2374,7 +2383,9 @@ function AgentBridgeRow({
           </label>
         </div>
       ) : null}
-      {agent === "codex" || agent === "mavis" ? <AgentQuotaBar quota={quota} /> : null}
+      {agent === "codex" || agent === "mavis" || isOpenClawAgent(agent) ? (
+        <AgentQuotaBar quota={quota} />
+      ) : null}
     </div>
   )
 }
