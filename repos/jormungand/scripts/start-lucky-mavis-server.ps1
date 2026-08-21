@@ -33,6 +33,30 @@ if (-not (Test-Path $nodeScript)) {
   throw "Cannot find $nodeScript"
 }
 
+# Best-effort: load .env.local from the project root so the bridge picks up
+# LUCKY_BRIDGE_URL / LUCKY_BRIDGE_TOKEN / LUCKY_BACKEND_* without needing
+# them to live in the user-level registry. Existing process env wins.
+$envLocalPath = Join-Path $projectRoot ".env.local"
+if (Test-Path $envLocalPath) {
+  Get-Content $envLocalPath |
+    Where-Object { $_ -and ($_ -notmatch '^\s*#') -and ($_ -match '=') } |
+    ForEach-Object {
+      $parts = $_ -split '=', 2
+      $name = $parts[0].Trim()
+      $value = $parts[1].Trim()
+      # strip surrounding quotes
+      if ($value.StartsWith('"') -and $value.EndsWith('"')) {
+        $value = $value.Substring(1, $value.Length - 2)
+      } elseif ($value.StartsWith("'") -and $value.EndsWith("'")) {
+        $value = $value.Substring(1, $value.Length - 2)
+      }
+      # skip empty values and ${WEB_PORT} placeholders
+      if (-not $value) { return }
+      if ($value -match '^\$\{') { return }
+      if (-not (Test-Path "Env:\$name")) { Set-Item -Path "Env:\$name" -Value $value }
+    }
+}
+
 $host_ = $env:LUCKY_BRIDGE_HOST
 if (-not $host_) { $host_ = "127.0.0.1" }
 
