@@ -32,7 +32,7 @@ export async function GET() {
     }),
     createHttpBridgeCheck({
       id: "minimax-bridge",
-      label: "minimax Bridge",
+      label: "Lucky",
       url: process.env.MINIMAX_BRIDGE_URL,
       token:
         process.env.MINIMAX_BRIDGE_TOKEN?.trim() ||
