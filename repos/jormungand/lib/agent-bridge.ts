@@ -910,7 +910,7 @@ function createMissingBridgeResult(
   return {
     status: "failed",
     source,
-    body: `${getAgentProfile(input.executor).label} has no configured bridge. Set CODEX_BRIDGE_URL, OPENCLAW_BRIDGE_URL, OPENCLAW_A2A_COMMAND, MINIMAX_BRIDGE_URL, or MINIMAX_A2A_COMMAND.`
+    body: `${getAgentProfile(input.executor).label} has no configured bridge. Set CODEX_BRIDGE_URL (for Codex and minimax), OPENCLAW_BRIDGE_URL, OPENCLAW_A2A_COMMAND, or MINIMAX_A2A_COMMAND.`
   }
 }
 
@@ -967,6 +967,8 @@ function getOpenClawBridgeToken() {
 
 function getMinimaxBridgeToken() {
   return (
+    process.env.CODEX_BRIDGE_TOKEN?.trim() ||
+    process.env.HARNESS_BRIDGE_TOKEN?.trim() ||
     process.env.MINIMAX_BRIDGE_TOKEN?.trim() ||
     process.env.MINIMAX_GATEWAY_TOKEN?.trim() ||
     undefined
@@ -976,16 +978,12 @@ function getMinimaxBridgeToken() {
 function getAgentBridgeUrl(agent: AgentKind) {
   const profile = getAgentProfile(agent)
 
-  if (profile.family === "codex") {
+  if (profile.family === "codex" || profile.family === "minimax") {
     return process.env.CODEX_BRIDGE_URL
   }
 
   if (profile.family === "openclaw") {
     return process.env.OPENCLAW_BRIDGE_URL
-  }
-
-  if (profile.family === "minimax") {
-    return process.env.MINIMAX_BRIDGE_URL
   }
 
   return undefined
