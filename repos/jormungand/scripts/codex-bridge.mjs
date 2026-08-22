@@ -33,6 +33,21 @@ const activeIdempotencyKeys = new Map()
 const completedAgentRuns = new Map()
 const completedIdempotencyKeys = new Map()
 const codexSessions = new Map()
+
+// ---------- mavis (Lucky) forwarder ----------------------------------------
+// When the dashboard sends `executor: "mavis"`, codex-bridge becomes a thin
+// reverse proxy to the local lucky-mavis-server. The dashboard can then be
+// pointed at https://codex-bridge.jormungandcycle.com (the public tunnel
+// already in front of this process) and the request lands on the local Lucky
+// bridge through us. We track forwarded runs by idempotency key / run id so
+// subsequent /agent-runs/<id> and /agent-runs/by-idempotency/<key> lookups
+// route to the same backend.
+const luckyBridgeUrl = process.env.LUCKY_BRIDGE_URL ?? "http://127.0.0.1:4198"
+const luckyBridgeBase = luckyBridgeUrl.endsWith("/")
+  ? luckyBridgeUrl
+  : `${luckyBridgeUrl}/`
+const mavisIdempotencyKeys = new Set()
+const mavisRunIds = new Set()
 const completedAgentRunTtlMs = Number(
   process.env.CODEX_BRIDGE_COMPLETED_RUN_TTL_MS ?? 3600000
 )
@@ -163,7 +178,25 @@ const server = http.createServer(async (request, response) => {
     )
 
     if (request.method === "GET" && idempotencyMatch) {
-      const idempotencyKey = decodeURIComponent(idempotencyMatch[1])
+      const rawTail = decodeURIComponent(idempotencyMatch[1])
+      // /agent-runs/by-idempotency/<key>  -> key = <key>
+      // /agent-runs/by-idempotency/<key>/events  -> key = <key>
+      const slashIndex = rawTail.indexOf("/")
+      const idempotencyKey = slashIndex === -1 ? rawTail : rawTail.slice(0, slashIndex)
+
+      if (mavisIdempotencyKeys.has(idempotencyKey)) {
+        try {
+          const forwarded = await forwardToLuckyBridge(
+            request,
+            requestUrl.pathname + requestUrl.search
+          )
+          sendForwarded(response, forwarded)
+        } catch (error) {
+          sendForwardingError(response, error)
+        }
+        return
+      }
+
       const activeRunId = activeIdempotencyKeys.get(idempotencyKey)
       const completedRunId = completedIdempotencyKeys.get(idempotencyKey)
 
@@ -185,6 +218,20 @@ const server = http.createServer(async (request, response) => {
 
     if (request.method === "GET" && agentRunMatch) {
       const agentRunId = decodeURIComponent(agentRunMatch[1])
+
+      if (mavisRunIds.has(agentRunId)) {
+        try {
+          const forwarded = await forwardToLuckyBridge(
+            request,
+            requestUrl.pathname + requestUrl.search
+          )
+          sendForwarded(response, forwarded)
+        } catch (error) {
+          sendForwardingError(response, error)
+        }
+        return
+      }
+
       const completedRun = completedAgentRuns.get(agentRunId)
 
       if (completedRun) {
@@ -211,6 +258,37 @@ const server = http.createServer(async (request, response) => {
 
     if (protocolError) {
       sendJson(response, 400, { error: protocolError })
+      return
+    }
+
+    // mavis / Lucky: forward to the local lucky-mavis-server instead of
+    // running this on codex-bridge. The dashboard is configured to use
+    // codex-bridge as a single public endpoint for every agent.
+    if ((payload.executor ?? "codex") === "mavis") {
+      const stashedBody = JSON.stringify(payload)
+      const idempotencyKey =
+        payload.idempotencyKey || request.headers["idempotency-key"]
+      if (idempotencyKey) {
+        mavisIdempotencyKeys.add(String(idempotencyKey))
+      }
+      try {
+        const forwarded = await forwardToLuckyBridge(
+          request,
+          requestUrl.pathname + requestUrl.search,
+          stashedBody
+        )
+        // Capture the run id lucky returns so /agent-runs/<id> lookups
+        // for this run also route back to lucky instead of 404'ing here.
+        try {
+          const data = JSON.parse(forwarded.body)
+          if (data?.id) mavisRunIds.add(String(data.id))
+        } catch {
+          // Non-JSON body — leave mavisRunIds alone.
+        }
+        sendForwarded(response, forwarded)
+      } catch (error) {
+        sendForwardingError(response, error)
+      }
       return
     }
 
@@ -310,10 +388,73 @@ const server = http.createServer(async (request, response) => {
 server.listen(port, host, () => {
   console.log(`Codex bridge listening at http://${host}:${port}`)
   console.log(`Codex workspace: ${repoRoot}`)
+  console.log(`Mavis forwarder -> ${luckyBridgeBase}`)
   if (!token) {
     console.log("HARNESS_BRIDGE_TOKEN is not set; use localhost-only access.")
   }
 })
+
+// ---------- mavis forwarder helpers ----------------------------------------
+
+async function readRawBody(request) {
+  let raw = ""
+  for await (const chunk of request) {
+    raw += chunk
+    if (raw.length > 50_000_000) {
+      throw new Error("request body too large")
+    }
+  }
+  return raw
+}
+
+async function forwardToLuckyBridge(request, path, stashedBody) {
+  const target = new URL(path, luckyBridgeBase)
+  const headers = {}
+  for (const [k, v] of Object.entries(request.headers)) {
+    const lower = k.toLowerCase()
+    if (lower === "host" || lower === "connection" || lower === "content-length") {
+      continue
+    }
+    headers[k] = v
+  }
+  if (token) {
+    headers.authorization = `Bearer ${token}`
+  }
+  const init = {
+    method: request.method,
+    headers,
+    cache: "no-store"
+  }
+  const methodAllowsBody =
+    request.method === "POST" ||
+    request.method === "PUT" ||
+    request.method === "PATCH" ||
+    request.method === "DELETE"
+  if (methodAllowsBody) {
+    init.body = stashedBody !== undefined ? stashedBody : await readRawBody(request)
+  }
+  const upstream = await fetch(target, init)
+  const responseBody = await upstream.text()
+  const contentType = upstream.headers.get("content-type") ?? "application/json; charset=utf-8"
+  return {
+    status: upstream.status,
+    contentType,
+    body: responseBody
+  }
+}
+
+function sendForwarded(nodeResponse, forwarded) {
+  nodeResponse.writeHead(forwarded.status, {
+    "Content-Type": forwarded.contentType
+  })
+  nodeResponse.end(forwarded.body)
+}
+
+function sendForwardingError(nodeResponse, error) {
+  sendJson(nodeResponse, 502, {
+    error: `mavis forwarder -> ${luckyBridgeBase} failed: ${formatError(error)}`
+  })
+}
 
 function sendAgentRunStatus(response, agentRunId) {
   const activeRun = activeAgentRuns.get(agentRunId)
