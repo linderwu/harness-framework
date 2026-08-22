@@ -33,11 +33,21 @@ if (-not (Test-Path $nodeScript)) {
   throw "Cannot find $nodeScript"
 }
 
-# Best-effort: load .env.local from the project root so the bridge picks up
+# Best-effort: load .env.local so the bridge picks up
 # LUCKY_BRIDGE_URL / LUCKY_BRIDGE_TOKEN / LUCKY_BACKEND_* without needing
 # them to live in the user-level registry. Existing process env wins.
-$envLocalPath = Join-Path $projectRoot ".env.local"
-if (Test-Path $envLocalPath) {
+# Look in this order so it works whether the operator keeps the file at
+# the workspace root (current convention) or under repos/jormungand/.
+foreach ($candidate in @(
+  (Join-Path $projectRoot ".env.local"),
+  (Join-Path (Resolve-Path (Join-Path (Join-Path $projectRoot "..") "..")) ".env.local")
+)) {
+  if (Test-Path $candidate) {
+    $envLocalPath = $candidate
+    break
+  }
+}
+if ($envLocalPath) {
   Get-Content $envLocalPath |
     Where-Object { $_ -and ($_ -notmatch '^\s*#') -and ($_ -match '=') } |
     ForEach-Object {
@@ -54,13 +64,25 @@ if (Test-Path $envLocalPath) {
       if (-not $value) { return }
       if ($value -match '^\$\{') { return }
       if (-not (Test-Path "Env:\$name")) { Set-Item -Path "Env:\$name" -Value $value }
-    }
+  }
+}
+
+$bridgeConfigPath = if ($env:BRIDGE_CONFIG_PATH) {
+  if ([System.IO.Path]::IsPathRooted($env:BRIDGE_CONFIG_PATH)) { $env:BRIDGE_CONFIG_PATH } else { Join-Path $projectRoot $env:BRIDGE_CONFIG_PATH }
+} else {
+  Join-Path $projectRoot ".harness\bridge.config.json"
+}
+$bridgeConfig = $null
+if (Test-Path $bridgeConfigPath) {
+  $bridgeConfig = Get-Content $bridgeConfigPath -Raw | ConvertFrom-Json
 }
 
 $host_ = $env:LUCKY_BRIDGE_HOST
+if (-not $host_ -and $bridgeConfig -and $bridgeConfig.runtimes -and $bridgeConfig.runtimes.lucky) { $host_ = $bridgeConfig.runtimes.lucky.host }
 if (-not $host_) { $host_ = "127.0.0.1" }
 
 $port_ = $env:LUCKY_BRIDGE_PORT
+if (-not $port_ -and $bridgeConfig -and $bridgeConfig.runtimes -and $bridgeConfig.runtimes.lucky) { $port_ = $bridgeConfig.runtimes.lucky.port }
 if (-not $port_) { $port_ = "4198" }
 
 if (-not $env:LUCKY_BRIDGE_TOKEN) {
@@ -68,12 +90,12 @@ if (-not $env:LUCKY_BRIDGE_TOKEN) {
   elseif ($env:CODEX_BRIDGE_TOKEN) { $env:LUCKY_BRIDGE_TOKEN = $env:CODEX_BRIDGE_TOKEN }
 }
 
-if (-not $env:LUCKY_BACKEND_URL) {
+if (-not $env:LUCKY_BACKEND_URL -and -not $bridgeConfig) {
   if ($env:MINIMAX_BACKEND_URL) { $env:LUCKY_BACKEND_URL = $env:MINIMAX_BACKEND_URL }
   else { $env:LUCKY_BACKEND_URL = "https://api.minimax.io/v1" }
 }
 
-if (-not $env:LUCKY_BACKEND_MODEL) {
+if (-not $env:LUCKY_BACKEND_MODEL -and -not $bridgeConfig) {
   $env:LUCKY_BACKEND_MODEL = "MiniMax-M3"
 }
 
@@ -81,12 +103,12 @@ if (-not $env:LUCKY_BACKEND_TOKEN) {
   if ($env:MINIMAX_BACKEND_TOKEN) { $env:LUCKY_BACKEND_TOKEN = $env:MINIMAX_BACKEND_TOKEN }
 }
 
-if (-not $env:LUCKY_BRIDGE_REPO_ROOT) {
+if (-not $env:LUCKY_BRIDGE_REPO_ROOT -and -not $bridgeConfig) {
   if ($env:CODEX_BRIDGE_REPO_ROOT) { $env:LUCKY_BRIDGE_REPO_ROOT = $env:CODEX_BRIDGE_REPO_ROOT }
   else { $env:LUCKY_BRIDGE_REPO_ROOT = $projectRoot.Path }
 }
 
-if (-not $env:LUCKY_QUOTA_STORE_PATH) {
+if (-not $env:LUCKY_QUOTA_STORE_PATH -and -not $bridgeConfig) {
   if ($env:CODEX_BRIDGE_REPO_ROOT) {
     $env:LUCKY_QUOTA_STORE_PATH = Join-Path $env:CODEX_BRIDGE_REPO_ROOT "data\lucky-quota.json"
   } else {
@@ -101,10 +123,11 @@ $logFile = Join-Path $logDir "lucky-mavis-server.log"
 Write-Host "Starting lucky-mavis-server detached:"
 Write-Host "  bind:        http://${host_}:${port_}"
 Write-Host "  token:       $(if ($env:LUCKY_BRIDGE_TOKEN) { 'set' } else { 'loopback-only' })"
-Write-Host "  backend:     $($env:LUCKY_BACKEND_URL)"
-Write-Host "  model:       $($env:LUCKY_BACKEND_MODEL)"
-Write-Host "  repo root:   $($env:LUCKY_BRIDGE_REPO_ROOT)"
-Write-Host "  quota store: $($env:LUCKY_QUOTA_STORE_PATH)"
+Write-Host "  config:      $(if ($bridgeConfig) { $bridgeConfigPath } else { 'environment/defaults' })"
+Write-Host "  backend:     $(if ($env:LUCKY_BACKEND_URL) { $env:LUCKY_BACKEND_URL } elseif ($bridgeConfig) { $bridgeConfig.runtimes.lucky.backend.url } else { 'https://api.minimax.io/v1' })"
+Write-Host "  model:       $(if ($env:LUCKY_BACKEND_MODEL) { $env:LUCKY_BACKEND_MODEL } elseif ($bridgeConfig) { $bridgeConfig.runtimes.lucky.backend.model } else { 'MiniMax-M3' })"
+Write-Host "  repo root:   $(if ($env:LUCKY_BRIDGE_REPO_ROOT) { $env:LUCKY_BRIDGE_REPO_ROOT } elseif ($bridgeConfig) { $bridgeConfig.device.repoRoot } else { $projectRoot.Path })"
+Write-Host "  quota store: $(if ($env:LUCKY_QUOTA_STORE_PATH) { $env:LUCKY_QUOTA_STORE_PATH } elseif ($bridgeConfig) { $bridgeConfig.runtimes.lucky.quotaStorePath } else { Join-Path $projectRoot.Path 'data\lucky-quota.json' })"
 Write-Host "  logfile:     $logFile"
 
 $proc = Start-Process -FilePath "node" -ArgumentList $nodeScript `
@@ -117,5 +140,14 @@ $proc = Start-Process -FilePath "node" -ArgumentList $nodeScript `
 Write-Host "Started PID $($proc.Id). Bridge is detached and survives session exit."
 
 Start-Sleep -Seconds 1
-$check = Invoke-RestMethod -Uri "http://${host_}:${port_}/health" -TimeoutSec 5
-Write-Host "Health check: ok=$($check.ok) protocolVersion=$($check.protocolVersion) backend=$($check.backend)"
+$checkHeaders = @{}
+if ($env:LUCKY_BRIDGE_TOKEN) {
+  $checkHeaders["Authorization"] = "Bearer $($env:LUCKY_BRIDGE_TOKEN)"
+}
+try {
+  $check = Invoke-RestMethod -Uri "http://${host_}:${port_}/health" -Headers $checkHeaders -TimeoutSec 5
+  Write-Host "Health check: ok=$($check.ok) protocolVersion=$($check.protocolVersion) backend=$($check.backend)"
+} catch {
+  Write-Host "Health check failed: $($_.Exception.Message)" -ForegroundColor Yellow
+  Write-Host "Process is up (PID $($proc.Id)) but the bridge may not be fully ready." -ForegroundColor Yellow
+}

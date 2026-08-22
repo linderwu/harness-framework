@@ -116,3 +116,76 @@ test("Codex bridge receives normalized permission mode with workflow run profile
     assert.equal(typeof capturedPayload.workflowRunId, "string")
   }
 })
+
+test("Mavis uses the Codex device bridge for HTTP execution", async (t) => {
+  for (const key of [
+    "CODEX_BRIDGE_URL",
+    "CODEX_BRIDGE_TOKEN",
+    "LUCKY_BRIDGE_URL",
+    "LUCKY_BRIDGE_TOKEN",
+    "MINIMAX_A2A_COMMAND"
+  ]) {
+    restoreEnv(t, key)
+  }
+
+  process.env.CODEX_BRIDGE_URL = "http://codex.test"
+  process.env.CODEX_BRIDGE_TOKEN = "codex-token"
+  process.env.LUCKY_BRIDGE_URL = "http://lucky.test"
+  process.env.LUCKY_BRIDGE_TOKEN = "lucky-token"
+  delete process.env.MINIMAX_A2A_COMMAND
+
+  const { invokeConfiguredAgent } = await import("../lib/agent-bridge") as typeof import("../lib/agent-bridge")
+  const skill = {
+    id: "agent_task.response",
+    eventType: "requirement_intake",
+    stage: "intake",
+    name: "Mavis device routing test",
+    purpose: "Ensure Mavis stays behind the Codex device bridge.",
+    trigger: "Mavis device routing test",
+    allowedActors: ["mavis"],
+    inputs: ["test input"],
+    outputs: ["test output"],
+    constraints: [],
+    gates: [],
+    knowledgeSources: [],
+    verificationRules: []
+  } satisfies WorkflowEventSkill
+
+  installFetchMock(t, async (input, init) => {
+    assert.equal(String(input), "http://codex.test/agent-runs")
+    assert.equal(new Headers(init?.headers).get("Authorization"), "Bearer codex-token")
+    const payload = JSON.parse(String(init?.body ?? "{}")) as {
+      executor?: AgentKind
+    }
+    assert.equal(payload.executor, "mavis")
+
+    return jsonResponse({
+      id: "codex-device-mavis-run",
+      status: "completed",
+      output: "Mavis completed through the Codex device bridge."
+    })
+  })
+
+  const run = createWorkflowRun({
+    projectId: "project-mavis-device",
+    projectName: "Mavis device routing test",
+    repository: "owner/repo",
+    requirement: "Route Mavis through the shared Codex device bridge.",
+    selectedAgent: "mavis" as AgentKind,
+    designApprovalActor: "independent_agent",
+    verificationApprovalActor: "verification_subagent"
+  })
+
+  const result = await invokeConfiguredAgent({
+    run,
+    executor: "mavis",
+    stage: "implementation",
+    artifactType: "log",
+    title: "Mavis device routing test",
+    fallbackBody: "Fallback Mavis device routing test",
+    skill
+  })
+
+  assert.equal(result.status, "completed")
+  assert.equal(result.source, "codex-bridge")
+})

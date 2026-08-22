@@ -50,6 +50,9 @@ import {
   endRun as endLuckyStoreRun
 } from "./lucky-quota-store.mjs"
 import { fetchMiniMaxQuota } from "./minimax-quota.mjs"
+import { loadBridgeConfig } from "./bridge-config.mjs"
+
+loadBridgeConfig()
 
 // ---------- configuration ---------------------------------------------------
 

@@ -1,10 +1,10 @@
 import { NextResponse } from "next/server"
 
 /**
- * /api/lucky/[...path] — a thin Next.js forwarder to the
- * lucky-mavis-server (port 4198 by default). The dashboard's server-side
- * `invokeConfiguredAgent` already points `LUCKY_BRIDGE_URL` at the server
- * directly, so this catch-all is for client-side (browser) calls — e.g.
+ * /api/lucky/[...path] — a thin Next.js forwarder through the shared
+ * codex-bridge device endpoint. The codex-bridge forwards Mavis requests to
+ * the same-device lucky-mavis-server, so this catch-all is for client-side
+ * (browser) calls — e.g.
  * a future "chat with Lucky" panel — and any other code that prefers the
  * same-origin route over a separate host:port.
  *
@@ -15,25 +15,19 @@ import { NextResponse } from "next/server"
  *   POST /api/lucky/workflow-runs/:id/(cancel|stop)
  *                                       -> POST <server>/workflow-runs/...
  *
- * Auth: passes the configured bearer token (LUCKY_BRIDGE_TOKEN, falling
- * back to HARNESS_BRIDGE_TOKEN / CODEX_BRIDGE_TOKEN) on the way through.
+ * Auth: passes CODEX_BRIDGE_TOKEN on the way through.
  */
 
 const SERVER_TIMEOUT_MS = Number(
-  process.env.LUCKY_BRIDGE_PROXY_TIMEOUT_MS ?? 900_000
+  process.env.CODEX_BRIDGE_PROXY_TIMEOUT_MS ?? 900_000
 )
 
 function getServerBase(): string {
-  return process.env.LUCKY_BRIDGE_URL ?? "http://127.0.0.1:4198"
+  return process.env.CODEX_BRIDGE_URL ?? "http://127.0.0.1:4177"
 }
 
 function getServerToken(): string | undefined {
-  return (
-    process.env.LUCKY_BRIDGE_TOKEN?.trim() ||
-    process.env.HARNESS_BRIDGE_TOKEN?.trim() ||
-    process.env.CODEX_BRIDGE_TOKEN?.trim() ||
-    undefined
-  )
+  return process.env.CODEX_BRIDGE_TOKEN?.trim() || undefined
 }
 
 function authHeaders(): Record<string, string> {
@@ -75,7 +69,7 @@ async function forward(request: Request, path: string[]): Promise<Response> {
   } catch (error) {
     return NextResponse.json(
       {
-        error: `lucky-mavis-server unreachable at ${getServerBase()}: ${
+        error: `codex-bridge unreachable at ${getServerBase()}: ${
           error instanceof Error ? error.message : String(error)
         }`
       },

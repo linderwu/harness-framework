@@ -35,13 +35,23 @@ if (-not (Test-Path $nodeScript)) {
   throw "Cannot find $nodeScript"
 }
 
-# Best-effort: load .env.local from the project root so the bridge picks up
+# Best-effort: load .env.local so the bridge picks up
 # HARNESS_BRIDGE_TOKEN / CODEX_BRIDGE_REPO_ROOT / LUCKY_BRIDGE_URL / etc.
 # without needing them to live in the user-level registry. Existing process
-# env wins. .env.local at the root holds CODEX_BRIDGE_RUNTIME_SKILLS=1 so the
+# env wins. .env.local holds CODEX_BRIDGE_RUNTIME_SKILLS=1 so the
 # forwarder accepts v0.3 mavis payloads.
-$envLocalPath = Join-Path $projectRoot ".env.local"
-if (Test-Path $envLocalPath) {
+# Look in this order so it works whether the operator keeps the file at
+# the workspace root (current convention) or under repos/jormungand/.
+foreach ($candidate in @(
+  (Join-Path $projectRoot ".env.local"),
+  (Join-Path (Resolve-Path (Join-Path (Join-Path $projectRoot "..") "..")) ".env.local")
+)) {
+  if (Test-Path $candidate) {
+    $envLocalPath = $candidate
+    break
+  }
+}
+if ($envLocalPath) {
   Get-Content $envLocalPath |
     Where-Object { $_ -and ($_ -notmatch '^\s*#') -and ($_ -match '=') } |
     ForEach-Object {
@@ -60,13 +70,25 @@ if (Test-Path $envLocalPath) {
       if (-not (Test-Path "Env:\$name")) {
         Set-Item -Path "Env:\$name" -Value $value
       }
-    }
+  }
+}
+
+$bridgeConfigPath = if ($env:BRIDGE_CONFIG_PATH) {
+  if ([System.IO.Path]::IsPathRooted($env:BRIDGE_CONFIG_PATH)) { $env:BRIDGE_CONFIG_PATH } else { Join-Path $projectRoot $env:BRIDGE_CONFIG_PATH }
+} else {
+  Join-Path $projectRoot ".harness\bridge.config.json"
+}
+$bridgeConfig = $null
+if (Test-Path $bridgeConfigPath) {
+  $bridgeConfig = Get-Content $bridgeConfigPath -Raw | ConvertFrom-Json
 }
 
 $host_ = $env:CODEX_BRIDGE_HOST
+if (-not $host_ -and $bridgeConfig -and $bridgeConfig.bridge) { $host_ = $bridgeConfig.bridge.host }
 if (-not $host_) { $host_ = "127.0.0.1" }
 
 $port_ = $env:CODEX_BRIDGE_PORT
+if (-not $port_ -and $bridgeConfig -and $bridgeConfig.bridge) { $port_ = $bridgeConfig.bridge.port }
 if (-not $port_) { $port_ = "4177" }
 
 if (-not $env:HARNESS_BRIDGE_TOKEN) {
@@ -74,15 +96,15 @@ if (-not $env:HARNESS_BRIDGE_TOKEN) {
   elseif ($env:OPENCLAW_GATEWAY_TOKEN) { $env:HARNESS_BRIDGE_TOKEN = $env:OPENCLAW_GATEWAY_TOKEN }
 }
 
-if (-not $env:CODEX_BRIDGE_REPO_ROOT) {
+if (-not $env:CODEX_BRIDGE_REPO_ROOT -and -not $bridgeConfig) {
   $env:CODEX_BRIDGE_REPO_ROOT = $projectRoot.Path
 }
 
-if (-not $env:LUCKY_BRIDGE_URL) {
+if (-not $env:LUCKY_BRIDGE_URL -and -not $bridgeConfig) {
   $env:LUCKY_BRIDGE_URL = "http://127.0.0.1:4198"
 }
 
-if (-not (Test-Path "Env:CODEX_BRIDGE_RUNTIME_SKILLS")) {
+if (-not (Test-Path "Env:CODEX_BRIDGE_RUNTIME_SKILLS") -and -not $bridgeConfig) {
   # Default to v0.3 so the mavis forwarder accepts the v0.3 callers from
   # the dashboard (v0.2 still works because lucky-mavis-server now accepts
   # both). Operators who only dispatch codex can set this to 0 explicitly.
@@ -96,8 +118,9 @@ $logFile = Join-Path $logDir "codex-bridge.log"
 Write-Host "Starting codex-bridge detached:"
 Write-Host "  bind:                http://${host_}:${port_}"
 Write-Host "  token:               $(if ($env:HARNESS_BRIDGE_TOKEN) { 'set' } else { 'loopback-only' })"
-Write-Host "  repo root:           $($env:CODEX_BRIDGE_REPO_ROOT)"
-Write-Host "  mavis forwarder:     $($env:LUCKY_BRIDGE_URL)"
+Write-Host "  config:              $(if ($bridgeConfig) { $bridgeConfigPath } else { 'environment/defaults' })"
+Write-Host "  repo root:           $(if ($env:CODEX_BRIDGE_REPO_ROOT) { $env:CODEX_BRIDGE_REPO_ROOT } elseif ($bridgeConfig) { $bridgeConfig.device.repoRoot } else { $projectRoot.Path })"
+Write-Host "  mavis forwarder:     $(if ($env:LUCKY_BRIDGE_URL) { $env:LUCKY_BRIDGE_URL } elseif ($bridgeConfig) { $bridgeConfig.routing.luckyBridgeUrl } else { 'http://127.0.0.1:4198' })"
 Write-Host "  runtime skills v0.3: $($env:CODEX_BRIDGE_RUNTIME_SKILLS)"
 Write-Host "  logfile:             $logFile"
 

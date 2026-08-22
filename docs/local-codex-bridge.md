@@ -28,6 +28,33 @@ creating simulated artifacts. Set `HARNESS_ALLOW_SIMULATED_AGENTS=1`
 only when you intentionally want local demo artifacts instead of a real agent
 run.
 
+The Codex device bridge is the single application-facing entry point for both
+the `codex` and `mavis` executors. The bridge runs Codex locally and forwards
+Mavis requests to the same-device `lucky-mavis-server` through its internal
+`LUCKY_BRIDGE_URL`; the dashboard and server-side dispatcher do not call that
+runtime directly.
+
+## Device Runtime Config
+
+The Codex bridge device keeps its non-secret runtime settings in:
+
+```text
+repos/jormungand/.harness/bridge.config.json
+```
+
+The checked-in schema example is
+`repos/jormungand/.harness/bridge.config.example.json`. It is device-first:
+the `bridge` section describes the Codex device ingress, while `runtimes.codex`
+and `runtimes.lucky` describe the two local runtimes on that device. OpenClaw
+is a separate device and is intentionally not part of this file.
+
+Tokens are not stored in the JSON config. Use `.env.local` or an OS secret
+store for the environment names listed under `secrets`. Explicit environment
+variables override the JSON values, which keeps remote deployment and existing
+operator overrides compatible. Both `codex-bridge.mjs` and
+`lucky-mavis-server.mjs` load the same config before reading their runtime
+defaults.
+
 ## Ouroboros-Aware Repositories
 
 Jormungandr-created GitHub repositories are seeded with an `AGENTS.md` contract

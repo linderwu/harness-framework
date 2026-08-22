@@ -11,7 +11,10 @@ updated: 2026-08-13
 
 ## Summary
 
-The agent bridge adapts workflow agent invocations to Codex bridge, OpenClaw bridge, OpenClaw A2A command, or explicit simulated execution modes.
+The agent bridge adapts workflow agent invocations to device bridges. The Codex
+device bridge serves both Codex and Mavis/Lucky, while the OpenClaw device
+bridge serves the concrete OpenClaw agents. OpenClaw A2A command and explicit
+simulated execution remain compatibility modes.
 
 ## Source of Truth
 
@@ -28,7 +31,8 @@ The agent bridge adapts workflow agent invocations to Codex bridge, OpenClaw bri
 
 ### Core Features
 
-- Select executor family from `AgentKind`.
+- Resolve each logical executor to its device bridge; Codex and Mavis share
+  `CODEX_BRIDGE_URL`.
 - Enforce bridge protocol compatibility for runtime skill bundles.
 - Require authenticated health and agent-run requests on non-loopback bridges.
 - Build idempotent bridge requests.
@@ -54,7 +58,7 @@ The agent bridge adapts workflow agent invocations to Codex bridge, OpenClaw bri
 
 ### Side Effects
 
-- HTTP requests to Codex/OpenClaw bridge URLs.
+- HTTP requests to the Codex/OpenClaw device bridge URLs.
 - Child process execution for OpenClaw A2A command mode.
 - GitHub repository readiness checks during intake.
 - Runtime bundle download, checksum verification, extraction, and installation

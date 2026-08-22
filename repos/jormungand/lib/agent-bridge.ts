@@ -135,6 +135,8 @@ export async function invokeConfiguredAgent(
 
   const idempotencyKey = createIdempotencyKey(input)
   const liveRunId = createLiveSubmissionRunId(idempotencyKey)
+  const bridgeUrl = getAgentBridgeUrl(input.executor)
+  const source = getBridgeSource(input.executor)
   const a2aCommand = getOpenClawA2ACommand(input.executor)
 
   if (a2aCommand) {
@@ -143,12 +145,9 @@ export async function invokeConfiguredAgent(
 
   const minimaxA2ACommand = getMinimaxA2ACommand(input.executor)
 
-  if (minimaxA2ACommand) {
+  if (minimaxA2ACommand && !bridgeUrl) {
     return invokeMinimaxA2A(input, minimaxA2ACommand, idempotencyKey)
   }
-
-  const bridgeUrl = getAgentBridgeUrl(input.executor)
-  const source = getBridgeSource(input.executor)
 
   if (!bridgeUrl) {
     return createMissingBridgeResult(input, source)
@@ -709,21 +708,11 @@ function normalizeUrl(value: string) {
 }
 
 function getConfiguredBridgeProtocol(agent: AgentKind) {
-  const profile = getAgentProfile(agent)
-
-  if (profile.family === "openclaw") {
+  if (getAgentBridgeId(agent) === "openclaw-bridge") {
     return process.env.OPENCLAW_BRIDGE_PROTOCOL_VERSION ?? bridgeProtocolV3
   }
 
-  if (profile.family === "minimax") {
-    return process.env.MINIMAX_BRIDGE_PROTOCOL_VERSION ?? bridgeProtocolV3
-  }
-
-  if (profile.family === "codex") {
-    return process.env.CODEX_BRIDGE_PROTOCOL_VERSION ?? bridgeProtocolV3
-  }
-
-  return bridgeProtocolV2
+  return process.env.CODEX_BRIDGE_PROTOCOL_VERSION ?? bridgeProtocolV3
 }
 
 function requiredBridgeProtocol(input: AgentInvocationInput) {
@@ -938,13 +927,9 @@ function createBridgeHeaders(agent: AgentKind = "codex", idempotencyKey?: string
   const headers: Record<string, string> = {
     "Content-Type": "application/json"
   }
-  const profile = getAgentProfile(agent)
-  const token =
-    profile.family === "openclaw"
-      ? getOpenClawBridgeToken()
-      : profile.family === "minimax"
-      ? getMinimaxBridgeToken()
-      : process.env.CODEX_BRIDGE_TOKEN
+  const token = getAgentBridgeId(agent) === "openclaw-bridge"
+    ? getOpenClawBridgeToken()
+    : process.env.CODEX_BRIDGE_TOKEN?.trim()
 
   if (token) {
     headers.Authorization = `Bearer ${token}`
@@ -965,35 +950,10 @@ function getOpenClawBridgeToken() {
   )
 }
 
-function getMinimaxBridgeToken() {
-  return (
-    process.env.LUCKY_BRIDGE_TOKEN?.trim() ||
-    process.env.CODEX_BRIDGE_TOKEN?.trim() ||
-    process.env.HARNESS_BRIDGE_TOKEN?.trim() ||
-    process.env.MINIMAX_BRIDGE_TOKEN?.trim() ||
-    process.env.MINIMAX_GATEWAY_TOKEN?.trim() ||
-    undefined
-  )
-}
-
 function getAgentBridgeUrl(agent: AgentKind) {
-  const profile = getAgentProfile(agent)
-
-  if (profile.family === "minimax") {
-    // Lucky / Mavis / mavis uses its own bridge with a function-calling
-    // tool loop, not the Codex bridge.
-    return process.env.LUCKY_BRIDGE_URL ?? "http://127.0.0.1:4198"
-  }
-
-  if (profile.family === "codex") {
-    return process.env.CODEX_BRIDGE_URL
-  }
-
-  if (profile.family === "openclaw") {
-    return process.env.OPENCLAW_BRIDGE_URL
-  }
-
-  return undefined
+  return getAgentBridgeId(agent) === "openclaw-bridge"
+    ? process.env.OPENCLAW_BRIDGE_URL
+    : process.env.CODEX_BRIDGE_URL
 }
 
 function getOpenClawA2ACommand(agent: AgentKind) {
@@ -1061,10 +1021,13 @@ async function loadOpenClawSessionHelper() {
 }
 
 function getBridgeSource(agent: AgentKind): AgentArtifactResult["source"] {
-  const family = getAgentProfile(agent).family
-  if (family === "openclaw") return "openclaw-bridge"
-  if (family === "minimax") return "minimax-bridge"
-  return "codex-bridge"
+  return getAgentBridgeId(agent)
+}
+
+function getAgentBridgeId(agent: AgentKind): "codex-bridge" | "openclaw-bridge" {
+  return getAgentProfile(agent).family === "openclaw"
+    ? "openclaw-bridge"
+    : "codex-bridge"
 }
 
 function getIntakeSource(agent: AgentKind): AgentArtifactResult["source"] {

@@ -3,6 +3,8 @@ import { test } from "node:test"
 import { strict as assert } from "node:assert"
 
 const dashboard = readFileSync("components/harness-dashboard.tsx", "utf8")
+const luckyProxy = readFileSync("app/api/lucky/[...path]/route.ts", "utf8")
+const luckyRoute = readFileSync("app/api/lucky/route.ts", "utf8")
 
 function functionBody(functionName: string) {
   const start = dashboard.indexOf(`function ${functionName}(`)
@@ -50,11 +52,21 @@ test("dashboard health endpoint only returns registered HTTP bridge URL records"
 
   assert.match(route, /CODEX_BRIDGE_URL/)
   assert.match(route, /OPENCLAW_BRIDGE_URL/)
+  assert.doesNotMatch(route, /minimax-bridge/)
   assert.match(route, /urlHost/)
   assert.doesNotMatch(route, /OPENCLAW_A2A_COMMAND/)
   assert.doesNotMatch(route, /openclaw-a2a/)
   assert.doesNotMatch(route, /Manual \/ Simulated/)
   assert.doesNotMatch(route, /not_configured/)
+})
+
+test("Lucky compatibility routes use the shared Codex device bridge", () => {
+  assert.match(luckyProxy, /CODEX_BRIDGE_URL/)
+  assert.match(luckyProxy, /CODEX_BRIDGE_TOKEN/)
+  assert.doesNotMatch(luckyProxy, /LUCKY_BRIDGE_URL/)
+  assert.doesNotMatch(luckyProxy, /LUCKY_BRIDGE_TOKEN/)
+  assert.match(luckyRoute, /CODEX_BRIDGE_URL/)
+  assert.doesNotMatch(luckyRoute, /LUCKY_BRIDGE_URL/)
 })
 
 test("topbar refresh control reloads the complete dashboard page", () => {
@@ -92,6 +104,7 @@ test("bridge status panel renders endpoint bridges instead of fixed bridge defin
   assert.match(panel, /getBridgeAgents\(bridge\.id\)/)
   assert.doesNotMatch(dashboard, /const bridgeDefinitions/)
   assert.doesNotMatch(dashboard, /openclaw-a2a/)
+  assert.doesNotMatch(dashboard, /minimax-bridge/)
   assert.doesNotMatch(dashboard, /Manual \/ Simulated/)
 })
 

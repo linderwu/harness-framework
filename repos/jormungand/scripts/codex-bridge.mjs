@@ -5,6 +5,9 @@ import { promises as fs } from "node:fs"
 import { spawn } from "node:child_process"
 import { createHash, randomUUID } from "node:crypto"
 import { normalizePermissionMode } from "./agent-permissions.mjs"
+import { loadBridgeConfig } from "./bridge-config.mjs"
+
+loadBridgeConfig()
 
 const host = process.env.CODEX_BRIDGE_HOST ?? "127.0.0.1"
 const port = Number(process.env.CODEX_BRIDGE_PORT ?? 4177)

@@ -2,13 +2,13 @@ import { NextResponse } from "next/server"
 
 /**
  * /api/lucky — bare-URL entry point. Returns a short status payload
- * describing where Lucky's bridge lives. The full bridge API surface
+ * describing where Lucky's shared device bridge lives. The full bridge API surface
  * lives at /api/lucky/<path> (the catch-all sibling in this directory).
  */
 
 export async function GET() {
   const serverBase =
-    process.env.LUCKY_BRIDGE_URL ?? "http://127.0.0.1:4198"
+    process.env.CODEX_BRIDGE_URL ?? "http://127.0.0.1:4177"
   return NextResponse.json({
     ok: true,
     agent: "mavis",

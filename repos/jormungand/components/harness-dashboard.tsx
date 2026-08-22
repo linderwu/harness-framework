@@ -131,7 +131,7 @@ const workflowSetupStoragePrefix = "jormungand.workflowSetupProfiles.v2"
 type ApprovalDecision = "approved" | "rejected" | "changes_requested"
 type BridgeHealthStatus = "online" | "offline"
 type BridgePanelStatus = BridgeHealthStatus | "checking" | "stale"
-type BridgeId = "codex-bridge" | "openclaw-bridge" | "minimax-bridge"
+type BridgeId = "codex-bridge" | "openclaw-bridge"
 type MobilePanel = "modes" | "navigation" | "monitoring"
 
 interface BridgeHealth {
@@ -2177,9 +2177,7 @@ function BridgeStatusPanel({
     isChecking,
     isStale: Boolean(isStale)
   })
-  const visibleBridges = Object.values(health).filter(
-    (bridge) => bridge.id !== "minimax-bridge"
-  )
+  const visibleBridges = Object.values(health)
 
   return (
     <aside className="bridgeStatusPanel" aria-label="Agent bridge status">
@@ -2443,10 +2441,6 @@ function AgentQuotaBar({
 function getBridgeAgents(bridgeId: BridgeId): AgentKind[] {
   if (bridgeId === "codex-bridge") {
     return ["codex", "mavis"]
-  }
-
-  if (bridgeId === "minimax-bridge") {
-    return ["mavis"]
   }
 
   return [

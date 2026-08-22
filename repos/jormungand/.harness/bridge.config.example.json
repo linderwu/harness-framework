@@ -1,38 +1,62 @@
 {
-  "$comment": "Bridge runtime config — checked in. The real .harness/bridge.config.json carries the actual tokens; this example only documents the schema. Keep bridge.config.json out of git.",
+  "$comment": "Device-first config for the local Codex bridge device. Keep tokens in .env.local or an OS secret store.",
   "schemaVersion": 1,
-  "bridges": {
+  "device": {
+    "id": "codex-bridge-device",
+    "name": "Local Codex Bridge Device",
+    "repoRoot": "C:\\Users\\linder\\Documents\\harness框架\\repos\\jormungand",
+    "permissionMode": "full",
+    "runtimeSkills": {
+      "enabled": true,
+      "root": ".harness/runtime-skills",
+      "cache": ".harness/cache/skills"
+    }
+  },
+  "bridge": {
+    "host": "127.0.0.1",
+    "port": 4177,
+    "protocolVersion": "harness-agent-bridge/v0.3",
+    "completedRunTtlMs": 3600000,
+    "tokenEnv": "HARNESS_BRIDGE_TOKEN"
+  },
+  "runtimes": {
     "codex": {
-      "host": "127.0.0.1",
-      "port": 4177,
-      "token": "replace-with-codex-bridge-bearer",
-      "repoRoot": "C:\\Users\\linder\\Documents\\harness\\u6846\\u67b6",
-      "runtimeSkills": true,
-      "$comment": "Set runtimeSkills=true to advertise v0.3 with runtime skill bundles. Required when the dashboard sends mavis payloads through this bridge."
+      "enabled": true,
+      "command": "codex",
+      "serviceTier": "fast",
+      "sandbox": "workspace-write",
+      "timeoutMs": 900000,
+      "sessionRequestTimeoutMs": 120000
     },
     "lucky": {
+      "enabled": true,
       "host": "127.0.0.1",
       "port": 4198,
-      "token": "replace-with-lucky-bridge-bearer",
-      "repoRoot": "C:\\Users\\linder\\Documents\\harness\\u6846\\u67b6",
-      "quotaStorePath": "C:\\Users\\linder\\Documents\\harness\\u6846\\u67b6\\repos\\jormungand\\data\\lucky-quota.json",
+      "tokenEnv": "LUCKY_BRIDGE_TOKEN",
       "backend": {
         "url": "https://api.minimax.io/v1",
         "model": "MiniMax-M3",
-        "token": "replace-with-minimax-api-key"
+        "tokenEnv": "LUCKY_BACKEND_TOKEN",
+        "timeoutMs": 600000
       },
-      "$comment": "The mavis / Lucky executor. This server is what codex-bridge reverse-proxies mavis calls to."
-    },
-    "openclaw": {
-      "url": "https://openclaw-bridge.example.com",
-      "token": "replace-with-openclaw-gateway-token",
-      "$comment": "OpenClaw bridge is exposed via ngrok; not running locally."
+      "limits": {
+        "toolIterationCap": 25,
+        "toolCallTimeoutMs": 120000,
+        "runCommandTimeoutMs": 300000,
+        "maxReadBytes": 512000,
+        "maxOutputBytes": 256000
+      },
+      "quotaStorePath": "data/lucky-quota.json"
     }
   },
   "routing": {
-    "$comment": "How the dashboard routes each executor family to a public bridge URL.",
-    "codex": "https://codex-bridge.jormungandcycle.com",
-    "openclaw": "https://openclaw-bridge.jormungandcycle.com",
-    "$comment2": "Lucky is routed through codex-bridge as a single public endpoint; the local forwarder hands mavis calls to lucky-mavis-server."
+    "defaultRuntime": "codex",
+    "luckyBridgeUrl": "http://127.0.0.1:4198"
+  },
+  "secrets": {
+    "bridgeTokenEnv": "HARNESS_BRIDGE_TOKEN",
+    "codexClientTokenEnv": "CODEX_BRIDGE_TOKEN",
+    "luckyBridgeTokenEnv": "LUCKY_BRIDGE_TOKEN",
+    "luckyBackendTokenEnv": "LUCKY_BACKEND_TOKEN"
   }
 }

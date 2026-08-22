@@ -62,11 +62,19 @@ test("Lucky quota reads the official MiniMax interval percentage", () => {
   assert.doesNotMatch(luckyBridge, /readLuckyStoreQuota/)
 })
 
-test("Dashboard quota polling targets the Lucky bridge and token", () => {
-  assert.match(quotaStore, /LUCKY_BRIDGE_URL/)
-  assert.match(quotaStore, /127\.0\.0\.1:4198/)
-  assert.match(quotaStore, /LUCKY_BRIDGE_TOKEN/)
-  assert.match(quotaStore, /MINIMAX_BRIDGE_TOKEN/)
-  assert.match(quotaStore, /HARNESS_BRIDGE_TOKEN/)
+test("Dashboard quota polling targets the shared Codex device bridge", () => {
+  assert.match(quotaStore, /CODEX_BRIDGE_URL/)
+  assert.match(quotaStore, /CODEX_BRIDGE_TOKEN/)
+  assert.doesNotMatch(quotaStore, /LUCKY_BRIDGE_URL/)
+  assert.doesNotMatch(quotaStore, /LUCKY_BRIDGE_TOKEN/)
+  assert.doesNotMatch(quotaStore, /MINIMAX_BRIDGE_URL/)
+  assert.doesNotMatch(quotaStore, /MINIMAX_BRIDGE_TOKEN/)
   assert.match(quotaStore, /executor=mavis/)
+})
+
+test("Mavis uses the Codex bridge identity for shared-device routing", () => {
+  assert.match(bridge, /function getAgentBridgeId\(agent: AgentKind\)/)
+  assert.match(bridge, /process\.env\.CODEX_BRIDGE_URL/)
+  assert.match(bridge, /return getAgentBridgeId\(agent\)/)
+  assert.doesNotMatch(bridge, /MINIMAX_BRIDGE_PROTOCOL_VERSION/)
 })
