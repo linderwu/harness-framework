@@ -79,6 +79,21 @@ const server = http.createServer(async (request, response) => {
     }
 
     if (request.method === "GET" && requestUrl.pathname === "/agent-quota") {
+      const executor = requestUrl.searchParams.get("executor")
+      if (executor === "mavis") {
+        // The dashboard probes the Lucky bridge through us. Forward to the
+        // local lucky-mavis-server which knows the MiniMax 5h quota window.
+        try {
+          const forwarded = await forwardToLuckyBridge(
+            request,
+            requestUrl.pathname + requestUrl.search
+          )
+          sendForwarded(response, forwarded)
+        } catch (error) {
+          sendForwardingError(response, error)
+        }
+        return
+      }
       sendJson(response, 200, await readCodexQuota())
       return
     }
@@ -285,7 +300,20 @@ const server = http.createServer(async (request, response) => {
         } catch {
           // Non-JSON body — leave mavisRunIds alone.
         }
-        sendForwarded(response, forwarded)
+        // Lucky is an async bridge: POST /agent-runs returns 202 with
+        // "Lucky agent started." and no `output`. The dashboard reads
+        // `output` straight from the initial response, so we have to wait
+        // for the run to actually finish and return the completed body.
+        let finalForwarded = forwarded
+        if (forwarded.status === 202 && idempotencyKey) {
+          const completed = await awaitLuckyCompletion(String(idempotencyKey))
+          finalForwarded = {
+            status: completed.status,
+            contentType: "application/json; charset=utf-8",
+            body: completed.body
+          }
+        }
+        sendForwarded(response, finalForwarded)
       } catch (error) {
         sendForwardingError(response, error)
       }
@@ -409,13 +437,17 @@ async function readRawBody(request) {
 
 async function forwardToLuckyBridge(request, path, stashedBody) {
   const target = new URL(path, luckyBridgeBase)
-  const headers = {}
-  for (const [k, v] of Object.entries(request.headers)) {
-    const lower = k.toLowerCase()
-    if (lower === "host" || lower === "connection" || lower === "content-length") {
-      continue
-    }
-    headers[k] = v
+  // Only forward headers that are meaningful for the bridge protocol.
+  // Pass-through of the original request's headers (especially from
+  // PowerShell / cloudflared intermediaries) can carry `expect:
+  // 100-continue`, `transfer-encoding: chunked`, or large `accept-encoding`
+  // hints that confuse Node's fetch into dropping the connection.
+  const headers = {
+    "content-type": "application/json; charset=utf-8",
+    accept: "application/json"
+  }
+  if (request.headers["idempotency-key"]) {
+    headers["idempotency-key"] = String(request.headers["idempotency-key"])
   }
   if (token) {
     headers.authorization = `Bearer ${token}`
@@ -440,6 +472,56 @@ async function forwardToLuckyBridge(request, path, stashedBody) {
     status: upstream.status,
     contentType,
     body: responseBody
+  }
+}
+
+async function fetchLuckyJson(path) {
+  const target = new URL(path, luckyBridgeBase)
+  const headers = {}
+  if (token) {
+    headers.authorization = `Bearer ${token}`
+  }
+  const upstream = await fetch(target, {
+    method: "GET",
+    headers,
+    cache: "no-store"
+  })
+  const body = await upstream.text()
+  let data
+  try {
+    data = JSON.parse(body)
+  } catch {
+    data = undefined
+  }
+  return { status: upstream.status, body, data }
+}
+
+/**
+ * Wait for a mavis / Lucky run to leave the "running" state. The dashboard
+ * reads `body.output` straight from the bridge response, so we must not
+ * pass through lucky's initial 202 ("Lucky agent started.") — that carries
+ * no `output` and the dashboard would render the placeholder
+ * "Codex bridge completed without a final message." instead of the M3 reply.
+ */
+async function awaitLuckyCompletion(idempotencyKey) {
+  const maxAttempts = 600
+  const intervalMs = 1000
+  const path = `/agent-runs/by-idempotency/${encodeURIComponent(idempotencyKey)}`
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const { status, body, data } = await fetchLuckyJson(path)
+    if (status !== 200) {
+      return { status, body }
+    }
+    if (data && (data.status === "completed" || data.status === "failed")) {
+      return { status: 200, body }
+    }
+    await new Promise((resolve) => setTimeout(resolve, intervalMs))
+  }
+  return {
+    status: 504,
+    body: JSON.stringify({
+      error: `lucky run ${idempotencyKey} did not complete within ${(maxAttempts * intervalMs) / 1000}s`
+    })
   }
 }
 
