@@ -5,6 +5,8 @@ import { strict as assert } from "node:assert"
 const bridge = readFileSync("lib/agent-bridge.ts", "utf8")
 const openClawBridge = readFileSync("scripts/openclaw-bridge.mjs", "utf8")
 const codexBridge = readFileSync("scripts/codex-bridge.mjs", "utf8")
+const luckyBridge = readFileSync("scripts/lucky-mavis-server.mjs", "utf8")
+const quotaStore = readFileSync("lib/agent-quota-store.ts", "utf8")
 
 test("OpenClaw A2A control sends a standalone slash stop message", () => {
   assert.match(bridge, /sendOpenClawA2AControl/)
@@ -50,4 +52,21 @@ test("Codex quota reader accepts primary rate limits first, fallback to secondar
   assert.match(codexBridge, /result\?\.rateLimits\?\.secondary/)
   assert.match(codexBridge, /if \(!rateLimit\)/)
   assert.match(codexBridge, /account\/rateLimits\/read/)
+})
+
+test("Lucky quota reads the official MiniMax interval percentage", () => {
+  assert.match(luckyBridge, /from "\.\/minimax-quota\.mjs"/)
+  assert.match(luckyBridge, /fetchMiniMaxQuota\(/)
+  assert.match(luckyBridge, /baseUrl: backendUrl/)
+  assert.match(luckyBridge, /token: backendToken/)
+  assert.doesNotMatch(luckyBridge, /readLuckyStoreQuota/)
+})
+
+test("Dashboard quota polling targets the Lucky bridge and token", () => {
+  assert.match(quotaStore, /LUCKY_BRIDGE_URL/)
+  assert.match(quotaStore, /127\.0\.0\.1:4198/)
+  assert.match(quotaStore, /LUCKY_BRIDGE_TOKEN/)
+  assert.match(quotaStore, /MINIMAX_BRIDGE_TOKEN/)
+  assert.match(quotaStore, /HARNESS_BRIDGE_TOKEN/)
+  assert.match(quotaStore, /executor=mavis/)
 })

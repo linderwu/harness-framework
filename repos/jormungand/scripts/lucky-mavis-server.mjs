@@ -47,9 +47,9 @@ import { spawn } from "node:child_process"
 import { randomUUID } from "node:crypto"
 import {
   startRun as startLuckyStoreRun,
-  endRun as endLuckyStoreRun,
-  readQuota as readLuckyStoreQuota
+  endRun as endLuckyStoreRun
 } from "./lucky-quota-store.mjs"
+import { fetchMiniMaxQuota } from "./minimax-quota.mjs"
 
 // ---------- configuration ---------------------------------------------------
 
@@ -981,7 +981,18 @@ function validateProtocol(payload) {
   if (!payload || typeof payload !== "object") {
     return "payload must be a JSON object"
   }
-  if (payload.protocolVersion && payload.protocolVersion !== protocolVersion) {
+  // Accept the v0.2 wire format as well. v0.2 is a strict subset of v0.3 —
+  // the only new field in v0.3 is runtimeSkillBundles, which the chat path
+  // simply leaves empty. Routing mavis through codex-bridge surfaces
+  // v0.2 callers (the dashboard returns v0.2 whenever runtimeSkillBundles
+  // is an empty array), so strict equality here would reject every chat
+  // message. We treat v0.2 requests as fully supported and let the rest
+  // of the pipeline treat the request identically to v0.3.
+  if (
+    payload.protocolVersion &&
+    payload.protocolVersion !== protocolVersion &&
+    payload.protocolVersion !== "harness-agent-bridge/v0.2"
+  ) {
     return `unsupported protocolVersion: ${payload.protocolVersion}`
   }
   if (payload.runtimeSkillBundles && !Array.isArray(payload.runtimeSkillBundles)) {
@@ -1077,24 +1088,15 @@ const server = http.createServer(async (request, response) => {
     if (request.method === "GET" && requestUrl.pathname === "/agent-quota") {
       const executor = requestUrl.searchParams.get("executor") ?? "mavis"
       if (executor === "mavis") {
-        try {
-          sendJson(response, 200, await readLuckyStoreQuota("mavis"))
-        } catch (error) {
-          sendJson(response, 200, {
-            agentId: "mavis",
-            provider: "minimax",
-            model: backendModel,
-            weeklyLimit: Number(process.env.LUCKY_QUOTA_WINDOW_SECONDS ?? 5 * 3600),
-            weeklyUsed: 0,
-            weeklyRemaining: Number(process.env.LUCKY_QUOTA_WINDOW_SECONDS ?? 5 * 3600),
-            remainingPercent: 100,
-            unit: "seconds",
-            resetAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-            status: "unavailable",
-            error: formatError(error)
+        sendJson(
+          response,
+          200,
+          await fetchMiniMaxQuota({
+            baseUrl: backendUrl,
+            token: backendToken,
+            model: backendModel
           })
-        }
+        )
       } else {
         sendJson(response, 400, { error: `unsupported executor: ${executor}` })
       }

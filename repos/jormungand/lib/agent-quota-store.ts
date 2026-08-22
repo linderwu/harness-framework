@@ -44,10 +44,18 @@ async function getCodexQuota(): Promise<AgentQuota> {
 
 async function getLuckyQuota(): Promise<AgentQuota> {
   const now = new Date().toISOString()
-  const bridgeUrl = process.env.CODEX_BRIDGE_URL ?? "http://127.0.0.1:4177"
+  const bridgeUrl =
+    process.env.LUCKY_BRIDGE_URL?.trim() ||
+    process.env.MINIMAX_BRIDGE_URL?.trim() ||
+    "http://127.0.0.1:4198"
   const headers: HeadersInit = {}
-  if (process.env.CODEX_BRIDGE_TOKEN) {
-    headers.Authorization = `Bearer ${process.env.CODEX_BRIDGE_TOKEN}`
+  const bridgeToken =
+    process.env.LUCKY_BRIDGE_TOKEN?.trim() ||
+    process.env.MINIMAX_BRIDGE_TOKEN?.trim() ||
+    process.env.HARNESS_BRIDGE_TOKEN?.trim() ||
+    process.env.CODEX_BRIDGE_TOKEN?.trim()
+  if (bridgeToken) {
+    headers.Authorization = `Bearer ${bridgeToken}`
   }
 
   try {
