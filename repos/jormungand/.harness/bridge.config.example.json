@@ -1,0 +1,38 @@
+{
+  "$comment": "Bridge runtime config — checked in. The real .harness/bridge.config.json carries the actual tokens; this example only documents the schema. Keep bridge.config.json out of git.",
+  "schemaVersion": 1,
+  "bridges": {
+    "codex": {
+      "host": "127.0.0.1",
+      "port": 4177,
+      "token": "replace-with-codex-bridge-bearer",
+      "repoRoot": "C:\\Users\\linder\\Documents\\harness\\u6846\\u67b6",
+      "runtimeSkills": true,
+      "$comment": "Set runtimeSkills=true to advertise v0.3 with runtime skill bundles. Required when the dashboard sends mavis payloads through this bridge."
+    },
+    "lucky": {
+      "host": "127.0.0.1",
+      "port": 4198,
+      "token": "replace-with-lucky-bridge-bearer",
+      "repoRoot": "C:\\Users\\linder\\Documents\\harness\\u6846\\u67b6",
+      "quotaStorePath": "C:\\Users\\linder\\Documents\\harness\\u6846\\u67b6\\repos\\jormungand\\data\\lucky-quota.json",
+      "backend": {
+        "url": "https://api.minimax.io/v1",
+        "model": "MiniMax-M3",
+        "token": "replace-with-minimax-api-key"
+      },
+      "$comment": "The mavis / Lucky executor. This server is what codex-bridge reverse-proxies mavis calls to."
+    },
+    "openclaw": {
+      "url": "https://openclaw-bridge.example.com",
+      "token": "replace-with-openclaw-gateway-token",
+      "$comment": "OpenClaw bridge is exposed via ngrok; not running locally."
+    }
+  },
+  "routing": {
+    "$comment": "How the dashboard routes each executor family to a public bridge URL.",
+    "codex": "https://codex-bridge.jormungandcycle.com",
+    "openclaw": "https://openclaw-bridge.jormungandcycle.com",
+    "$comment2": "Lucky is routed through codex-bridge as a single public endpoint; the local forwarder hands mavis calls to lucky-mavis-server."
+  }
+}

@@ -28,4 +28,7 @@ skills-lock.json
 .harness/runtime-skills/
 repos/*/.harness/cache/
 repos/*/.harness/runtime-skills/
+# Bridge runtime config — real one carries tokens, gitignore it.
+# bridge.config.example.json is the schema and stays tracked.
+repos/*/.harness/bridge.config.json
 graphify-out/cache/
