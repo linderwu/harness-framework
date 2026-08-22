@@ -766,7 +766,15 @@ export function HarnessDashboard({
             <a className={`hiveHealthBadge ${initialHiveHealth.status}`} href="/api/hive-memory/health" title={`Hive memory integrity: ${initialHiveHealth.integrity}`}>
               <CircleDot size={13} />Memory {initialHiveHealth.status}
             </a>
-            <button className="iconButton" onClick={refreshWorkspace} title="Refresh"><RefreshCw size={18} /></button>
+            <button
+              aria-label="Reload page"
+              className="iconButton"
+              onClick={() => window.location.reload()}
+              title="Reload page"
+              type="button"
+            >
+              <RefreshCw size={18} />
+            </button>
           </div>
         </header>
       </div>

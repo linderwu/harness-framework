@@ -4,7 +4,7 @@ type: entity
 tags: [workflow, domain, runtime, manager, execution-jobs]
 status: active
 created: 2026-08-11
-updated: 2026-08-21
+updated: 2026-08-22
 ---
 
 # Workflow Engine
@@ -57,10 +57,19 @@ API routes call workflow functions. The workflow engine calls [[wiki/entities/ag
 
 For managed runs, the workflow engine yields control to the manager scheduler, which claims `execution_jobs` rows, builds a context pack, and applies manager actions against [[wiki/entities/agent-bridge]]. Manager state, checkpoints, and wake history live in hive memory; see [[wiki/entities/workspace-store]] for the paired backup contract.
 
+The normal, managed, conversation, and A2A paths do not share one execution
+contract: some work is inline in the HTTP request, while other work is queued
+or dispatched synchronously through a bridge. The workflow engine also
+concentrates skill definitions, transitions, approval/revision logic, and
+artifact recording in `lib/workflow.ts`. See
+[[wiki/concepts/architecture-risk-register-2026-08-22]] before changing stage
+or persistence behavior.
+
 ## References
 
 - [[raw/2026-08-11-graphify-code-only-run]]
 - [[raw/2026-08-13-graphify-deep-minimax-run]]
 - [[raw/2026-08-21-wiki-spec-refresh]]
 - [[wiki/concepts/tech-debt-synchronous-bridge-transport]]
+- [[wiki/concepts/architecture-risk-register-2026-08-22]]
 - `graphify/jormungand-root/GRAPH_REPORT.md`

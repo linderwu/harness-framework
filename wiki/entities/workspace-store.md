@@ -4,7 +4,7 @@ type: entity
 tags: [persistence, workspace, json-state, hive-memory, sqlite]
 status: active
 created: 2026-08-11
-updated: 2026-08-21
+updated: 2026-08-22
 ---
 
 # Workspace Store
@@ -48,9 +48,16 @@ together. The full hive memory contract is in [[spec/SPEC]]; a dedicated
 entity page for hive memory is deferred to a follow-up cycle, see
 [[raw/2026-08-21-wiki-spec-refresh]].
 
+The shared directory and paired backup files do not provide a cross-store
+transaction: workflow JSON and Hive SQLite can be changed by separate
+operations, and the backup script snapshots them at different points in time.
+See [[wiki/concepts/architecture-risk-register-2026-08-22]] for the current
+recovery and concurrency assessment.
+
 ## References
 
 - [[raw/2026-08-11-graphify-code-only-run]]
 - [[raw/2026-08-13-secure-bridge-deployment-verification]]
 - [[raw/2026-08-21-wiki-spec-refresh]]
+- [[wiki/concepts/architecture-risk-register-2026-08-22]]
 - `graphify/jormungand-root/GRAPH_REPORT.md`

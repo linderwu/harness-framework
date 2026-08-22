@@ -57,6 +57,16 @@ test("dashboard health endpoint only returns registered HTTP bridge URL records"
   assert.doesNotMatch(route, /not_configured/)
 })
 
+test("topbar refresh control reloads the complete dashboard page", () => {
+  const topbarStart = dashboard.indexOf('<header className="topbar">')
+  const topbarEnd = dashboard.indexOf("</header>", topbarStart)
+  const topbar = dashboard.slice(topbarStart, topbarEnd)
+
+  assert.match(topbar, /aria-label="Reload page"/)
+  assert.match(topbar, /title="Reload page"/)
+  assert.match(topbar, /onClick=\{\(\) => window\.location\.reload\(\)\}/)
+})
+
 test("dashboard renders bridge status inside the right monitoring rail", () => {
   const composePanel = dashboard.slice(
     dashboard.indexOf('<form className="panel composePanel"'),

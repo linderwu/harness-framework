@@ -172,6 +172,6 @@ reflects the new server.
 - [[raw/2026-08-13-secure-bridge-deployment-verification]]
 - [[raw/2026-08-13-graphify-deep-minimax-run]]
 - [[raw/2026-08-21-wiki-spec-refresh]]
-- [[raw/2026-08-22-lucky-mavis-function-calling-pivot]]
 - [[wiki/concepts/tech-debt-synchronous-bridge-transport]]
+- [[wiki/concepts/architecture-risk-register-2026-08-22]]
 - `graphify/jormungand-root/GRAPH_REPORT.md`

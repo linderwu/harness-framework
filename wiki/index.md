@@ -3,7 +3,7 @@ title: Jormungand Ouroboros Index
 type: index
 status: active
 created: 2026-08-11
-updated: 2026-08-21
+updated: 2026-08-22
 ---
 
 # Jormungand Ouroboros Index
@@ -63,6 +63,8 @@ This workspace follows the Ouroboros Trivium knowledge architecture from [[raw/2
 - [[wiki/concepts/root-local-code-exception]]
 - [[wiki/concepts/tech-debt-json-state-persistence]]
 - [[wiki/concepts/tech-debt-synchronous-bridge-transport]]
+- [[wiki/concepts/architecture-risk-register-2026-08-22]] — code-grounded
+  architecture audit and ranked risk register.
 
 > **Note:** Additional concepts surfaced by the 2026-08-21
 > refresh (the agent permission mode, the per-IP lockout, the
@@ -81,6 +83,14 @@ This workspace follows the Ouroboros Trivium knowledge architecture from [[raw/2
 > and the `repos/jormungand/` source today, and await dedicated
 > pattern pages in a follow-up cycle; see
 > [[raw/2026-08-21-wiki-spec-refresh]].
+
+## Current Audit Status
+
+The 2026-08-22 audit confirms that the application source of truth is
+`repos/jormungand/`, while the root `app/` tree, Graphify output, C4 views, and
+the smaller `omx_wiki/` store are not equivalent runtime surfaces. The audit
+keeps these as explicit documentation debt until they are regenerated or
+consolidated.
 
 ## Graph Evidence
 
