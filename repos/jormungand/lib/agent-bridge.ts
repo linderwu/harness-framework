@@ -32,6 +32,7 @@ export interface AgentInvocationInput {
   stage: WorkflowStage
   artifactType: Artifact["type"]
   title: string
+  idempotencyKey?: string
   fallbackBody: string
   runtimeSkillBundles?: RuntimeSkillBundleDescriptor[]
   contextPack?: ContextPack
@@ -757,7 +758,7 @@ async function invokeOpenClawA2A(
     })
     return {
       status: result.exitCode === 0 ? "completed" : "failed",
-      deliveryState: "confirmed",
+      deliveryState: result.deliveryState,
       source: "openclaw-a2a",
       externalRunId: idempotencyKey,
       idempotencyKey,
@@ -808,7 +809,7 @@ async function invokeMinimaxA2A(
     })
     return {
       status: result.exitCode === 0 ? "completed" : "failed",
-      deliveryState: "confirmed",
+      deliveryState: result.deliveryState,
       source: "minimax-a2a",
       externalRunId: idempotencyKey,
       idempotencyKey,
@@ -874,7 +875,11 @@ async function runCommandWithStdin(
   })
   let stdout = ""
   let stderr = ""
-  const timer = setTimeout(() => child.kill("SIGTERM"), timeoutMs)
+  let timedOut = false
+  const timer = setTimeout(() => {
+    timedOut = true
+    child.kill("SIGTERM")
+  }, timeoutMs)
 
   child.stdout.on("data", (chunk) => {
     stdout += chunk.toString()
@@ -890,7 +895,12 @@ async function runCommandWithStdin(
   })
   clearTimeout(timer)
 
-  return { exitCode, stdout, stderr }
+  return {
+    exitCode,
+    stdout,
+    stderr,
+    deliveryState: timedOut ? "unknown" as const : "confirmed" as const
+  }
 }
 
 function createMissingBridgeResult(
@@ -916,6 +926,9 @@ function createMissingBridgeResult(
 }
 
 function createIdempotencyKey(input: AgentInvocationInput) {
+  const explicitKey = input.idempotencyKey?.trim()
+  if (explicitKey) return explicitKey
+
   return [
     input.run.id,
     input.run.version,

@@ -25,7 +25,8 @@ import {
 } from "../lib/codex-conversation"
 import {
   createHiveServices,
-  routeOpenClawUnboundConversation
+  routeOpenClawUnboundConversation,
+  routeUnboundConversation
 } from "../lib/hive-services"
 import { openHiveDatabase } from "../lib/hive-memory/database"
 import { createHiveMemoryRepository } from "../lib/hive-memory/repository"
@@ -698,6 +699,7 @@ test("unbound Codex routing dispatches directly to Codex with direct execution s
   const invocation = capturedInputs[0]
   assert.equal(invocation?.executor, "codex")
   assert.equal(invocation?.conversationId, conversationId)
+  assert.equal(invocation?.idempotencyKey, "conversation:direct-codex:codex-unbound-direct")
   assert.equal(invocation?.skill.id, "conversation.direct_execution")
   assert.equal(
     invocation?.conversationHistory?.some(
@@ -748,6 +750,10 @@ test("queued unbound Codex routing drains through direct execution instead of Co
   assert.equal(capturedInputs.length, 1)
   assert.equal(capturedInputs[0]?.executor, "codex")
   assert.equal(capturedInputs[0]?.conversationId, "conversation:queued-codex")
+  assert.equal(
+    capturedInputs[0]?.idempotencyKey,
+    "conversation:queued-codex:queued-unbound-codex"
+  )
   assertDirectExecutionSkill(capturedInputs[0]!.skill)
 
   const storedUser = repository.getConversationByIdempotencyKey(
@@ -800,6 +806,41 @@ test("queued bound Codex routing still uses the workflow manager conversation sk
   assert.equal(capturedInputs[0]?.executor, "codex")
   assert.equal(capturedInputs[0]?.skill.id, "hive_manager.operator_message")
   assert.equal(capturedInputs[0]?.conversationId, undefined)
+})
+
+test("unbound direct redispatch preserves the persisted entry idempotency key", async (t) => {
+  const { database, repository } = await repositoryFixture(t)
+  const capturedInputs: AgentInvocationInput[] = []
+  const entry = {
+    id: "entry-redispatch",
+    role: "user" as const,
+    agentId: "codex" as const,
+    content: "Redispatch this persisted entry."
+  }
+  const routeInput = {
+    repository,
+    conversationId: "conversation:redispatch",
+    targetAgent: "codex" as const,
+    content: entry.content,
+    entries: [entry],
+    idempotencyKey: "conversation:redispatch:entry-redispatch",
+    invokeAgent: async (input: AgentInvocationInput) => {
+      capturedInputs.push(input)
+      return {
+        status: "completed" as const,
+        source: "simulated" as const,
+        body: "Direct response"
+      }
+    }
+  }
+
+  await routeUnboundConversation(routeInput)
+  await routeUnboundConversation(routeInput)
+
+  assert.deepEqual(
+    capturedInputs.map((input) => input.idempotencyKey),
+    ["conversation:redispatch:entry-redispatch", "conversation:redispatch:entry-redispatch"]
+  )
 })
 
 test("unbound OpenClaw direct routing bounds first bootstrap history to the newest 20 shareable entries", async (t) => {

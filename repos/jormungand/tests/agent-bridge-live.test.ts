@@ -1,5 +1,8 @@
 import assert from "node:assert/strict"
+import { mkdtemp, rm, writeFile } from "node:fs/promises"
 import test, { type TestContext } from "node:test"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 
 import type { AgentLiveEvent } from "../lib/agent-live-events"
 import { createAgentLiveBus } from "../lib/agent-live-bus"
@@ -186,6 +189,43 @@ test("publishes started reasoning and completed before the final OpenClaw POST r
   assert.equal(result.status, "completed")
   assert.equal(result.deliveryState, "confirmed")
   assert.equal(result.body, "Final answer")
+})
+
+test("uses an explicit invocation idempotency key across synthetic runs", { concurrency: false }, async (t) => {
+  restoreEnv(t, "OPENCLAW_BRIDGE_URL")
+  process.env.OPENCLAW_BRIDGE_URL = "http://openclaw.test"
+  const capturedKeys: string[] = []
+
+  __setAgentBridgeTestHooks({
+    fetch: async (input: RequestInfo | URL, init?: RequestInit) => {
+      assert.equal(String(input), "http://openclaw.test/agent-runs")
+      const payload = JSON.parse(String(init?.body)) as { idempotencyKey?: string }
+      capturedKeys.push(payload.idempotencyKey ?? "")
+      return jsonResponse({ status: "completed", output: "Final answer" })
+    }
+  })
+  t.after(() => {
+    __resetAgentBridgeTestHooks()
+  })
+
+  const invoke = (run: ReturnType<typeof createOpenClawRun>) => invokeConfiguredAgent({
+    run,
+    executor: "openclaw.rowlet",
+    stage: "implementation",
+    artifactType: "log",
+    title: "Stable direct idempotency",
+    fallbackBody: "fallback",
+    idempotencyKey: "conversation:stable-entry:entry-1",
+    skill: liveSkill
+  })
+
+  await invoke(createOpenClawRun())
+  await invoke(createOpenClawRun())
+
+  assert.deepEqual(capturedKeys, [
+    "conversation:stable-entry:entry-1",
+    "conversation:stable-entry:entry-1"
+  ])
 })
 
 test("falls back cleanly when the optional bridge events endpoint returns 404", { concurrency: false }, async (t) => {
@@ -772,3 +812,34 @@ test("marks recovery timeout delivery as unknown", { concurrency: false }, async
   assert.equal(result.deliveryState, "unknown")
   assert.match(result.body, /recovery polling did not return a completed result/)
 })
+
+test("marks an OpenClaw A2A command timeout as unknown", { concurrency: false }, async (t) => {
+  restoreEnv(t, "OPENCLAW_A2A_COMMAND")
+  restoreEnv(t, "OPENCLAW_BRIDGE_URL")
+  restoreEnv(t, "OPENCLAW_A2A_TIMEOUT_MS")
+  const commandDir = await mkdtemp(join(tmpdir(), "jormungand-openclaw-a2a-timeout-"))
+  const commandPath = join(commandDir, "timeout.mjs")
+  await writeFile(commandPath, "setTimeout(() => process.exit(0), 200)\n")
+  t.after(async () => rm(commandDir, { recursive: true, force: true }))
+
+  process.env.OPENCLAW_A2A_COMMAND = `${quoteCommandArg(process.execPath)} ${quoteCommandArg(commandPath)}`
+  delete process.env.OPENCLAW_BRIDGE_URL
+  process.env.OPENCLAW_A2A_TIMEOUT_MS = "25"
+
+  const result = await invokeConfiguredAgent({
+    run: createOpenClawRun(),
+    executor: "openclaw.rowlet",
+    stage: "implementation",
+    artifactType: "log",
+    title: "Mark A2A timeout uncertainty",
+    fallbackBody: "fallback",
+    skill: liveSkill
+  })
+
+  assert.equal(result.status, "failed")
+  assert.equal(result.deliveryState, "unknown")
+})
+
+function quoteCommandArg(value: string) {
+  return `"${value.replaceAll('"', '\\"')}"`
+}

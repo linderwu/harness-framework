@@ -185,13 +185,14 @@ export function createHiveServices(options: HiveServicesOptions = {}) {
       return artifact.id
     },
     enqueueManagerWake: (input) => scheduler.enqueue(input),
-    routeUnbound: async ({ conversationId, targetAgent, content, entries }) => {
+    routeUnbound: async ({ conversationId, targetAgent, content, entries, idempotencyKey }) => {
       return routeUnboundConversation({
         repository,
         conversationId,
         targetAgent,
         content,
         entries,
+        idempotencyKey,
         invokeAgent
       })
     }
@@ -280,6 +281,7 @@ export async function routeUnboundConversation(input: {
   targetAgent: AgentKind
   content: string
   entries: Array<Pick<ConversationEntry, "id" | "role" | "agentId" | "content">>
+  idempotencyKey?: string
   invokeAgent: (
     input: AgentInvocationInput
   ) => Promise<Pick<AgentArtifactResult, "status" | "body" | "deliveryState">>
@@ -305,6 +307,7 @@ export async function routeUnboundConversation(input: {
     title: "Direct conversation execution",
     fallbackBody: input.content,
     conversationId: input.conversationId,
+    idempotencyKey: input.idempotencyKey,
     conversationHistory: buildShareableConversationHistory(input.entries),
     skill: createDirectExecutionSkill(input.targetAgent)
   })
@@ -356,6 +359,7 @@ async function routeDirectOpenClawConversation(input: {
   targetAgent: AgentKind
   content: string
   entries: Array<Pick<ConversationEntry, "id" | "role" | "agentId" | "content">>
+  idempotencyKey?: string
   invokeAgent: (
     input: AgentInvocationInput
   ) => Promise<Pick<AgentArtifactResult, "status" | "body" | "deliveryState">>
@@ -412,6 +416,7 @@ async function routeDirectOpenClawConversation(input: {
     title: "Direct conversation execution",
     fallbackBody: input.content,
     conversationId: input.conversationId,
+    idempotencyKey: input.idempotencyKey,
     conversationHistory: bootstrapDelivered || deliveryUnknown
       ? undefined
       : buildShareableConversationHistory(input.entries),

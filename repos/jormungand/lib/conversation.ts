@@ -86,6 +86,7 @@ interface ConversationDependencies {
     content: string
     entries: ConversationEntry[]
     targetAgent: AgentKind
+    idempotencyKey: string
   }) => Promise<{
     status: "completed" | "failed"
     body: string
@@ -165,7 +166,8 @@ export class ConversationService {
         conversationId,
         targetAgent,
         content,
-        entries: this.dependencies.repository.listConversation(conversationId)
+        entries: this.dependencies.repository.listConversation(conversationId),
+        idempotencyKey: userEntry.idempotencyKey
       })
       const responseInsert = await this.dependencies.repository.insertConversation({
         workflowRunId: conversationId,
@@ -409,7 +411,8 @@ export class ConversationService {
         conversationId,
         targetAgent,
         content: userEntry.content,
-        entries: entriesThroughCurrent
+        entries: entriesThroughCurrent,
+        idempotencyKey: userEntry.idempotencyKey
       })
       if (targetAgent === "codex" && decision.binding) {
         await this.dependencies.repository.moveConversation(conversationId, decision.binding.workflowRunId)
