@@ -949,6 +949,7 @@ export function TaskConversation(props: {
               <div>
                 <p className="eyebrow">Live session</p>
                 <strong>{formatSessionStatus(session)}</strong>
+                <p className="codexSyncStatus">Codex sync: {formatCodexSyncStatus(session)}</p>
               </div>
               <div className="codexActivityActions">
                 {isTurnRunning ? <button className="compactPanelButton" disabled={isControlling} onClick={() => void control("interrupt")} type="button">Pause</button> : null}
@@ -1039,6 +1040,10 @@ export function TaskConversation(props: {
             {permissionStatus}
             Codex {formatSessionStatus(session)}
           </span>
+          <span className="conversationBindingStatus codexSyncStatus" role="status">
+            Codex sync: {formatCodexSyncStatus(session)}
+          </span>
+          {session?.syncWarning ? <span className="conversationBindingStatus" role="alert">{session.syncWarning}</span> : null}
         </div>
         <div className="taskConversationHeaderActions" style={{ flex: "1 1 18rem", minWidth: 0, justifyContent: "flex-end" }}>
           {isUnbound ? (
@@ -1261,6 +1266,16 @@ function formatSessionStatus(session: CodexConversationState["session"]) {
   if (session.turnStatus === "completed") return "ready"
   if (session.turnStatus === "inProgress") return "working"
   return session.status
+}
+
+export function formatCodexSyncStatus(session: CodexConversationState["session"]) {
+  if (!session) return "not started"
+  if (session.mappingState === "replacement_pending") return "Native thread replaced pending"
+  if (session.mappingState === "offline") return "Waiting for sync"
+  if (session.mappingState === "archived") return "archived"
+  if (session.replacementOfThreadId) return "Native thread replaced"
+  if (session.lastSyncAt) return "Synced"
+  return "syncing"
 }
 
 function formatActivityType(type: string) {
