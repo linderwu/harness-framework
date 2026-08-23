@@ -47,6 +47,26 @@ authentication, bridge tokens, conversation audit/history, and
 `JORMUNGAND_AGENT_PERMISSION_MODE` still apply; frontend validation is not an
 authorization boundary.
 
+When the selected direct agent is OpenClaw, Harness conversations use one
+persistent OpenClaw session per `(conversationId, agent)` pair in the
+`harness-direct-v1` namespace. Jormungand derives that `openclaw agent
+--session-key` value server-side, reuses it for follow-up turns and process
+restarts, and leaves the remote OpenClaw session intact if the Harness
+conversation is later deleted.
+
+OpenClaw tool access still comes from the effective Gateway policy. For truly
+unrestricted writes, the effective configuration must keep
+`agents.defaults.sandbox.mode=off`, `tools.profile=full`,
+`tools.exec.host=gateway`, `tools.exec.mode=full`,
+`tools.exec.applyPatch.enabled=true`, and
+`tools.exec.applyPatch.workspaceOnly=false`. `tools.deny`,
+`tools.byProvider`, `tools.toolsBySender`, per-agent tool restrictions, and
+per-agent sandbox overrides can narrow that policy. Because OpenClaw Gateway
+runs inside the OpenClaw container, required binaries such as `yt-dlp`,
+FFmpeg, and the selected transcription engine, plus network access,
+credentials, and writable mounts, must exist in that container. See
+`docs/openclaw-ssh.md` for operator smoke checks.
+
 The OpenClaw HTTP bridge uses `OPENCLAW_BRIDGE_TOKEN`; when that value is blank,
 the app can reuse `OPENCLAW_GATEWAY_TOKEN` for compatibility with an existing
 single-secret deployment. Separate tokens remain preferable for new installs.
