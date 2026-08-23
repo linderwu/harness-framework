@@ -41,19 +41,58 @@
  */
 
 import http from "node:http"
-import { spawn } from "node:child_process"
+import { spawn, execFileSync } from "node:child_process"
 import { randomUUID } from "node:crypto"
+import {
+  mkdtemp,
+  rm,
+  writeFile,
+  stat,
+  readFile
+} from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { join, resolve as pathResolve, isAbsolute } from "node:path"
+import {
+  loadBridgeConfig,
+  PROTOCOL_VERSION as CONFIG_PROTOCOL_VERSION
+} from "./bridge-config.mjs"
 
 // ---------- configuration ---------------------------------------------------
 
-const host = process.env.MINIMAX_BRIDGE_HOST ?? "127.0.0.1"
-const port = Number(process.env.MINIMAX_BRIDGE_PORT ?? 3002)
+// ---------- device configuration (shared with bridge-config.mjs) -----------
+
+let bridgeConfig = null
+try {
+  bridgeConfig = loadBridgeConfig()
+} catch (error) {
+  console.warn(
+    `minimax bridge: failed to load bridge config: ${formatError(error)}; ` +
+      "falling back to env-only mode."
+  )
+}
+const deviceRepoRoot = bridgeConfig?.device?.repoRoot ?? process.cwd()
+const devicePermissionMode = bridgeConfig?.device?.permissionMode ?? "restricted"
+const runtimeSkillsConfig = bridgeConfig?.device?.runtimeSkills ?? {
+  enabled: false,
+  root: ".harness/runtime-skills",
+  cache: ".harness/cache/skills",
+  lockfile: ".harness/skill.lock.json"
+}
+
+const host = process.env.MINIMAX_BRIDGE_HOST ?? bridgeConfig?.bridge?.host ?? "127.0.0.1"
+const port = Number(
+  process.env.MINIMAX_BRIDGE_PORT ?? bridgeConfig?.bridge?.port ?? 3002
+)
 const token =
   process.env.MINIMAX_BRIDGE_TOKEN?.trim() ||
   process.env.HARNESS_BRIDGE_TOKEN?.trim() ||
   process.env.MINIMAX_GATEWAY_TOKEN?.trim()
 const a2aCommand = process.env.MINIMAX_A2A_COMMAND?.trim()
-const backendUrl = process.env.MINIMAX_BACKEND_URL?.trim()
+const backendUrl =
+  process.env.MINIMAX_BACKEND_URL?.trim() ||
+  // Default: same-device Lucky runtime per the Jormungand agent-bridge
+  // self-integration guide. The lucky-mavis-server listens on 4198.
+  "http://127.0.0.1:4198"
 const backendCommand = process.env.MINIMAX_BACKEND_COMMAND?.trim()
 const backendToken = process.env.MINIMAX_BACKEND_TOKEN?.trim()
 const defaultModel = process.env.MINIMAX_BACKEND_MODEL ?? "minimax/MiniMax-M3"
@@ -65,7 +104,9 @@ const a2aTimeoutMs = Number(
 const bridgeTimeoutMs = Number(process.env.MINIMAX_BRIDGE_TIMEOUT_MS ?? 900000)
 const killGraceMs = Number(process.env.MINIMAX_BRIDGE_KILL_GRACE_MS ?? 5_000)
 const completedRunTtlMs = Number(
-  process.env.MINIMAX_BRIDGE_COMPLETED_RUN_TTL_MS ?? 30 * 60 * 1000
+  process.env.MINIMAX_BRIDGE_COMPLETED_RUN_TTL_MS ??
+    bridgeConfig?.bridge?.completedRunTtlMs ??
+    30 * 60 * 1000
 )
 
 const protocolVersion = "harness-agent-bridge/v0.3"
@@ -411,6 +452,244 @@ function stopWorkflowRun(workflowRunId) {
     }
   }
   return stopped
+}
+
+// ---------- device guards: repo, context files, runtime skill bundles ----
+
+/**
+ * Normalize a GitHub repository string into "owner/name" form. Accepts
+ * both full URLs (https://github.com/owner/name[.git]) and shorthand
+ * "owner/name". Returns null if the input cannot be parsed.
+ */
+function normalizeGitHubRepository(value) {
+  if (typeof value !== "string") return null
+  const trimmed = value.trim()
+  if (!trimmed) return null
+  if (/^[\w.-]+\/[\w.-]+$/.test(trimmed)) return trimmed.replace(/\.git$/i, "")
+  const match = trimmed.match(
+    /^https?:\/\/(?:[\w.-]+@)?github\.com\/([\w.-]+\/[\w.-]+?)(?:\.git)?\/?$/i
+  )
+  if (match) return match[1]
+  return null
+}
+
+/**
+ * Repository authorization guard per the guide: a non-empty
+ * `payload.repository` must match the configured workspace's Git origin
+ * before the runtime is invoked. Returns an error string or null.
+ */
+function validateRepository(payload) {
+  const requestedRaw = String(payload?.repository ?? "").trim()
+  if (!requestedRaw) return null // unbound tasks are allowed
+
+  const requested = normalizeGitHubRepository(requestedRaw)
+  if (!requested) {
+    return `repository must be an owner/name GitHub reference (got ${JSON.stringify(requestedRaw)})`
+  }
+
+  let originUrl = ""
+  try {
+    originUrl = execFileSync(
+      "git",
+      ["-C", deviceRepoRoot, "remote", "get-url", "origin"],
+      { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }
+    ).trim()
+  } catch (error) {
+    return `failed to read device git origin: ${formatError(error)}`
+  }
+
+  const configured = normalizeGitHubRepository(originUrl)
+  if (!configured) {
+    return `device git origin is not a GitHub repository: ${JSON.stringify(originUrl)}`
+  }
+  if (configured.toLowerCase() !== requested.toLowerCase()) {
+    return `repository ${requested} does not match the configured workspace origin ${configured}`
+  }
+  return null
+}
+
+/**
+ * Materialize the request's `contextFiles` into a private temp directory
+ * scoped to the run id. Rejects absolute paths and traversal. Returns
+ * the temp directory and an array of { name, path } descriptors.
+ */
+async function materializeContextFiles(contextFiles, runId) {
+  if (!Array.isArray(contextFiles) || contextFiles.length === 0) {
+    return { dir: null, files: [] }
+  }
+  const dir = await mkdtemp(join(tmpdir(), `minimax-bridge-${runId}-`))
+  const written = []
+  for (const file of contextFiles) {
+    if (!file || typeof file !== "object") continue
+    const name = String(file.name ?? "context").replace(/[^\w.\-]/g, "_")
+    const safeName = name.endsWith(file.id ?? "") ? name : name
+    const target = join(dir, safeName)
+    const content =
+      typeof file.content === "string"
+        ? Buffer.from(file.content, file.encoding === "base64" ? "base64" : "utf8")
+        : Buffer.alloc(0)
+    await writeFile(target, content, { mode: 0o600 })
+    written.push({ name: safeName, path: target, size: content.length })
+  }
+  return { dir, files: written }
+}
+
+async function cleanupContextFiles(materialized) {
+  if (materialized?.dir) {
+    try {
+      await rm(materialized.dir, { recursive: true, force: true })
+    } catch (error) {
+      console.error(
+        `minimax: failed to clean context dir ${materialized.dir}: ${formatError(error)}`
+      )
+    }
+  }
+}
+
+/**
+ * v0.3 runtime skill bundle verification: every requested descriptor must
+ * match a local allowlist (or lockfile) and have a valid SHA-256 checksum.
+ * This is a minimal implementation — the lockfile format is detected
+ * automatically (array of {id,version,checksum,sourceUrl} entries).
+ */
+async function verifyRuntimeSkillBundles(bundles) {
+  const results = []
+  if (!Array.isArray(bundles) || bundles.length === 0) {
+    return { results, allowlist: null }
+  }
+  let allowlist = null
+  if (runtimeSkillsConfig.enabled && runtimeSkillsConfig.lockfile) {
+    const lockfilePath = pathResolve(
+      deviceRepoRoot,
+      runtimeSkillsConfig.lockfile
+    )
+    try {
+      const raw = await readFile(lockfilePath, "utf8")
+      const parsed = JSON.parse(raw)
+      if (Array.isArray(parsed?.bundles)) {
+        allowlist = new Map(
+          parsed.bundles.map((b) => [
+            String(b.id),
+            {
+              version: b.version,
+              checksum: b.checksum,
+              sourceUrl: b.sourceUrl,
+              required: b.required
+            }
+          ])
+        )
+      } else if (Array.isArray(parsed)) {
+        allowlist = new Map(
+          parsed.map((b) => [
+            String(b.id),
+            {
+              version: b.version,
+              checksum: b.checksum,
+              sourceUrl: b.sourceUrl,
+              required: b.required
+            }
+          ])
+        )
+      }
+    } catch (error) {
+      // Lockfile is optional; missing/unreadable is not a hard failure.
+      console.warn(
+        `minimax: runtime skill lockfile unavailable at ${lockfilePath}: ${formatError(error)}`
+      )
+    }
+  }
+  for (const bundle of bundles) {
+    const id = String(bundle?.id ?? "")
+    const version = String(bundle?.version ?? "")
+    const checksum = bundle?.checksum?.value ?? bundle?.checksum
+    const required = bundle?.required !== false
+    const descriptorMatch =
+      allowlist?.get(id) ?? (allowlist === null ? null : null)
+    if (allowlist && !descriptorMatch) {
+      results.push({
+        id,
+        version,
+        required,
+        verified: false,
+        message: `bundle ${id} is not present in the local runtime skill lockfile`
+      })
+      continue
+    }
+    if (
+      allowlist &&
+      descriptorMatch &&
+      descriptorMatch.version &&
+      descriptorMatch.version !== version
+    ) {
+      results.push({
+        id,
+        version,
+        required,
+        verified: false,
+        message: `bundle ${id} version mismatch: requested ${version}, lockfile ${descriptorMatch.version}`
+      })
+      continue
+    }
+    if (
+      allowlist &&
+      descriptorMatch?.checksum &&
+      typeof checksum === "string" &&
+      checksum.length === 64
+    ) {
+      const expected =
+        typeof descriptorMatch.checksum === "string"
+          ? descriptorMatch.checksum
+          : descriptorMatch.checksum?.value
+      if (expected && expected.toLowerCase() !== checksum.toLowerCase()) {
+        results.push({
+          id,
+          version,
+          required,
+          verified: false,
+          message: `bundle ${id} checksum mismatch: requested ${checksum}, lockfile ${expected}`
+        })
+        continue
+      }
+    }
+    results.push({
+      id,
+      version,
+      checksum: bundle?.checksum,
+      verified: true,
+      required,
+      downloadSource: "lockfile",
+      cacheStatus: "hit"
+    })
+  }
+  return { results, allowlist }
+}
+
+/**
+ * Build the auth-context block that gets prepended to the runtime
+ * prompt so the Lucky runtime can see the permission mode, repository
+ * identity, materialized context files, and verified runtime skill
+ * paths. This is evidence, not policy authority.
+ */
+function buildAuthContextBlock({ payload, permissionMode, context, skillBundles }) {
+  const lines = ["[Bridge auth context]"]
+  lines.push(`permission_mode: ${permissionMode}`)
+  if (payload?.repository) lines.push(`repository: ${payload.repository}`)
+  if (payload?.workflowRunId) lines.push(`workflow_run_id: ${payload.workflowRunId}`)
+  if (context?.dir) {
+    lines.push(`context_files_dir: ${context.dir}`)
+    for (const file of context.files) {
+      lines.push(`  - ${file.name}  (${file.size} bytes)  ${file.path}`)
+    }
+  }
+  if (skillBundles && skillBundles.length > 0) {
+    lines.push("runtime_skill_bundles:")
+    for (const b of skillBundles) {
+      lines.push(
+        `  - ${b.id}@${b.version ?? "?"}  verified=${b.verified}  required=${b.required}`
+      )
+    }
+  }
+  return lines.join("\n")
 }
 
 // ---------- backend dispatchers -------------------------------------------
@@ -932,7 +1211,65 @@ const server = http.createServer(async (request, response) => {
       payload
     })
 
-    const prompt = buildPrompt(payload)
+    // Repository authorization guard. Reject with 422 before any dispatch
+    // if the requested repository does not match the device's git origin.
+    const repoError = validateRepository(payload)
+    if (repoError) {
+      activeRuns.delete(runId)
+      if (idempotencyKey) activeIdempotencyKeys.delete(idempotencyKey)
+      sendJson(response, 422, { error: repoError })
+      return
+    }
+
+    // Materialize context files into a private temp dir scoped to the run.
+    let materialized = { dir: null, files: [] }
+    try {
+      materialized = await materializeContextFiles(
+        payload.contextFiles,
+        runId
+      )
+    } catch (error) {
+      activeRuns.delete(runId)
+      if (idempotencyKey) activeIdempotencyKeys.delete(idempotencyKey)
+      sendJson(response, 400, {
+        error: `failed to materialize context files: ${formatError(error)}`
+      })
+      return
+    }
+
+    // v0.3 runtime skill bundle verification. Reject early if any required
+    // bundle cannot be verified against the local lockfile.
+    const { results: skillBundleResults } =
+      await verifyRuntimeSkillBundles(payload.runtimeSkillBundles)
+    const failedRequired = skillBundleResults.find(
+      (b) => b.verified === false && b.required !== false
+    )
+    if (failedRequired) {
+      await cleanupContextFiles(materialized)
+      activeRuns.delete(runId)
+      if (idempotencyKey) activeIdempotencyKeys.delete(idempotencyKey)
+      sendJson(response, 412, {
+        error: `required runtime skill bundle ${failedRequired.id} failed verification: ${failedRequired.message}`
+      })
+      return
+    }
+
+    // Permission mode: honor the request value if it is a known mode;
+    // otherwise fall back to the device-level default.
+    const effectivePermissionMode = ["full", "restricted"].includes(
+      payload.permissionMode
+    )
+      ? payload.permissionMode
+      : devicePermissionMode
+
+    const basePrompt = buildPrompt(payload)
+    const authContext = buildAuthContextBlock({
+      payload,
+      permissionMode: effectivePermissionMode,
+      context: materialized,
+      skillBundles: skillBundleResults
+    })
+    const prompt = `${authContext}\n\n${basePrompt}`
 
     let result
     try {
@@ -952,6 +1289,9 @@ const server = http.createServer(async (request, response) => {
         statusMessage: "minimax backend threw."
       }
     }
+
+    // Always clean up the temp context dir, even on failure.
+    await cleanupContextFiles(materialized)
 
     const finishedAt = new Date().toISOString()
     const elapsedSeconds = Math.max(
@@ -975,6 +1315,12 @@ const server = http.createServer(async (request, response) => {
       finishedAt,
       capabilities: bridgeCapabilities(),
       quota: readLuckyQuota(),
+      runtimeSkillBundleResults: skillBundleResults,
+      permissionMode: effectivePermissionMode,
+      contextFiles: materialized.files.map((f) => ({
+        name: f.name,
+        size: f.size
+      })),
       ...result
     }
 

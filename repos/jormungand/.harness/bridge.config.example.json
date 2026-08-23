@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "device": {
+    "id": "lucky-local-device",
+    "name": "Lucky same-device bridge",
+    "repoRoot": "/home/amr/harness-framework",
+    "permissionMode": "restricted",
+    "runtimeSkills": {
+      "enabled": true,
+      "root": ".harness/runtime-skills",
+      "cache": ".harness/cache/skills",
+      "lockfile": ".harness/skill.lock.json"
+    }
+  },
+  "bridge": {
+    "host": "127.0.0.1",
+    "port": 3002,
+    "protocolVersion": "harness-agent-bridge/v0.3",
+    "completedRunTtlMs": 1800000,
+    "tokenEnv": "MINIMAX_BRIDGE_TOKEN"
+  },
+  "runtime": {
+    "command": null,
+    "model": "minimax/MiniMax-M3",
+    "timeoutMs": 900000
+  }
+}
