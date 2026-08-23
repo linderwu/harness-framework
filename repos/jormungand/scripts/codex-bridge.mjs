@@ -661,11 +661,11 @@ async function runCodex(
   permissionModeInput = permissionMode
 ) {
   const outputFile = path.join(os.tmpdir(), `codex-bridge-${id}.txt`)
-  const command = process.env.CODEX_BRIDGE_COMMAND ?? "codex"
   const sandbox = process.env.CODEX_BRIDGE_SANDBOX ?? "workspace-write"
   const serviceTier = process.env.CODEX_BRIDGE_SERVICE_TIER ?? "fast"
   const timeoutMs = Number(process.env.CODEX_BRIDGE_TIMEOUT_MS ?? 900000)
   const permissionMode = normalizePermissionMode(permissionModeInput)
+  const useOutputFile = process.platform !== "win32"
   const args = [
     "exec",
     "-c",
@@ -673,10 +673,12 @@ async function runCodex(
     "-C",
     workspacePath,
     "--skip-git-repo-check",
-    "--output-last-message",
-    outputFile,
     "-"
   ]
+
+  if (useOutputFile) {
+    args.splice(args.length - 1, 0, "--output-last-message", outputFile)
+  }
 
   if (permissionMode === "full") {
     args.splice(args.length - 2, 0, "--dangerously-bypass-approvals-and-sandbox")
@@ -684,9 +686,8 @@ async function runCodex(
     args.splice(args.length - 2, 0, "--sandbox", sandbox)
   }
 
-  const child = spawn(command, args, {
+  const child = spawnCodex(args, {
     cwd: workspacePath,
-    shell: process.platform === "win32",
     stdio: ["pipe", "pipe", "pipe"]
   })
 
@@ -1336,12 +1337,10 @@ async function createCodexSession(
   options = {}
 ) {
   const id = randomUUID()
-  const command = process.env.CODEX_BRIDGE_COMMAND ?? "codex"
   const session = {
     id,
-    child: spawn(command, ["app-server", "--stdio"], {
+    child: spawnCodex(["app-server", "--stdio"], {
       cwd: workspacePath,
-      shell: process.platform === "win32",
       stdio: ["pipe", "pipe", "pipe"]
     }),
     permissionMode: normalizePermissionMode(sessionPermissionMode),
@@ -1692,10 +1691,8 @@ function rejectPendingCodexRequests(session, error) {
 }
 
 async function readCodexQuota() {
-  const command = process.env.CODEX_BRIDGE_COMMAND ?? "codex"
-  const child = spawn(command, ["app-server", "--stdio"], {
+  const child = spawnCodex(["app-server", "--stdio"], {
     cwd: repoRoot,
-    shell: process.platform === "win32",
     stdio: ["pipe", "pipe", "pipe"]
   })
   const responses = new Map()
@@ -1793,4 +1790,41 @@ function isMissingNativeThreadError(error) {
 
 function isLoopbackHost(value) {
   return ["127.0.0.1", "::1", "localhost"].includes(value)
+}
+
+function spawnCodex(args, options) {
+  const configured = process.env.CODEX_BRIDGE_COMMAND?.trim()
+  if (process.platform === "win32") {
+    const command = configured || process.execPath
+    const commandArgs = configured
+      ? args
+      : [
+          path.join(
+            process.env.APPDATA ?? path.join(os.homedir(), "AppData", "Roaming"),
+            "npm",
+            "node_modules",
+            "@openai",
+            "codex",
+            "bin",
+            "codex.js"
+          ),
+          ...args
+        ]
+    const commandLine = [command, ...commandArgs]
+      .map(quoteWindowsArgument)
+      .join(" ")
+    return spawn(
+      process.env.ComSpec ?? "cmd.exe",
+      ["/d", "/s", "/c", commandLine],
+      { ...options, shell: false }
+    )
+  }
+
+  return spawn(configured || "codex", args, { ...options, shell: false })
+}
+
+function quoteWindowsArgument(value) {
+  const text = String(value)
+  if (!/[\s"]/.test(text)) return text
+  return `"${text.replaceAll(/(\\*)"/g, "$1$1\\\"").replaceAll(/(\\+)$/g, "$1$1")}"`
 }

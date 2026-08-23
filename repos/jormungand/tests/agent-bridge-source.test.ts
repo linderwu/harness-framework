@@ -22,6 +22,17 @@ test("OpenClaw A2A session keys use the shared bounded session helper", () => {
   assert.doesNotMatch(bridge, /function sanitizeSessionSegment/)
 })
 
+test("Codex bridge preserves output-file arguments on Windows", () => {
+  assert.match(codexBridge, /function spawnCodex/)
+  assert.match(codexBridge, /process\.env\.ComSpec/)
+  assert.match(codexBridge, /process\.execPath/)
+  assert.match(codexBridge, /@openai/)
+  assert.match(codexBridge, /codex\.js/)
+  assert.match(codexBridge, /quoteWindowsArgument/)
+  assert.match(codexBridge, /useOutputFile = process\.platform !== "win32"/)
+  assert.match(codexBridge, /shell: false/)
+})
+
 test("OpenClaw HTTP bridge supports idempotency recovery polling", () => {
   assert.match(openClawBridge, /by-idempotency/)
   assert.match(openClawBridge, /completedIdempotencyRuns/)
