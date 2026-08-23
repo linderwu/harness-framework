@@ -23,6 +23,39 @@ function createRecordingTransport() {
   }
 }
 
+function createThreadReadFallbackTransport() {
+  const requests: RequestRecord[] = []
+  return {
+    requests,
+    async request(method: string, params: Record<string, unknown>) {
+      requests.push({ method, params })
+      if (method === "initialize") return {}
+      if (method === "thread/start") return { thread: { id: "thread-read" } }
+      if (method === "thread/read") throw new Error("thread not loaded: thread-read")
+      if (method === "thread/turns/list") {
+        return { data: [{ id: "turn-1", status: "completed", items: [] }] }
+      }
+      return {}
+    }
+  }
+}
+
+function createEmptyThreadTransport() {
+  const requests: RequestRecord[] = []
+  return {
+    requests,
+    async request(method: string, params: Record<string, unknown>) {
+      requests.push({ method, params })
+      if (method === "initialize") return {}
+      if (method === "thread/start") return { thread: { id: "thread-empty" } }
+      if (method === "thread/read") {
+        throw new Error("thread thread-empty is not materialized yet; includeTurns is unavailable before first user message")
+      }
+      return {}
+    }
+  }
+}
+
 async function loadSessionModule() {
   const dynamicImport = new Function(
     "modulePath",
@@ -40,6 +73,7 @@ async function loadSessionModule() {
       name?: string
     }) => {
       start: () => Promise<{ threadId: string }>
+      readThread: () => Promise<unknown>
       unarchive: () => Promise<void>
     }
   }
@@ -108,4 +142,43 @@ test("unarchives a native thread through the App Server", async () => {
     transport.requests.some((request) => request.method === "thread/unarchive"),
     true
   )
+})
+
+test("falls back to experimental turn listing when thread/read reports not loaded", async () => {
+  const sessionModule = await loadSessionModule()
+  const transport = createThreadReadFallbackTransport()
+  const session = sessionModule.createCodexAppServerSession({
+    request: transport.request,
+    notify: (method, params) => transport.requests.push({ method, params }),
+    workspacePath: "C:/workspace",
+    permissionMode: "full"
+  })
+
+  await session.start()
+  const result = await session.readThread()
+
+  assert.deepEqual(result, {
+    thread: {
+      id: "thread-read",
+      turns: [{ id: "turn-1", status: "completed", items: [] }]
+    }
+  })
+  assert.equal(transport.requests.at(-1)?.method, "thread/turns/list")
+})
+
+test("returns an empty thread before the first native user message", async () => {
+  const sessionModule = await loadSessionModule()
+  const transport = createEmptyThreadTransport()
+  const session = sessionModule.createCodexAppServerSession({
+    request: transport.request,
+    notify: (method, params) => transport.requests.push({ method, params }),
+    workspacePath: "C:/workspace",
+    permissionMode: "full"
+  })
+
+  await session.start()
+
+  assert.deepEqual(await session.readThread(), {
+    thread: { id: "thread-empty", turns: [] }
+  })
 })

@@ -25,10 +25,33 @@ export function createCodexAppServerSession(input) {
     },
 
     async readThread() {
-      return await input.request("thread/read", {
-        threadId: requireThreadId(),
-        includeTurns: true
-      })
+      const threadId = requireThreadId()
+      try {
+        return await input.request("thread/read", {
+          threadId,
+          includeTurns: true
+        })
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        if (/includeTurns is unavailable before first user message/i.test(message)) {
+          return { thread: { id: threadId, turns: [] } }
+        }
+        if (!/thread not loaded/i.test(message)) {
+          throw error
+        }
+        const turns = await input.request("thread/turns/list", {
+          threadId,
+          limit: 100,
+          sortDirection: "asc",
+          itemsView: "full"
+        })
+        return {
+          thread: {
+            id: threadId,
+            turns: turns?.data ?? []
+          }
+        }
+      }
     },
 
     async startTurn(content) {

@@ -515,7 +515,7 @@ Review only the feature diff for:
 - Confirmed delete behavior and replacement warnings.
 - Retry/idempotency not duplicating native turns.
 
-- [ ] **Step 3: Deploy the committed `dev` branch**
+- [x] **Step 3: Deploy the committed `dev` branch**
 
 Use the repository's existing Zeabur/dev deployment path. Verify the deployed revision is the feature commit and that `CODEX_BRIDGE_URL`, `CODEX_BRIDGE_TOKEN`, and site auth values are present without printing secret values.
 
@@ -533,11 +533,17 @@ Using `https://harness-framework-dev.zeabur.app/`:
 
 Use the supplied Zeabur service URL to inspect service revision, health, and deployment configuration. Do not delete production resources or modify unrelated services.
 
-- [ ] **Step 5: Write evidence and final review**
+- [x] **Step 5: Write evidence and final review**
 
 Record URLs, timestamps, non-secret statuses, screenshots or browser observations, test commands, and any residual risk in `docs/superpowers/evidence/2026-08-23-codex-thread-sync-dev.md`.
 
 - [ ] **Step 6: Commit verification evidence**
+
+> Status note: Harness-originated browser smoke, sidebar discovery, deployment health,
+> and the Codex active-writer recovery behavior were observed. The final post-fix
+> browser DOM snapshot was interrupted by the browser extension, so the last live
+> message-count assertion remains covered by the focused regression tests rather
+> than a fresh DOM capture.
 
 ```powershell
 git add docs/superpowers/evidence/2026-08-23-codex-thread-sync-dev.md

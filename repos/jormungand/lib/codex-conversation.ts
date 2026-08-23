@@ -96,6 +96,7 @@ export async function getCodexConversationState(
     }
     await repository.updateCodexSession({
       conversationId,
+      bridgeSessionId: session.bridgeSessionId,
       status: "offline",
       mappingState: "offline"
     })
@@ -109,7 +110,7 @@ export async function getCodexConversationState(
     }
   }
 
-  await syncConversation(repository, conversationId, bridgeState)
+  await syncConversation(repository, conversationId, bridgeState, session.bridgeSessionId)
   let bridgeThread: BridgeThreadResponse | undefined
   try {
     bridgeThread = await readBridgeThread(session.bridgeSessionId)
@@ -117,6 +118,7 @@ export async function getCodexConversationState(
     if (error instanceof CodexConversationError && error.status === 404) {
       await repository.updateCodexSession({
         conversationId,
+        bridgeSessionId: session.bridgeSessionId,
         status: "offline",
         mappingState: "replacement_pending"
       })
@@ -126,6 +128,7 @@ export async function getCodexConversationState(
     await syncNativeThread(repository, conversationId, bridgeThread.thread)
     await repository.updateCodexSession({
       conversationId,
+      bridgeSessionId: session.bridgeSessionId,
       mappingState: "active",
       nativeName: bridgeThread.thread.name ?? undefined,
       nativeCursor: latestNativeTurnId(bridgeThread.thread.turns),
@@ -212,10 +215,18 @@ export async function postCodexConversationMessage(input: {
   const requestContent = formatSharedConversationPrompt(delta.history)
 
   try {
-    await bridgeRequest(`/sessions/${encodeURIComponent(session.bridgeSessionId)}/turns`, {
+    const turnResult = await bridgeRequest(`/sessions/${encodeURIComponent(session.bridgeSessionId)}/turns`, {
       method: "POST",
       body: JSON.stringify({ content: requestContent })
     })
+    await recordHarnessTurnStart(
+      input.repository,
+      conversationId,
+      session,
+      userEntry,
+      turnResult,
+      requestContent
+    )
     codexConversationSync.markDelivered({
       key: syncKey,
       sessionIdentity,
@@ -223,6 +234,7 @@ export async function postCodexConversationMessage(input: {
     })
     await input.repository.updateCodexSession({
       conversationId,
+      bridgeSessionId: session.bridgeSessionId,
       status: "running",
       turnStatus: "inProgress"
     })
@@ -286,10 +298,18 @@ export async function dispatchCodexConversationEntry(input: {
   })
   const requestContent = formatSharedConversationPrompt(delta.history)
 
-  await bridgeRequest(`/sessions/${encodeURIComponent(session.bridgeSessionId)}/turns`, {
+  const turnResult = await bridgeRequest(`/sessions/${encodeURIComponent(session.bridgeSessionId)}/turns`, {
     method: "POST",
     body: JSON.stringify({ content: requestContent })
   })
+  await recordHarnessTurnStart(
+    input.repository,
+    input.conversationId,
+    session,
+    userEntry,
+    turnResult,
+    requestContent
+  )
   codexConversationSync.markDelivered({
     key: syncKey,
     sessionIdentity,
@@ -297,6 +317,7 @@ export async function dispatchCodexConversationEntry(input: {
   })
   await input.repository.updateCodexSession({
     conversationId: input.conversationId,
+    bridgeSessionId: session.bridgeSessionId,
     status: "running",
     turnStatus: "inProgress"
   })
@@ -374,6 +395,7 @@ export async function renameCodexConversationThread(
   })
   await repository.updateCodexSession({
     conversationId,
+    bridgeSessionId: session.bridgeSessionId,
     nativeName: name,
     mappingState: "active"
   })
@@ -393,6 +415,7 @@ export async function setCodexConversationThreadState(
   })
   await repository.updateCodexSession({
     conversationId,
+    bridgeSessionId: session.bridgeSessionId,
     mappingState: state
   })
 }
@@ -409,6 +432,7 @@ export async function deleteCodexConversationThread(
   })
   await repository.updateCodexSession({
     conversationId,
+    bridgeSessionId: session.bridgeSessionId,
     mappingState: "deleted"
   })
 }
@@ -475,7 +499,8 @@ async function ensureCodexSession(
 async function syncConversation(
   repository: HiveMemoryRepository,
   conversationId: string,
-  bridgeState: BridgeEventsResponse
+  bridgeState: BridgeEventsResponse,
+  bridgeSessionId: string
 ) {
   const entries = repository.listConversation(conversationId)
   const responseEntry = [...entries].reverse().find(
@@ -517,6 +542,7 @@ async function syncConversation(
   }
   await repository.updateCodexSession({
     conversationId,
+    bridgeSessionId,
     status: bridgeState.status,
     turnStatus: bridgeState.turnStatus,
     currentTurnId: bridgeState.currentTurnId,
@@ -572,14 +598,15 @@ async function syncNativeThread(
       conversationEntryId = inserted.entry.id
       nativeUserEntries.set(projected.nativeTurnId, conversationEntryId)
     } else {
-      const existingResponse = replyToId
-        ? repository.listConversation(conversationId).find(
-          (entry) => entry.id === replyToId && entry.role === "user"
-        )
-          ? repository.listConversation(conversationId).find(
-            (entry) => entry.role === "agent" && entry.replyToId === replyToId && entry.agentId === "codex"
-          )
-          : undefined
+      const conversationEntries = repository.listConversation(conversationId)
+      const fallbackReplyToId = [...conversationEntries]
+        .reverse()
+        .find((entry) => entry.role === "user")?.id
+      const responseReplyToId = replyToId ?? fallbackReplyToId
+      const existingResponse = responseReplyToId
+        ? [...conversationEntries]
+          .reverse()
+          .find((entry) => entry.role === "agent" && entry.replyToId === responseReplyToId && entry.agentId === "codex")
         : undefined
       if (existingResponse) {
         await repository.updateConversation({
@@ -596,7 +623,7 @@ async function syncNativeThread(
           content: projected.content,
           importance: "important",
           status: projected.status,
-          replyToId,
+          replyToId: responseReplyToId,
           artifactIds: [],
           memoryIds: [],
           idempotencyKey: projected.idempotencyKey
@@ -615,6 +642,62 @@ async function syncNativeThread(
       conversationEntryId,
       contentHash: projected.content
     })
+  }
+
+  await coalesceNativeAgentDuplicates(repository, conversationId, thread)
+}
+
+async function coalesceNativeAgentDuplicates(
+  repository: HiveMemoryRepository,
+  conversationId: string,
+  thread: NonNullable<BridgeThreadResponse["thread"]>
+) {
+  const entries = repository.listConversation(conversationId)
+  const ledgerItems = repository.listCodexSyncItems(conversationId)
+
+  for (const turn of thread.turns ?? []) {
+    const nativeAgentLedger = ledgerItems.filter((item) =>
+      item.nativeThreadId === thread.id &&
+      item.nativeTurnId === turn.id &&
+      item.kind === "agentMessage" &&
+      item.conversationEntryId
+    )
+    if (nativeAgentLedger.length < 1) continue
+
+    const nativeEntryIds = new Set(nativeAgentLedger.map((item) => item.conversationEntryId!))
+    const replyToIds = new Set(
+      entries
+        .filter((entry) => nativeEntryIds.has(entry.id))
+        .map((entry) => entry.replyToId)
+        .filter((id): id is string => Boolean(id))
+    )
+    const nativeContent = new Set(nativeAgentLedger.map((item) => normalizeContent(item.contentHash ?? "")))
+    const candidates = entries.filter((entry) =>
+      entry.role === "agent" &&
+      entry.agentId === "codex" &&
+      (
+        nativeEntryIds.has(entry.id) ||
+        (entry.replyToId !== undefined && replyToIds.has(entry.replyToId))
+      ) &&
+      nativeContent.has(normalizeContent(entry.content))
+    )
+    const byContent = new Map<string, ConversationEntry[]>()
+    for (const entry of candidates) {
+      const key = normalizeContent(entry.content)
+      const group = byContent.get(key) ?? []
+      group.push(entry)
+      byContent.set(key, group)
+    }
+
+    for (const group of byContent.values()) {
+      if (group.length < 2) continue
+      const preferred = group.find((entry) => entry.idempotencyKey.endsWith(":response")) ?? group[0]
+      for (const duplicate of group) {
+        if (duplicate.id !== preferred.id) {
+          await repository.mergeConversationEntries(preferred.id, duplicate.id)
+        }
+      }
+    }
   }
 }
 
@@ -715,6 +798,32 @@ function normalizeUrl(value: string) {
 
 function latestNativeTurnId(turns: NativeTurn[]) {
   return turns.at(-1)?.id
+}
+
+function normalizeContent(value: string) {
+  return value.trim().replace(/\s+/g, " ")
+}
+
+async function recordHarnessTurnStart(
+  repository: HiveMemoryRepository,
+  conversationId: string,
+  session: { codexThreadId: string },
+  userEntry: ConversationEntry,
+  turnResult: unknown,
+  requestContent: string
+) {
+  const turnId = (turnResult as { turn?: { id?: unknown } } | undefined)?.turn?.id
+  if (typeof turnId !== "string" || !turnId) return
+  await repository.recordCodexSyncItem({
+    conversationId,
+    nativeThreadId: session.codexThreadId,
+    nativeTurnId: turnId,
+    nativeItemId: `harness-user:${turnId}`,
+    source: "harness",
+    kind: "userMessage",
+    conversationEntryId: userEntry.id,
+    contentHash: requestContent
+  })
 }
 
 function codexThreadName(repository: HiveMemoryRepository, conversationId: string) {
