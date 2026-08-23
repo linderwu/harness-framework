@@ -373,3 +373,68 @@ test("creates a lineage-linked replacement only after native thread loss is conf
   assert.equal(repository.getCodexSession(conversationId)?.codexThreadId, "thread-replacement")
   assert.equal(repository.getCodexSession(conversationId)?.replacementOfThreadId, "thread-lost")
 })
+
+test("marks a deleted native thread replacement-pending without deleting Harness history", async (t) => {
+  const dataDir = await mkdtemp(join(tmpdir(), "jormungand-native-codex-pending-"))
+  const database = openHiveDatabase({ dataDir })
+  const repository = createHiveMemoryRepository(database)
+  const conversationId = "conversation:native-pending"
+  const entry = await repository.insertConversation({
+    workflowRunId: conversationId,
+    role: "user",
+    agentId: "codex",
+    content: "keep this history",
+    importance: "normal",
+    status: "completed",
+    artifactIds: [],
+    memoryIds: [],
+    idempotencyKey: "pending-history"
+  })
+  await repository.upsertCodexSession({
+    conversationId,
+    bridgeSessionId: "bridge-pending",
+    codexThreadId: "thread-deleted",
+    status: "idle",
+    turnStatus: "completed",
+    cursor: 0
+  })
+  t.after(async () => {
+    database.close()
+    await rm(dataDir, { recursive: true, force: true })
+  })
+
+  const previousBridgeUrl = process.env.CODEX_BRIDGE_URL
+  process.env.CODEX_BRIDGE_URL = "http://codex.test"
+  t.after(() => {
+    if (previousBridgeUrl === undefined) delete process.env.CODEX_BRIDGE_URL
+    else process.env.CODEX_BRIDGE_URL = previousBridgeUrl
+  })
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = async (input) => {
+    const url = String(input)
+    if (url.endsWith("/sessions/bridge-pending/events?after=0")) {
+      return jsonResponse({
+        id: "bridge-pending",
+        threadId: "thread-deleted",
+        status: "idle",
+        turnStatus: "completed",
+        cursor: 0,
+        events: [],
+        nextCursor: 0
+      })
+    }
+    if (url.endsWith("/sessions/bridge-pending/thread")) {
+      return jsonResponse({ error: "thread not found" }, 404)
+    }
+    throw new Error(`Unexpected fetch: ${url}`)
+  }
+  t.after(() => {
+    globalThis.fetch = originalFetch
+  })
+
+  const state = await getCodexConversationState(repository, conversationId)
+
+  assert.equal(state.session?.mappingState, "replacement_pending")
+  assert.match(state.session?.syncWarning ?? "", /replacement/i)
+  assert.equal(repository.listConversation(conversationId)[0]?.id, entry.entry.id)
+})

@@ -110,7 +110,18 @@ export async function getCodexConversationState(
   }
 
   await syncConversation(repository, conversationId, bridgeState)
-  const bridgeThread = await readBridgeThread(session.bridgeSessionId)
+  let bridgeThread: BridgeThreadResponse | undefined
+  try {
+    bridgeThread = await readBridgeThread(session.bridgeSessionId)
+  } catch (error) {
+    if (error instanceof CodexConversationError && error.status === 404) {
+      await repository.updateCodexSession({
+        conversationId,
+        status: "offline",
+        mappingState: "replacement_pending"
+      })
+    }
+  }
   if (bridgeThread?.thread?.turns) {
     await syncNativeThread(repository, conversationId, bridgeThread.thread)
     await repository.updateCodexSession({
@@ -412,7 +423,9 @@ async function ensureCodexSession(
     if (
       existingState &&
       existingState.status !== "stopped" &&
-      existingState.status !== "failed"
+      existingState.status !== "failed" &&
+      existing.mappingState !== "replacement_pending" &&
+      existing.mappingState !== "native_deleted"
     ) {
       return existing
     }
@@ -622,7 +635,8 @@ async function readBridgeThread(bridgeSessionId: string) {
       `/sessions/${encodeURIComponent(bridgeSessionId)}/thread`,
       { method: "GET" }
     )) as BridgeThreadResponse
-  } catch {
+  } catch (error) {
+    if (error instanceof CodexConversationError && error.status === 404) throw error
     return undefined
   }
 }
@@ -685,7 +699,11 @@ function toSessionState(
     nativeName: session.nativeName,
     nativeCursor: session.nativeCursor,
     lastSyncAt: session.lastSyncAt,
-    syncWarning: session.syncWarning,
+    syncWarning: session.mappingState === "replacement_pending"
+      ? "Native Codex thread unavailable; the next Codex message will create a replacement."
+      : session.replacementOfThreadId
+        ? `Native Codex thread replaced: ${session.replacementOfThreadId}`
+        : session.syncWarning,
     finalText: bridgeState?.finalText,
     liveText: bridgeState?.liveText
   }

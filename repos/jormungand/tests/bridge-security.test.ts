@@ -4,6 +4,7 @@ import test from "node:test"
 import { createPermissionModeText } from "../lib/context-builder"
 
 const codexBridgeSource = readFileSync("scripts/codex-bridge.mjs", "utf8")
+const codexAppServerSessionSource = readFileSync("scripts/codex-app-server-session.mjs", "utf8")
 const agentBridgeSource = readFileSync("lib/agent-bridge.ts", "utf8")
 const hiveServicesSource = readFileSync("lib/hive-services.ts", "utf8")
 const openClawBridgeSource = readFileSync(
@@ -131,15 +132,15 @@ test("Codex bridge source contracts full and restricted permission modes", () =>
   )
   assert.match(
     codexBridgeSource,
-    /--dangerously-bypass-approvals-and-sandbox/
+    /codex-app-server-session\.mjs/
   )
-  assert.match(codexBridgeSource, /danger-full-access/)
-  assert.match(codexBridgeSource, /dangerFullAccess/)
-  assert.match(codexBridgeSource, /approvalPolicy:\s*"never"/)
+  assert.match(codexAppServerSessionSource, /danger-full-access/)
+  assert.match(codexAppServerSessionSource, /dangerFullAccess/)
+  assert.match(codexAppServerSessionSource, /approvalPolicy:\s*"never"/)
   assert.match(agentBridgeSource, /permissionMode/)
-  assert.match(codexBridgeSource, /workspace-write/)
-  assert.match(codexBridgeSource, /writableRoots:\s*\[session\.workspacePath\]/)
-  assert.match(codexBridgeSource, /networkAccess:\s*false/)
+  assert.match(codexAppServerSessionSource, /workspace-write/)
+  assert.match(codexAppServerSessionSource, /writableRoots:\s*\[input\.workspacePath\]/)
+  assert.match(codexAppServerSessionSource, /networkAccess:\s*false/)
 })
 
 test("OpenClaw bridge accepts the compatibility token and enforces its local skill lock", () => {

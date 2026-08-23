@@ -46,9 +46,9 @@ async function loadSessionModule() {
 }
 
 test("resumes a persisted thread instead of starting a replacement", async () => {
-  const module = await loadSessionModule()
+  const sessionModule = await loadSessionModule()
   const transport = createRecordingTransport()
-  const session = module.createCodexAppServerSession({
+  const session = sessionModule.createCodexAppServerSession({
     request: transport.request,
     notify: (method, params) => transport.requests.push({ method, params }),
     workspacePath: "C:/workspace",
@@ -65,9 +65,9 @@ test("resumes a persisted thread instead of starting a replacement", async () =>
 })
 
 test("full mode applies danger full access without administrator elevation", async () => {
-  const module = await loadSessionModule()
+  const sessionModule = await loadSessionModule()
   const transport = createRecordingTransport()
-  const session = module.createCodexAppServerSession({
+  const session = sessionModule.createCodexAppServerSession({
     request: transport.request,
     notify: (method, params) => transport.requests.push({ method, params }),
     workspacePath: "C:/workspace",
@@ -91,9 +91,9 @@ test("full mode applies danger full access without administrator elevation", asy
 })
 
 test("unarchives a native thread through the App Server", async () => {
-  const module = await loadSessionModule()
+  const sessionModule = await loadSessionModule()
   const transport = createRecordingTransport()
-  const session = module.createCodexAppServerSession({
+  const session = sessionModule.createCodexAppServerSession({
     request: transport.request,
     notify: (method, params) => transport.requests.push({ method, params }),
     workspacePath: "C:/workspace",

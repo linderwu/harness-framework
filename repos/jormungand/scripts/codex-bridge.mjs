@@ -196,8 +196,8 @@ const server = http.createServer(async (request, response) => {
       if (request.method === "POST" && action === "name") {
         const payload = await readJson(request)
         const name = String(payload.name ?? "").trim()
-        if (!name) {
-          sendJson(response, 400, { error: "Codex thread name is required" })
+        if (!name || name.length > 120) {
+          sendJson(response, 400, { error: "Codex thread name must be between 1 and 120 characters" })
           return
         }
         await session.appServerSession.rename(name)
