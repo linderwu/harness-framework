@@ -152,6 +152,40 @@ export type ConversationStatus =
   | "failed"
 export type ConversationState = "active" | "archived"
 
+export type CodexMappingState =
+  | "active"
+  | "offline"
+  | "native_deleted"
+  | "replacement_pending"
+  | "archived"
+  | "deleted"
+
+export type CodexSyncSource = "harness" | "codex"
+
+export interface CodexSyncItem {
+  id: string
+  conversationId: string
+  nativeThreadId: string
+  nativeTurnId: string
+  nativeItemId: string
+  source: CodexSyncSource
+  kind: string
+  conversationEntryId?: string
+  contentHash?: string
+  createdAt: string
+}
+
+export interface RecordCodexSyncItemInput {
+  conversationId: string
+  nativeThreadId: string
+  nativeTurnId: string
+  nativeItemId: string
+  source: CodexSyncSource
+  kind: string
+  conversationEntryId?: string
+  contentHash?: string
+}
+
 export interface ConversationEntry {
   id: string
   workflowRunId: string

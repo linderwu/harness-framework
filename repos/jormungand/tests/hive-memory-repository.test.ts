@@ -237,7 +237,7 @@ test("schema v3 backfills conversation metadata from legacy entries and keeps un
     await rm(dataDir, { recursive: true, force: true })
   })
 
-  assert.equal(migratedDatabase.schemaVersion(), 6)
+  assert.equal(migratedDatabase.schemaVersion(), 7)
   const migrated = repository.getConversationMetadata("conversation:44444444-4444-4444-8444-444444444444")
   assert.ok(migrated)
   assert.equal(migrated.title, "This migrated title should be truncated to eighty characters exactly after white")
@@ -329,7 +329,7 @@ test("schema v4 migrates a v3 database and creates durable A2A tables", async (t
     await rm(dataDir, { recursive: true, force: true })
   })
 
-  assert.equal(database.schemaVersion(), 6)
+  assert.equal(database.schemaVersion(), 7)
   const tables = database.read((connection) =>
     connection.prepare(`
       SELECT name
