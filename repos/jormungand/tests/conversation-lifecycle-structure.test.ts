@@ -809,7 +809,7 @@ test("queued bound Codex routing still uses the workflow manager conversation sk
 })
 
 test("unbound direct redispatch preserves the persisted entry idempotency key", async (t) => {
-  const { database, repository } = await repositoryFixture(t)
+  const { repository } = await repositoryFixture(t)
   const capturedInputs: AgentInvocationInput[] = []
   const entry = {
     id: "entry-redispatch",
