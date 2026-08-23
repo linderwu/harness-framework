@@ -1119,7 +1119,6 @@ test("unbound OpenClaw direct routing keeps bootstrap pending after failed first
   assert.equal(afterFailure?.bootstrapDelivered, false)
   assert.equal(afterFailure?.lastDeliveredEntryId, undefined)
 
-  const retryExistingEntries = repository.listConversation("conversation-failure")
   const retriedTurn = await services.conversation.postUnboundMessage({
     conversationId: "conversation-failure",
     targetAgent: "openclaw.gengar",
@@ -1130,13 +1129,13 @@ test("unbound OpenClaw direct routing keeps bootstrap pending after failed first
     "conversation-failure",
     "openclaw.gengar"
   )
+  const retryHistoryEntries = repository
+    .listConversation("conversation-failure")
+    .filter((entry) => entry.id !== retriedTurn.responseEntry?.id)
 
   assert.deepEqual(
     capturedInputs[1]?.conversationHistory,
-    buildSharedConversationHistory([
-      ...retryExistingEntries,
-      retriedTurn.userEntry
-    ])
+    buildSharedConversationHistory(retryHistoryEntries)
   )
   assert.equal(afterRetry?.state, "active")
   assert.equal(afterRetry?.bootstrapDelivered, true)
