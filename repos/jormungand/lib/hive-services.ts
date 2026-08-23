@@ -7,9 +7,12 @@ import {
   ConversationDispatcher,
   ConversationQueueService
 } from "./conversation-dispatcher"
-import { buildSharedConversationHistory } from "./conversation-history"
+import {
+  buildSharedConversationHistory,
+  sharedConversationHistoryLimit
+} from "./conversation-history"
 import { ConversationHistorySync } from "./conversation-history-sync"
-import { dispatchCodexConversationEntry, getCodexConversationState } from "./codex-conversation"
+import { getCodexConversationState } from "./codex-conversation"
 import { createCodexSyncWorker } from "./codex-sync-worker"
 import { createContextBuilder, createPermissionModeText } from "./context-builder"
 import { openHiveDatabase, type HiveDatabase } from "./hive-memory/database"
@@ -194,15 +197,6 @@ export function createHiveServices(options: HiveServicesOptions = {}) {
     }
   })
   const conversationDispatcher = new ConversationDispatcher(repository, async (input) => {
-    const run = await getRun(input.conversationId)
-    if (!run && input.targetAgent === "codex") {
-      return dispatchCodexConversationEntry({
-        repository,
-        conversationId: input.conversationId,
-        userEntryId: input.userEntry.id,
-        responseEntryId: input.responseEntry?.id
-      })
-    }
     return conversation.dispatchQueuedEntry(input)
   })
   const codexSyncWorker = createCodexSyncWorker({
@@ -349,7 +343,11 @@ function createDirectExecutionSkill(targetAgent: AgentKind): WorkflowEventSkill 
 function buildShareableConversationHistory(
   entries: Array<Pick<ConversationEntry, "id" | "role" | "agentId" | "content">>
 ) {
-  return buildSharedConversationHistory(entries.filter(isShareableConversationEntry))
+  return buildSharedConversationHistory(
+    entries
+      .slice(-sharedConversationHistoryLimit)
+      .filter(isShareableConversationEntry)
+  )
 }
 
 async function routeDirectOpenClawConversation(input: {
@@ -398,7 +396,9 @@ async function routeDirectOpenClawConversation(input: {
       ? existingState?.lastDeliveredEntryId
       : undefined
   })
-  const currentUserEntryId = input.entries.at(-1)?.id
+  const currentUserEntryId = input.entries
+    .findLast((entry) => entry.role === "user")
+    ?.id
   const result = await input.invokeAgent({
     run: syntheticRun,
     executor: input.targetAgent,

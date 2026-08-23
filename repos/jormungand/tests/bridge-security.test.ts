@@ -71,6 +71,11 @@ test("unbound conversation source contracts direct agent execution", () => {
   )
   assert.doesNotMatch(hiveServicesSource, /conversation\.unbound_limited/)
   assert.doesNotMatch(hiveServicesSource, /Recent conversation:/)
+  assert.match(hiveServicesSource, /slice\(-sharedConversationHistoryLimit\)/)
+  assert.doesNotMatch(
+    hiveServicesSource,
+    /if \(!run && input\.targetAgent === "codex"\)/
+  )
 })
 
 test("permission mode text returns runtime full and restricted prompt wording", () => {
