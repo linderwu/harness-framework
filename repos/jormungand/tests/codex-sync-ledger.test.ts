@@ -81,3 +81,25 @@ test("records the Harness entry attached to an imported native item", async (t) 
   assert.equal(result.item.conversationEntryId, "entry-2")
   assert.equal(result.item.source, "harness")
 })
+
+test("stale Bridge status cannot overwrite a newer replacement mapping", async (t) => {
+  const { repository } = await repositoryFixture(t)
+  await repository.upsertCodexSession({
+    conversationId: "conversation:race",
+    bridgeSessionId: "bridge-new",
+    codexThreadId: "thread-new",
+    status: "running",
+    turnStatus: "inProgress",
+    mappingState: "active"
+  })
+
+  await repository.updateCodexSession({
+    conversationId: "conversation:race",
+    bridgeSessionId: "bridge-old",
+    status: "offline",
+    mappingState: "replacement_pending"
+  })
+
+  assert.equal(repository.getCodexSession("conversation:race")?.bridgeSessionId, "bridge-new")
+  assert.equal(repository.getCodexSession("conversation:race")?.mappingState, "active")
+})

@@ -29,6 +29,7 @@ export function createCodexSyncWorker(input: {
         } catch {
           await input.repository.updateCodexSession({
             conversationId: session.conversationId,
+            bridgeSessionId: session.bridgeSessionId,
             status: "offline",
             mappingState: "offline"
           })

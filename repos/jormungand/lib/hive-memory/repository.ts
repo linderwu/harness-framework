@@ -1394,6 +1394,7 @@ export class HiveMemoryRepository {
 
   async updateCodexSession(input: {
     conversationId: string
+    bridgeSessionId?: string
     status?: string
     turnStatus?: string
     currentTurnId?: string
@@ -1418,6 +1419,7 @@ export class HiveMemoryRepository {
           last_sync_at = COALESCE(?, last_sync_at),
           updated_at = ?
         WHERE conversation_id = ?
+          AND (? IS NULL OR bridge_session_id = ?)
       `).run(
         input.status ?? null,
         input.turnStatus ?? null,
@@ -1429,7 +1431,9 @@ export class HiveMemoryRepository {
         input.nativeCursor ?? null,
         input.lastSyncAt ?? null,
         new Date().toISOString(),
-        input.conversationId
+        input.conversationId,
+        input.bridgeSessionId ?? null,
+        input.bridgeSessionId ?? null
       )
     })
     return this.getCodexSession(input.conversationId)

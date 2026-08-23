@@ -96,6 +96,7 @@ export async function getCodexConversationState(
     }
     await repository.updateCodexSession({
       conversationId,
+      bridgeSessionId: session.bridgeSessionId,
       status: "offline",
       mappingState: "offline"
     })
@@ -109,7 +110,7 @@ export async function getCodexConversationState(
     }
   }
 
-  await syncConversation(repository, conversationId, bridgeState)
+  await syncConversation(repository, conversationId, bridgeState, session.bridgeSessionId)
   let bridgeThread: BridgeThreadResponse | undefined
   try {
     bridgeThread = await readBridgeThread(session.bridgeSessionId)
@@ -117,6 +118,7 @@ export async function getCodexConversationState(
     if (error instanceof CodexConversationError && error.status === 404) {
       await repository.updateCodexSession({
         conversationId,
+        bridgeSessionId: session.bridgeSessionId,
         status: "offline",
         mappingState: "replacement_pending"
       })
@@ -126,6 +128,7 @@ export async function getCodexConversationState(
     await syncNativeThread(repository, conversationId, bridgeThread.thread)
     await repository.updateCodexSession({
       conversationId,
+      bridgeSessionId: session.bridgeSessionId,
       mappingState: "active",
       nativeName: bridgeThread.thread.name ?? undefined,
       nativeCursor: latestNativeTurnId(bridgeThread.thread.turns),
@@ -223,6 +226,7 @@ export async function postCodexConversationMessage(input: {
     })
     await input.repository.updateCodexSession({
       conversationId,
+      bridgeSessionId: session.bridgeSessionId,
       status: "running",
       turnStatus: "inProgress"
     })
@@ -297,6 +301,7 @@ export async function dispatchCodexConversationEntry(input: {
   })
   await input.repository.updateCodexSession({
     conversationId: input.conversationId,
+    bridgeSessionId: session.bridgeSessionId,
     status: "running",
     turnStatus: "inProgress"
   })
@@ -374,6 +379,7 @@ export async function renameCodexConversationThread(
   })
   await repository.updateCodexSession({
     conversationId,
+    bridgeSessionId: session.bridgeSessionId,
     nativeName: name,
     mappingState: "active"
   })
@@ -393,6 +399,7 @@ export async function setCodexConversationThreadState(
   })
   await repository.updateCodexSession({
     conversationId,
+    bridgeSessionId: session.bridgeSessionId,
     mappingState: state
   })
 }
@@ -409,6 +416,7 @@ export async function deleteCodexConversationThread(
   })
   await repository.updateCodexSession({
     conversationId,
+    bridgeSessionId: session.bridgeSessionId,
     mappingState: "deleted"
   })
 }
@@ -475,7 +483,8 @@ async function ensureCodexSession(
 async function syncConversation(
   repository: HiveMemoryRepository,
   conversationId: string,
-  bridgeState: BridgeEventsResponse
+  bridgeState: BridgeEventsResponse,
+  bridgeSessionId: string
 ) {
   const entries = repository.listConversation(conversationId)
   const responseEntry = [...entries].reverse().find(
@@ -517,6 +526,7 @@ async function syncConversation(
   }
   await repository.updateCodexSession({
     conversationId,
+    bridgeSessionId,
     status: bridgeState.status,
     turnStatus: bridgeState.turnStatus,
     currentTurnId: bridgeState.currentTurnId,
