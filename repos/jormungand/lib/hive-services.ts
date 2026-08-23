@@ -348,8 +348,8 @@ function buildShareableConversationHistory(
 ) {
   return buildSharedConversationHistory(
     entries
-      .slice(-sharedConversationHistoryLimit)
       .filter(isShareableConversationEntry)
+      .slice(-sharedConversationHistoryLimit)
   )
 }
 

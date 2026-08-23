@@ -35,7 +35,7 @@ test("persists Codex mapping state and native thread name across database restar
   assert.equal(session?.mappingState, "active")
   assert.equal(session?.nativeName, "Harness · Sync")
   assert.equal(session?.nativeCursor, "turn-1")
-  assert.equal(database.schemaVersion(), 7)
+  assert.equal(database.schemaVersion(), 8)
 })
 
 test("records one native item once by thread, turn, and item identity", async (t) => {

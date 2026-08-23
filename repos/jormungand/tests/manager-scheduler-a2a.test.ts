@@ -85,6 +85,17 @@ test("schema v5 adds recipient_agent and preserves conversation rows while round
       idempotency_key TEXT NOT NULL UNIQUE,
       created_at TEXT NOT NULL
     );
+    CREATE TABLE codex_sessions (
+      conversation_id TEXT PRIMARY KEY,
+      bridge_session_id TEXT NOT NULL UNIQUE,
+      codex_thread_id TEXT NOT NULL,
+      status TEXT NOT NULL,
+      turn_status TEXT NOT NULL,
+      current_turn_id TEXT,
+      cursor INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
   `)
   for (const version of [1, 2, 3, 4]) {
     seed.prepare("INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)")
@@ -119,7 +130,7 @@ test("schema v5 adds recipient_agent and preserves conversation rows while round
     await rm(dataDir, { recursive: true, force: true })
   })
 
-  assert.equal(database.schemaVersion(), 6)
+  assert.equal(database.schemaVersion(), 8)
   const migratedColumns = database.read((connection) =>
     connection.prepare("PRAGMA table_info(conversation_entries)").all() as Array<{ name: string }>
   )

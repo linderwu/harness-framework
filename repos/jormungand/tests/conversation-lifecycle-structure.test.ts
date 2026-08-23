@@ -865,6 +865,7 @@ test("unbound OpenClaw direct routing bounds first bootstrap history to the newe
       }
     }
   })
+  const waitForConversationOrder = () => new Promise<void>((resolve) => setTimeout(resolve, 2))
 
   for (let index = 1; index <= 24; index += 1) {
     await repository.insertConversation({
@@ -878,18 +879,22 @@ test("unbound OpenClaw direct routing bounds first bootstrap history to the newe
       memoryIds: [],
       idempotencyKey: `conversation:bootstrap-bounded:shareable-${index}`
     })
+    await waitForConversationOrder()
+    if (index % 4 === 0) {
+      await repository.insertConversation({
+        workflowRunId: "conversation:bootstrap-bounded",
+        role: "system",
+        agentId: "codex",
+        content: `system-${index} is not shareable`,
+        importance: "normal",
+        status: "completed",
+        artifactIds: [],
+        memoryIds: [],
+        idempotencyKey: `conversation:bootstrap-bounded:system-${index}`
+      })
+      await waitForConversationOrder()
+    }
   }
-  await repository.insertConversation({
-    workflowRunId: "conversation:bootstrap-bounded",
-    role: "system",
-    agentId: "codex",
-    content: "system entries are not shareable",
-    importance: "normal",
-    status: "completed",
-    artifactIds: [],
-    memoryIds: [],
-    idempotencyKey: "conversation:bootstrap-bounded:system"
-  })
 
   const existingEntries = repository.listConversation("conversation:bootstrap-bounded")
   const result = await services.conversation.postUnboundMessage({
@@ -900,15 +905,21 @@ test("unbound OpenClaw direct routing bounds first bootstrap history to the newe
   })
   const bootstrapHistory = capturedInputs[0]?.conversationHistory
   const expectedBootstrap = buildSharedConversationHistory(
-    [...existingEntries, result.userEntry].slice(-sharedConversationHistoryLimit)
+    [...existingEntries, result.userEntry]
+      .filter((entry) => entry.role === "user" || entry.role === "agent" || entry.role === "manager")
+      .slice(-sharedConversationHistoryLimit)
   )
 
   assert.equal(capturedInputs.length, 1)
-  assert.ok((bootstrapHistory?.length ?? 0) <= sharedConversationHistoryLimit)
+  assert.equal(bootstrapHistory?.length, sharedConversationHistoryLimit)
   assert.deepEqual(bootstrapHistory, expectedBootstrap)
   assert.equal(
     bootstrapHistory?.some((entry) => entry.content.endsWith("shareable-1")),
     false
+  )
+  assert.equal(
+    bootstrapHistory?.some((entry) => entry.content.endsWith("shareable-6")),
+    true
   )
   assert.equal(
     bootstrapHistory?.some((entry) => entry.content.endsWith("shareable-24")),
