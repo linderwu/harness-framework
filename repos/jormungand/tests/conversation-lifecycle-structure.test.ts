@@ -16,11 +16,16 @@ import {
 } from "../lib/conversation"
 import { ConversationHistorySync } from "../lib/conversation-history-sync"
 import {
+  buildSharedConversationHistory,
+  sharedConversationHistoryLimit
+} from "../lib/conversation-history"
+import {
   getCodexConversationState,
   postCodexConversationMessage
 } from "../lib/codex-conversation"
 import {
   createHiveServices,
+  routeOpenClawUnboundConversation,
   routeUnboundConversation
 } from "../lib/hive-services"
 import { openHiveDatabase } from "../lib/hive-memory/database"
@@ -30,6 +35,7 @@ import type { WorkflowRun } from "../lib/types"
 import { createWorkflowRun } from "../lib/workflow"
 
 const openClawBridgeSource = readFileSync("scripts/openclaw-bridge.mjs", "utf8")
+const agentBridgeSource = readFileSync("lib/agent-bridge.ts", "utf8")
 
 interface ConversationSummary {
   conversationId: string
@@ -107,12 +113,22 @@ function jsonResponse(body: unknown, status = 200) {
   })
 }
 
-function assertUnrestrictedUnboundSkill(skill: Pick<WorkflowEventSkill, "id" | "constraints" | "gates">) {
-  assert.equal(skill.id, "conversation.unbound")
-  for (const clause of [...skill.constraints, ...skill.gates]) {
+function assertDirectExecutionSkill(
+  skill: Pick<WorkflowEventSkill, "id" | "purpose" | "constraints" | "gates">
+) {
+  assert.equal(skill.id, "conversation.direct_execution")
+  assert.match(
+    skill.purpose,
+    /directly without requiring project or workflow binding/i
+  )
+  assert.match(
+    skill.gates.join("\n"),
+    /Server authentication and bridge authorization remain required/i
+  )
+  for (const clause of [skill.purpose, ...skill.constraints, ...skill.gates]) {
     assert.doesNotMatch(
       clause,
-      /external systems|irreversible actions|read-only|project binding|manager routing/i
+      /project-binding|manager-routing|external-action|irreversible-action|read-only/i
     )
   }
 }
@@ -647,7 +663,7 @@ test("Codex cursor updates stay monotonic and state exposes the persisted effect
   assert.equal(state.nextCursor, 7)
 })
 
-test("unbound Codex routing dispatches directly to Codex with unrestricted conversation skill context", async (t) => {
+test("unbound Codex routing dispatches directly to Codex with direct execution skill context", async (t) => {
   const { database, repository } = await repositoryFixture(t)
   const capturedInputs: AgentInvocationInput[] = []
   const services = createHiveServices({
@@ -683,7 +699,8 @@ test("unbound Codex routing dispatches directly to Codex with unrestricted conve
   const invocation = capturedInputs[0]
   assert.equal(invocation?.executor, "codex")
   assert.equal(invocation?.conversationId, conversationId)
-  assert.equal(invocation?.skill.id, "conversation.unbound")
+  assert.equal(invocation?.idempotencyKey, "conversation:direct-codex:codex-unbound-direct")
+  assert.equal(invocation?.skill.id, "conversation.direct_execution")
   assert.equal(
     invocation?.conversationHistory?.some(
       (entry) => entry.role === "user"
@@ -692,12 +709,603 @@ test("unbound Codex routing dispatches directly to Codex with unrestricted conve
     ),
     true
   )
-  assertUnrestrictedUnboundSkill(invocation.skill)
+  assertDirectExecutionSkill(invocation.skill)
+})
+
+test("queued unbound Codex routing drains through direct execution instead of Codex session dispatch", async (t) => {
+  const { database, repository } = await repositoryFixture(t)
+  const capturedInputs: AgentInvocationInput[] = []
+  const services = createHiveServices({
+    database,
+    repository,
+    startCodexSyncWorker: false,
+    listProjects: async () => {
+      throw new Error("listProjects should not be called for queued unbound Codex conversations")
+    },
+    listWorkflowRuns: async () => {
+      throw new Error("listWorkflowRuns should not be called for queued unbound Codex conversations")
+    },
+    invokeAgent: async (input) => {
+      capturedInputs.push(input)
+      return {
+        status: "completed",
+        source: "simulated",
+        body: "Queued direct Codex reply"
+      }
+    }
+  })
+
+  const queued = await services.conversation.enqueueUnboundMessage({
+    conversationId: "conversation:queued-codex",
+    targetAgent: "codex",
+    content: "Drain this queued unbound Codex message directly.",
+    idempotencyKey: "queued-unbound-codex"
+  })
+  await services.conversationDispatcher.drain("conversation:queued-codex")
+
+  if (!("status" in queued)) {
+    assert.fail("Queued unbound conversation should return a queue status.")
+  }
+  assert.equal(queued.status, "queued")
+  assert.equal(capturedInputs.length, 1)
+  assert.equal(capturedInputs[0]?.executor, "codex")
+  assert.equal(capturedInputs[0]?.conversationId, "conversation:queued-codex")
+  assert.equal(
+    capturedInputs[0]?.idempotencyKey,
+    "conversation:queued-codex:queued-unbound-codex"
+  )
+  assertDirectExecutionSkill(capturedInputs[0]!.skill)
+
+  const storedUser = repository.getConversationByIdempotencyKey(
+    "conversation:queued-codex:queued-unbound-codex"
+  )
+  const storedResponse = repository.getConversationByIdempotencyKey(
+    "conversation:queued-codex:queued-unbound-codex:response"
+  )
+  assert.equal(storedUser?.status, "completed")
+  assert.equal(storedResponse?.content, "Queued direct Codex reply")
+  assert.equal(storedResponse?.status, "completed")
+})
+
+test("queued bound Codex routing still uses the workflow manager conversation skill", async (t) => {
+  const { database, repository } = await repositoryFixture(t)
+  let persistedRun = createRun()
+  const capturedInputs: AgentInvocationInput[] = []
+  const services = createHiveServices({
+    database,
+    repository,
+    startCodexSyncWorker: false,
+    getRun: async (id) => (id === persistedRun.id ? persistedRun : undefined),
+    saveRun: async (run) => {
+      persistedRun = run
+      return run
+    },
+    invokeAgent: async (input) => {
+      capturedInputs.push(input)
+      return {
+        status: "completed",
+        source: "simulated",
+        body: "Bound Codex manager reply"
+      }
+    }
+  })
+
+  const queued = await services.conversation.enqueueMessage({
+    workflowRunId: persistedRun.id,
+    targetAgent: "codex",
+    content: "Handle this inside the active workflow.",
+    idempotencyKey: "queued-bound-codex"
+  })
+  await services.conversationDispatcher.drain(persistedRun.id)
+
+  if (!("status" in queued)) {
+    assert.fail("Queued workflow conversation should return a queue status.")
+  }
+  assert.equal(queued.status, "queued")
+  assert.equal(capturedInputs.length, 1)
+  assert.equal(capturedInputs[0]?.executor, "codex")
+  assert.equal(capturedInputs[0]?.skill.id, "hive_manager.operator_message")
+  assert.equal(capturedInputs[0]?.conversationId, undefined)
+})
+
+test("unbound direct redispatch preserves the persisted entry idempotency key", async (t) => {
+  const { repository } = await repositoryFixture(t)
+  const capturedInputs: AgentInvocationInput[] = []
+  const entry = {
+    id: "entry-redispatch",
+    role: "user" as const,
+    agentId: "codex" as const,
+    content: "Redispatch this persisted entry."
+  }
+  const routeInput = {
+    repository,
+    conversationId: "conversation:redispatch",
+    targetAgent: "codex" as const,
+    content: entry.content,
+    entries: [entry],
+    idempotencyKey: "conversation:redispatch:entry-redispatch",
+    invokeAgent: async (input: AgentInvocationInput) => {
+      capturedInputs.push(input)
+      return {
+        status: "completed" as const,
+        source: "simulated" as const,
+        body: "Direct response"
+      }
+    }
+  }
+
+  await routeUnboundConversation(routeInput)
+  await routeUnboundConversation(routeInput)
+
+  assert.deepEqual(
+    capturedInputs.map((input) => input.idempotencyKey),
+    ["conversation:redispatch:entry-redispatch", "conversation:redispatch:entry-redispatch"]
+  )
+})
+
+test("unbound OpenClaw direct routing bounds first bootstrap history to the newest 20 shareable entries", async (t) => {
+  const { database, repository } = await repositoryFixture(t)
+  const capturedInputs: AgentInvocationInput[] = []
+  const services = createHiveServices({
+    database,
+    repository,
+    startCodexSyncWorker: false,
+    listProjects: async () => {
+      throw new Error("listProjects should not be called for unbound OpenClaw conversations")
+    },
+    listWorkflowRuns: async () => {
+      throw new Error("listWorkflowRuns should not be called for unbound OpenClaw conversations")
+    },
+    invokeAgent: async (input) => {
+      capturedInputs.push(input)
+      return {
+        status: "completed",
+        source: "simulated",
+        body: "Bounded OpenClaw bootstrap reply"
+      }
+    }
+  })
+  const waitForConversationOrder = () => new Promise<void>((resolve) => setTimeout(resolve, 2))
+
+  for (let index = 1; index <= 24; index += 1) {
+    await repository.insertConversation({
+      workflowRunId: "conversation:bootstrap-bounded",
+      role: index % 2 === 0 ? "manager" : "user",
+      agentId: index % 2 === 0 ? "codex" : "openclaw.gengar",
+      content: `shareable-${index}`,
+      importance: "important",
+      status: "completed",
+      artifactIds: [],
+      memoryIds: [],
+      idempotencyKey: `conversation:bootstrap-bounded:shareable-${index}`
+    })
+    await waitForConversationOrder()
+    if (index % 4 === 0) {
+      await repository.insertConversation({
+        workflowRunId: "conversation:bootstrap-bounded",
+        role: "system",
+        agentId: "codex",
+        content: `system-${index} is not shareable`,
+        importance: "normal",
+        status: "completed",
+        artifactIds: [],
+        memoryIds: [],
+        idempotencyKey: `conversation:bootstrap-bounded:system-${index}`
+      })
+      await waitForConversationOrder()
+    }
+  }
+
+  const existingEntries = repository.listConversation("conversation:bootstrap-bounded")
+  const result = await services.conversation.postUnboundMessage({
+    conversationId: "conversation:bootstrap-bounded",
+    targetAgent: "openclaw.gengar",
+    content: "Use only the bounded newest bootstrap history.",
+    idempotencyKey: "conversation:bootstrap-bounded:first"
+  })
+  const bootstrapHistory = capturedInputs[0]?.conversationHistory
+  const expectedBootstrap = buildSharedConversationHistory(
+    [...existingEntries, result.userEntry]
+      .filter((entry) => entry.role === "user" || entry.role === "agent" || entry.role === "manager")
+      .slice(-sharedConversationHistoryLimit)
+  )
+
+  assert.equal(capturedInputs.length, 1)
+  assert.equal(bootstrapHistory?.length, sharedConversationHistoryLimit)
+  assert.deepEqual(bootstrapHistory, expectedBootstrap)
+  assert.equal(
+    bootstrapHistory?.some((entry) => entry.content.endsWith("shareable-1")),
+    false
+  )
+  assert.equal(
+    bootstrapHistory?.some((entry) => entry.content.endsWith("shareable-6")),
+    true
+  )
+  assert.equal(
+    bootstrapHistory?.some((entry) => entry.content.endsWith("shareable-24")),
+    true
+  )
+  assert.equal(
+    bootstrapHistory?.at(-1)?.content,
+    "[openclaw.gengar] Use only the bounded newest bootstrap history."
+  )
+})
+
+test("unbound OpenClaw direct routing persists per-agent runtime state and skips bootstrap after first success", async (t) => {
+  const { database, repository } = await repositoryFixture(t)
+  const capturedInputs: AgentInvocationInput[] = []
+  const services = createHiveServices({
+    database,
+    repository,
+    listProjects: async () => {
+      throw new Error("listProjects should not be called for unbound OpenClaw conversations")
+    },
+    listWorkflowRuns: async () => {
+      throw new Error("listWorkflowRuns should not be called for unbound OpenClaw conversations")
+    },
+    invokeAgent: async (input) => {
+      capturedInputs.push(input)
+      return {
+        status: "completed",
+        source: "simulated",
+        body: `Direct reply ${capturedInputs.length}`
+      }
+    }
+  })
+
+  await repository.insertConversation({
+    workflowRunId: "conversation-runtime",
+    role: "manager",
+    agentId: "codex",
+    content: "Earlier manager note",
+    importance: "important",
+    status: "completed",
+    artifactIds: [],
+    memoryIds: [],
+    idempotencyKey: "conversation-runtime:seed-manager"
+  })
+  await repository.insertConversation({
+    workflowRunId: "conversation-runtime",
+    role: "system",
+    agentId: "codex",
+    content: "System messages must not be shared as bootstrap history",
+    importance: "normal",
+    status: "completed",
+    artifactIds: [],
+    memoryIds: [],
+    idempotencyKey: "conversation-runtime:seed-system"
+  })
+
+  const first = await services.conversation.postUnboundMessage({
+    conversationId: "conversation-runtime",
+    targetAgent: "openclaw.gengar",
+    content: "First persistent turn",
+    idempotencyKey: "conversation-runtime:first"
+  })
+  const firstRuntime = repository.getOpenClawRuntimeSession(
+    "conversation-runtime",
+    "openclaw.gengar"
+  )
+
+  assert.equal(capturedInputs[0]?.conversationHistory?.length, 2)
+  assert.equal(
+    capturedInputs[0]?.conversationHistory?.some(
+      (entry) => entry.content === "[codex] Earlier manager note"
+    ),
+    true
+  )
+  assert.equal(
+    capturedInputs[0]?.conversationHistory?.some(
+      (entry) => entry.content === "[openclaw.gengar] First persistent turn"
+    ),
+    true
+  )
+  assert.equal(
+    capturedInputs[0]?.conversationHistory?.some(
+      (entry) => entry.content.includes("System messages must not be shared")
+    ),
+    false
+  )
+  assertDirectExecutionSkill(capturedInputs[0]!.skill)
+  assert.equal(firstRuntime?.state, "active")
+  assert.equal(firstRuntime?.sessionNamespace, "harness-direct-v1")
+  assert.equal(firstRuntime?.bootstrapDelivered, true)
+  assert.equal(firstRuntime?.lastDeliveredEntryId, first.userEntry.id)
+  assert.match(firstRuntime?.sessionKeyFingerprint ?? "", /^sha256:[0-9a-f]{64}$/)
+
+  const firstFingerprint = firstRuntime?.sessionKeyFingerprint
+  const second = await services.conversation.postUnboundMessage({
+    conversationId: "conversation-runtime",
+    targetAgent: "openclaw.gengar",
+    content: "Second turn should reuse the persistent transcript",
+    idempotencyKey: "conversation-runtime:second"
+  })
+  const secondRuntime = repository.getOpenClawRuntimeSession(
+    "conversation-runtime",
+    "openclaw.gengar"
+  )
+
+  assert.equal(capturedInputs[1]?.conversationHistory, undefined)
+  assert.equal(secondRuntime?.state, "active")
+  assert.equal(secondRuntime?.bootstrapDelivered, true)
+  assert.equal(secondRuntime?.lastDeliveredEntryId, second.userEntry.id)
+  assert.equal(secondRuntime?.sessionKeyFingerprint, firstFingerprint)
+
+  const rowlet = await services.conversation.postUnboundMessage({
+    conversationId: "conversation-runtime",
+    targetAgent: "openclaw.rowlet",
+    content: "Different agent gets its own bootstrap",
+    idempotencyKey: "conversation-runtime:rowlet"
+  })
+  const rowletRuntime = repository.getOpenClawRuntimeSession(
+    "conversation-runtime",
+    "openclaw.rowlet"
+  )
+
+  assert.equal(
+    capturedInputs[2]?.conversationHistory?.some(
+      (entry) => entry.content === "[openclaw.rowlet] Different agent gets its own bootstrap"
+    ),
+    true
+  )
+  assert.equal(
+    capturedInputs[2]?.conversationHistory?.some(
+      (entry) => entry.content.includes("System messages must not be shared")
+    ),
+    false
+  )
+  assert.equal(rowletRuntime?.bootstrapDelivered, true)
+  assert.equal(rowletRuntime?.lastDeliveredEntryId, rowlet.userEntry.id)
+  assert.notEqual(rowletRuntime?.sessionKeyFingerprint, firstFingerprint)
+
+  const otherConversation = await services.conversation.postUnboundMessage({
+    conversationId: "conversation-other",
+    targetAgent: "openclaw.gengar",
+    content: "Different conversation gets an isolated runtime row",
+    idempotencyKey: "conversation-other:first"
+  })
+  const otherRuntime = repository.getOpenClawRuntimeSession(
+    "conversation-other",
+    "openclaw.gengar"
+  )
+
+  assert.deepEqual(
+    capturedInputs[3]?.conversationHistory,
+    buildSharedConversationHistory([otherConversation.userEntry])
+  )
+  assert.equal(otherRuntime?.bootstrapDelivered, true)
+  assert.equal(otherRuntime?.lastDeliveredEntryId, otherConversation.userEntry.id)
+  assert.notEqual(otherRuntime?.sessionKeyFingerprint, firstFingerprint)
+})
+
+test("unbound OpenClaw direct routing keeps bootstrap pending after failed first delivery", async (t) => {
+  const { database, repository } = await repositoryFixture(t)
+  const capturedInputs: AgentInvocationInput[] = []
+  const services = createHiveServices({
+    database,
+    repository,
+    listProjects: async () => {
+      throw new Error("listProjects should not be called for unbound OpenClaw conversations")
+    },
+    listWorkflowRuns: async () => {
+      throw new Error("listWorkflowRuns should not be called for unbound OpenClaw conversations")
+    },
+    invokeAgent: async (input) => {
+      capturedInputs.push(input)
+      return {
+        status: capturedInputs.length === 1 ? "failed" : "completed",
+        source: "simulated",
+        body: `Direct reply ${capturedInputs.length}`
+      }
+    }
+  })
+
+  const failedFirstTurn = await services.conversation.postUnboundMessage({
+    conversationId: "conversation-failure",
+    targetAgent: "openclaw.gengar",
+    content: "The first direct delivery should fail",
+    idempotencyKey: "conversation-failure:first"
+  })
+  const afterFailure = repository.getOpenClawRuntimeSession(
+    "conversation-failure",
+    "openclaw.gengar"
+  )
+
+  assert.deepEqual(
+    capturedInputs[0]?.conversationHistory,
+    buildSharedConversationHistory([failedFirstTurn.userEntry])
+  )
+  assert.equal(afterFailure?.state, "pending")
+  assert.equal(afterFailure?.bootstrapDelivered, false)
+  assert.equal(afterFailure?.lastDeliveredEntryId, undefined)
+
+  const retriedTurn = await services.conversation.postUnboundMessage({
+    conversationId: "conversation-failure",
+    targetAgent: "openclaw.gengar",
+    content: "The retry should bootstrap again and activate the session",
+    idempotencyKey: "conversation-failure:retry"
+  })
+  const afterRetry = repository.getOpenClawRuntimeSession(
+    "conversation-failure",
+    "openclaw.gengar"
+  )
+  const retryHistoryEntries = repository
+    .listConversation("conversation-failure")
+    .filter((entry) => entry.id !== retriedTurn.responseEntry?.id)
+
+  assert.deepEqual(
+    capturedInputs[1]?.conversationHistory,
+    buildSharedConversationHistory(retryHistoryEntries)
+  )
+  assert.equal(afterRetry?.state, "active")
+  assert.equal(afterRetry?.bootstrapDelivered, true)
+  assert.equal(afterRetry?.lastDeliveredEntryId, retriedTurn.userEntry.id)
+})
+
+test("unbound OpenClaw direct routing records ambiguous first delivery without retrying it", async (t) => {
+  const { database, repository } = await repositoryFixture(t)
+  const capturedInputs: AgentInvocationInput[] = []
+  const services = createHiveServices({
+    database,
+    repository,
+    startCodexSyncWorker: false,
+    invokeAgent: async (input) => {
+      capturedInputs.push(input)
+      return {
+        status: "failed",
+        source: "simulated",
+        body: "Delivery outcome is ambiguous.",
+        deliveryState: "unknown"
+      }
+    }
+  })
+
+  const first = await services.conversation.postUnboundMessage({
+    conversationId: "conversation:ambiguous-first",
+    targetAgent: "openclaw.gengar",
+    content: "The first request may have been accepted.",
+    idempotencyKey: "conversation:ambiguous-first:request"
+  })
+  const duplicate = await services.conversation.postUnboundMessage({
+    conversationId: "conversation:ambiguous-first",
+    targetAgent: "openclaw.gengar",
+    content: "The first request may have been accepted.",
+    idempotencyKey: "conversation:ambiguous-first:request"
+  })
+  const runtime = repository.getOpenClawRuntimeSession(
+    "conversation:ambiguous-first",
+    "openclaw.gengar"
+  )
+
+  assert.equal(first.userEntry.status, "failed")
+  assert.equal(duplicate.userEntry.id, first.userEntry.id)
+  assert.equal(capturedInputs.length, 1)
+  assert.equal(runtime?.state, "delivery_unknown")
+  assert.equal(runtime?.bootstrapDelivered, false)
+  assert.equal(runtime?.lastDeliveredEntryId, undefined)
+})
+
+test("unbound OpenClaw direct routing preserves the cursor after ambiguous later delivery", async (t) => {
+  const { database, repository } = await repositoryFixture(t)
+  const capturedInputs: AgentInvocationInput[] = []
+  let attempt = 0
+  const services = createHiveServices({
+    database,
+    repository,
+    startCodexSyncWorker: false,
+    invokeAgent: async (input) => {
+      capturedInputs.push(input)
+      attempt += 1
+      return attempt === 1
+        ? {
+            status: "completed" as const,
+            source: "simulated" as const,
+            body: "First turn confirmed."
+          }
+        : {
+            status: "failed" as const,
+            source: "simulated" as const,
+            body: "Later turn outcome is ambiguous.",
+            deliveryState: "unknown" as const
+          }
+    }
+  })
+
+  const first = await services.conversation.postUnboundMessage({
+    conversationId: "conversation:ambiguous-later",
+    targetAgent: "openclaw.gengar",
+    content: "Confirmed first turn.",
+    idempotencyKey: "conversation:ambiguous-later:first"
+  })
+  const second = await services.conversation.postUnboundMessage({
+    conversationId: "conversation:ambiguous-later",
+    targetAgent: "openclaw.gengar",
+    content: "The later request may have been accepted.",
+    idempotencyKey: "conversation:ambiguous-later:second"
+  })
+  const runtime = repository.getOpenClawRuntimeSession(
+    "conversation:ambiguous-later",
+    "openclaw.gengar"
+  )
+
+  assert.equal(first.userEntry.status, "completed")
+  assert.equal(second.userEntry.status, "failed")
+  assert.equal(capturedInputs.length, 2)
+  assert.equal(capturedInputs[1]?.conversationHistory, undefined)
+  assert.equal(runtime?.state, "delivery_unknown")
+  assert.equal(runtime?.bootstrapDelivered, true)
+  assert.equal(runtime?.lastDeliveredEntryId, first.userEntry.id)
+})
+
+test("a new OpenClaw entry after ambiguous delivery uses the persistent session without old bootstrap", async (t) => {
+  const { database, repository } = await repositoryFixture(t)
+  const capturedInputs: AgentInvocationInput[] = []
+  let attempt = 0
+  const services = createHiveServices({
+    database,
+    repository,
+    startCodexSyncWorker: false,
+    invokeAgent: async (input) => {
+      capturedInputs.push(input)
+      attempt += 1
+      return attempt === 1
+        ? {
+            status: "failed" as const,
+            source: "simulated" as const,
+            body: "First turn outcome is ambiguous.",
+            deliveryState: "unknown" as const
+          }
+        : {
+            status: "completed" as const,
+            source: "simulated" as const,
+            body: "Fresh turn confirmed."
+          }
+    }
+  })
+
+  const first = await services.conversation.postUnboundMessage({
+    conversationId: "conversation:ambiguous-recovery",
+    targetAgent: "openclaw.gengar",
+    content: "The first request may have been accepted.",
+    idempotencyKey: "conversation:ambiguous-recovery:first"
+  })
+  const afterAmbiguous = repository.getOpenClawRuntimeSession(
+    "conversation:ambiguous-recovery",
+    "openclaw.gengar"
+  )
+  assert.equal(capturedInputs.length, 1)
+
+  const second = await services.conversation.postUnboundMessage({
+    conversationId: "conversation:ambiguous-recovery",
+    targetAgent: "openclaw.gengar",
+    content: "This is a new operator turn.",
+    idempotencyKey: "conversation:ambiguous-recovery:second"
+  })
+  const afterConfirmed = repository.getOpenClawRuntimeSession(
+    "conversation:ambiguous-recovery",
+    "openclaw.gengar"
+  )
+
+  assert.equal(first.userEntry.status, "failed")
+  assert.equal(afterAmbiguous?.state, "delivery_unknown")
+  assert.equal(afterAmbiguous?.lastDeliveredEntryId, undefined)
+  assert.equal(second.userEntry.status, "completed")
+  assert.equal(capturedInputs.length, 2)
+  assert.equal(capturedInputs[1]?.conversationHistory, undefined)
+  assert.equal(afterConfirmed?.state, "active")
+  assert.equal(afterConfirmed?.bootstrapDelivered, true)
+  assert.equal(afterConfirmed?.lastDeliveredEntryId, second.userEntry.id)
 })
 
 test("OpenClaw bridge session identity is derived from stable conversation input instead of only workflow ids", () => {
   assert.match(openClawBridgeSource, /sessionKey/)
   assert.match(openClawBridgeSource, /payload\.conversationId|payload\.sessionKey/)
+})
+
+test("OpenClaw agent bridge uses the shared typed session adapter", () => {
+  assert.match(agentBridgeSource, /from "\.\/openclaw-session"/)
+  assert.doesNotMatch(agentBridgeSource, /new Function\(\s*"modulePath"/)
+  assert.doesNotMatch(agentBridgeSource, /scripts\/openclaw-session\.mjs/)
 })
 
 test("unbound OpenClaw routing preserves conversation and agent identity at the bridge boundary", { concurrency: false }, async (t) => {
@@ -719,7 +1327,7 @@ test("unbound OpenClaw routing preserves conversation and agent identity at the 
     executor?: AgentKind
     mainAgent?: string
     idempotencyKey?: string
-    skill?: Pick<WorkflowEventSkill, "id" | "constraints" | "gates">
+    skill?: Pick<WorkflowEventSkill, "id" | "purpose" | "constraints" | "gates">
   }> = []
   installFetchMock(t, async (input, init) => {
     assert.equal(String(input), "http://openclaw.test/agent-runs")
@@ -760,7 +1368,7 @@ test("unbound OpenClaw routing preserves conversation and agent identity at the 
   assert.equal(bridgePayloads.length, 4)
   for (const payload of bridgePayloads) {
     assert.ok(payload.skill)
-    assertUnrestrictedUnboundSkill(payload.skill)
+    assertDirectExecutionSkill(payload.skill)
   }
 
   assert.deepEqual(
@@ -800,7 +1408,7 @@ test("unbound route helper advances conversation history cursor only after succe
     }
   }
 
-  await routeUnboundConversation({
+  await routeOpenClawUnboundConversation({
     sync,
     conversationId: "conversation:cursor-check",
     targetAgent: "openclaw.gengar",
@@ -816,7 +1424,7 @@ test("unbound route helper advances conversation history cursor only after succe
     invokeAgent
   })
 
-  await routeUnboundConversation({
+  await routeOpenClawUnboundConversation({
     sync,
     conversationId: "conversation:cursor-check",
     targetAgent: "openclaw.gengar",
@@ -838,7 +1446,7 @@ test("unbound route helper advances conversation history cursor only after succe
     invokeAgent
   })
 
-  await routeUnboundConversation({
+  await routeOpenClawUnboundConversation({
     sync,
     conversationId: "conversation:cursor-check",
     targetAgent: "openclaw.gengar",

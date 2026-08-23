@@ -6,6 +6,7 @@ import { spawn } from "node:child_process"
 import { createHash, randomUUID } from "node:crypto"
 import { normalizePermissionMode } from "./agent-permissions.mjs"
 import { loadBridgeConfig } from "./bridge-config.mjs"
+import { createCodexAppServerSession } from "./codex-app-server-session.mjs"
 
 loadBridgeConfig()
 
@@ -126,7 +127,7 @@ const server = http.createServer(async (request, response) => {
     }
 
     const codexSessionMatch = requestUrl.pathname.match(
-      /^\/sessions\/([^/]+)(?:\/(events|turns|interrupt|resume|stop))?$/
+      /^\/sessions\/([^/]+)(?:\/(events|turns|thread|interrupt|resume|stop|name|archive|unarchive|delete))?$/
     )
 
     if (request.method === "POST" && requestUrl.pathname === "/sessions") {
@@ -138,7 +139,10 @@ const server = http.createServer(async (request, response) => {
         return
       }
 
-      const session = await createCodexSession(workspace.path, permissionMode)
+      const session = await createCodexSession(workspace.path, permissionMode, {
+        threadId: typeof payload.threadId === "string" ? payload.threadId : undefined,
+        name: typeof payload.name === "string" ? payload.name.trim() : undefined
+      })
       sendJson(response, 201, codexSessionSnapshot(session))
       return
     }
@@ -159,6 +163,23 @@ const server = http.createServer(async (request, response) => {
         return
       }
 
+      if (request.method === "GET" && action === "thread") {
+        try {
+          const thread = await session.appServerSession.readThread()
+          sendJson(response, 200, {
+            ...codexSessionSnapshot(session),
+            thread: thread?.thread ?? thread
+          })
+        } catch (error) {
+          if (isMissingNativeThreadError(error)) {
+            sendJson(response, 404, { error: formatError(error) })
+          } else {
+            throw error
+          }
+        }
+        return
+      }
+
       if (request.method === "POST" && action === "turns") {
         const payload = await readJson(request)
         const turn = await startCodexTurn(session, String(payload.content ?? ""))
@@ -169,6 +190,41 @@ const server = http.createServer(async (request, response) => {
       if (request.method === "POST" && action === "interrupt") {
         const interrupted = await interruptCodexTurn(session)
         sendJson(response, 200, { ...codexSessionSnapshot(session), interrupted })
+        return
+      }
+
+      if (request.method === "POST" && action === "name") {
+        const payload = await readJson(request)
+        const name = String(payload.name ?? "").trim()
+        if (!name || name.length > 120) {
+          sendJson(response, 400, { error: "Codex thread name must be between 1 and 120 characters" })
+          return
+        }
+        await session.appServerSession.rename(name)
+        session.name = name
+        sendJson(response, 200, codexSessionSnapshot(session))
+        return
+      }
+
+      if (request.method === "POST" && action === "archive") {
+        await session.appServerSession.archive()
+        session.status = "archived"
+        sendJson(response, 200, codexSessionSnapshot(session))
+        return
+      }
+
+      if (request.method === "POST" && action === "unarchive") {
+        await session.appServerSession.unarchive()
+        session.status = "idle"
+        sendJson(response, 200, codexSessionSnapshot(session))
+        return
+      }
+
+      if (request.method === "POST" && action === "delete") {
+        await session.appServerSession.delete()
+        session.status = "deleted"
+        session.turnStatus = "idle"
+        sendJson(response, 200, codexSessionSnapshot(session))
         return
       }
 
@@ -412,7 +468,8 @@ const server = http.createServer(async (request, response) => {
     rememberCompletedAgentRun(responseBody)
     sendJson(response, 200, responseBody)
   } catch (error) {
-    sendJson(response, 500, { error: formatError(error) })
+    const status = Number.isInteger(error?.httpStatus) ? error.httpStatus : 500
+    sendJson(response, status, { error: formatError(error) })
   }
 })
 
@@ -1275,7 +1332,8 @@ function bridgeCapabilities() {
 
 async function createCodexSession(
   workspacePath,
-  sessionPermissionMode = permissionMode
+  sessionPermissionMode = permissionMode,
+  options = {}
 ) {
   const id = randomUUID()
   const command = process.env.CODEX_BRIDGE_COMMAND ?? "codex"
@@ -1288,7 +1346,9 @@ async function createCodexSession(
     }),
     permissionMode: normalizePermissionMode(sessionPermissionMode),
     workspacePath,
-    threadId: undefined,
+    threadId: options.threadId,
+    name: options.name,
+    appServerSession: undefined,
     currentTurnId: undefined,
     status: "starting",
     turnStatus: "idle",
@@ -1350,39 +1410,25 @@ async function createCodexSession(
     )
   })
 
-  await codexSessionRequest(session, "initialize", {
-    clientInfo: {
-      name: "jormungand",
-      title: "Jormungand",
-      version: "0.1.0"
-    },
-    capabilities: { experimentalApi: true }
+  session.appServerSession = createCodexAppServerSession({
+    request: (method, params) => codexSessionRequest(session, method, params),
+    notify: (method, params) =>
+      writeCodexSessionMessage(session, { jsonrpc: "2.0", method, params }),
+    workspacePath,
+    permissionMode: session.permissionMode,
+    threadId: options.threadId,
+    name: options.name
   })
-  writeCodexSessionMessage(session, {
-    jsonrpc: "2.0",
-    method: "initialized",
-    params: {}
-  })
-  const startPolicy =
-    session.permissionMode === "full"
-      ? {
-          cwd: workspacePath,
-          sandbox: "danger-full-access",
-          approvalPolicy: "never",
-          threadSource: "jormungand"
-        }
-      : {
-          cwd: workspacePath,
-          sandbox: "workspace-write",
-          approvalPolicy: "never",
-          threadSource: "jormungand"
-        }
-  const startResult = await codexSessionRequest(session, "thread/start", {
-    ...startPolicy
-  })
-
-  session.threadId = startResult?.thread?.id
-  if (!session.threadId) throw new Error("Codex did not return a thread id.")
+  let started
+  try {
+    started = await session.appServerSession.start()
+  } catch (error) {
+    if (options.threadId && isMissingNativeThreadError(error)) {
+      error.httpStatus = 404
+    }
+    throw error
+  }
+  session.threadId = started.threadId
   session.status = "idle"
   addCodexSessionEvent(session, {
     type: "session_ready",
@@ -1407,24 +1453,8 @@ async function startCodexTurn(session, content) {
   session.turnStatus = "inProgress"
   addCodexSessionEvent(session, { type: "turn_requested", message: prompt })
 
-  const result = await codexSessionRequest(session, "turn/start", {
-    threadId: session.threadId,
-    input: [{ type: "text", text: prompt, text_elements: [] }],
-    approvalPolicy: "never",
-    sandboxPolicy:
-      session.permissionMode === "full"
-        ? {
-            type: "dangerFullAccess"
-          }
-        : {
-            type: "workspaceWrite",
-            writableRoots: [session.workspacePath],
-            networkAccess: false
-          },
-    cwd: session.workspacePath
-  })
-  const turnId = result?.turn?.id
-  if (!turnId) throw new Error("Codex did not return a turn id.")
+  const turn = await session.appServerSession.startTurn(prompt)
+  const turnId = turn.id
   session.currentTurnId = turnId
   addCodexSessionEvent(session, { type: "turn_started", turnId, message: "Codex is working." })
   return { id: turnId, status: "inProgress" }
@@ -1481,8 +1511,11 @@ function handleCodexSessionMessage(session, message) {
   if (message.id !== undefined && session.pendingRequests.has(message.id)) {
     const pending = session.pendingRequests.get(message.id)
     session.pendingRequests.delete(message.id)
-    if (message.error) pending.reject(new Error(message.error.message ?? "Codex request failed."))
-    else pending.resolve(message.result)
+        if (message.error) {
+          const error = new Error(message.error.message ?? "Codex request failed.")
+          error.codexCode = message.error.code
+          pending.reject(error)
+        } else pending.resolve(message.result)
     return
   }
 
@@ -1635,6 +1668,7 @@ function codexSessionSnapshot(session) {
   return {
     id: session.id,
     threadId: session.threadId,
+    name: session.name,
     status: session.status,
     turnStatus: session.turnStatus,
     currentTurnId: session.currentTurnId,
@@ -1749,6 +1783,12 @@ function tail(value, maxLength) {
 
 function formatError(error) {
   return error instanceof Error ? error.message : String(error)
+}
+
+function isMissingNativeThreadError(error) {
+  return /thread(?:\s+|[-_])?(?:not found|does not exist|unknown)|(?:not found|does not exist|unknown).*thread/i.test(
+    formatError(error)
+  )
 }
 
 function isLoopbackHost(value) {

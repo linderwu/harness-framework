@@ -12,12 +12,12 @@ test("database initializes WAL schema and survives restart", async (t) => {
   const first = openHiveDatabase({ dataDir })
   assert.equal(first.health().status, "ready")
   assert.equal(first.pragma("journal_mode"), "wal")
-  assert.equal(first.schemaVersion(), 6)
+  assert.equal(first.schemaVersion(), 8)
   first.close()
 
   const second = openHiveDatabase({ dataDir })
   assert.equal(second.health().status, "ready")
-  assert.equal(second.schemaVersion(), 6)
+  assert.equal(second.schemaVersion(), 8)
   second.close()
 })
 

@@ -17,7 +17,8 @@ test("OpenClaw A2A control sends a standalone slash stop message", () => {
 })
 
 test("OpenClaw A2A session keys use the shared bounded session helper", () => {
-  assert.match(bridge, /openclaw-session\.mjs/)
+  assert.match(bridge, /from "\.\/openclaw-session"/)
+  assert.match(bridge, /deriveOpenClawSessionKey/)
   assert.doesNotMatch(bridge, /function sanitizeSessionSegment/)
 })
 

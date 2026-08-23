@@ -5,6 +5,9 @@ import {
   type ConversationManagementService
 } from "@/lib/conversation-management"
 import {
+  deleteCodexConversationThread,
+  renameCodexConversationThread,
+  setCodexConversationThreadState,
   stopCodexConversationSession
 } from "@/lib/codex-conversation"
 import {
@@ -57,6 +60,12 @@ function getConversationManagementService() {
     repository: services.repository,
     stopSession: (conversationId) =>
       stopCodexConversationSession(services.repository, conversationId),
+    renameNativeThread: (conversationId, title) =>
+      renameCodexConversationThread(services.repository, conversationId, `Harness · ${title}`),
+    setNativeThreadState: (conversationId, state) =>
+      setCodexConversationThreadState(services.repository, conversationId, state),
+    deleteNativeThread: (conversationId) =>
+      deleteCodexConversationThread(services.repository, conversationId),
     cancelQueuedMessages: (conversationId) =>
       services.conversationQueue.cancelPending(conversationId)
   })

@@ -152,6 +152,68 @@ export type ConversationStatus =
   | "failed"
 export type ConversationState = "active" | "archived"
 
+export type CodexMappingState =
+  | "active"
+  | "offline"
+  | "native_deleted"
+  | "replacement_pending"
+  | "archived"
+  | "deleted"
+
+export type CodexSyncSource = "harness" | "codex"
+
+export interface CodexSyncItem {
+  id: string
+  conversationId: string
+  nativeThreadId: string
+  nativeTurnId: string
+  nativeItemId: string
+  source: CodexSyncSource
+  kind: string
+  conversationEntryId?: string
+  contentHash?: string
+  createdAt: string
+}
+
+export interface RecordCodexSyncItemInput {
+  conversationId: string
+  nativeThreadId: string
+  nativeTurnId: string
+  nativeItemId: string
+  source: CodexSyncSource
+  kind: string
+  conversationEntryId?: string
+  contentHash?: string
+}
+
+export type OpenClawRuntimeSessionState =
+  | "pending"
+  | "active"
+  | "delivery_unknown"
+
+export interface OpenClawRuntimeSession {
+  conversationId: string
+  agentId: import("../types").AgentKind
+  provider: "openclaw"
+  sessionNamespace: "harness-direct-v1"
+  state: OpenClawRuntimeSessionState
+  sessionKeyFingerprint: string
+  bootstrapDelivered: boolean
+  lastDeliveredEntryId?: string
+  createdAt: string
+  updatedAt: string
+}
+
+export interface UpsertOpenClawRuntimeSessionInput {
+  conversationId: string
+  agentId: import("../types").AgentKind
+  sessionNamespace: "harness-direct-v1"
+  state: OpenClawRuntimeSessionState
+  sessionKeyFingerprint: string
+  bootstrapDelivered: boolean
+  lastDeliveredEntryId?: string
+}
+
 export interface ConversationEntry {
   id: string
   workflowRunId: string

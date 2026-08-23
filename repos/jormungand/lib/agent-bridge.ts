@@ -7,8 +7,6 @@ import type {
   WorkflowRun,
   WorkflowStage
 } from "./types"
-import { resolve } from "node:path"
-import { pathToFileURL } from "node:url"
 import {
   createOpenClawA2AEnvelope,
   extractA2AResponseText,
@@ -23,6 +21,7 @@ import type { AgentLiveEvent } from "./agent-live-events"
 import { normalizeAgentLiveEvent } from "./agent-live-events"
 import { getAgentPermissionMode } from "./agent-permissions"
 import { ensureGitHubRepository } from "./github-repository"
+import { deriveOpenClawSessionKey } from "./openclaw-session"
 import type { AgentArtifactResult } from "@/lib/workflow"
 import type { ContextPack } from "./context-builder"
 
@@ -33,6 +32,7 @@ export interface AgentInvocationInput {
   stage: WorkflowStage
   artifactType: Artifact["type"]
   title: string
+  idempotencyKey?: string
   fallbackBody: string
   runtimeSkillBundles?: RuntimeSkillBundleDescriptor[]
   contextPack?: ContextPack
@@ -121,6 +121,7 @@ export async function invokeConfiguredAgent(
   if (requiredProtocol === bridgeProtocolV3 && configuredProtocol !== bridgeProtocolV3) {
     return {
       status: "failed",
+      deliveryState: "confirmed",
       source: getBridgeSource(input.executor),
       body: `${profile.label} bridge does not support runtime skill bundles.`,
       statusMessage: JSON.stringify({
@@ -217,6 +218,7 @@ export async function invokeConfiguredAgent(
       } else {
         result = {
           status: "failed",
+          deliveryState: "confirmed",
           source,
           body: [
             `${profile.label} bridge request failed with HTTP ${response.status}.`,
@@ -235,6 +237,7 @@ export async function invokeConfiguredAgent(
   } catch (error) {
     const result: AgentArtifactResult = {
       status: "failed",
+      deliveryState: "unknown",
       source,
       body: `${profile.label} bridge is not reachable: ${formatError(error)}`
     }
@@ -322,6 +325,7 @@ async function pollBridgeRunByIdempotencyKey(input: {
 
   return {
     status: "failed",
+    deliveryState: "unknown",
     source: input.source,
     idempotencyKey: input.idempotencyKey,
     body: `${input.profileLabel} bridge timed out and recovery polling did not return a completed result (${lastStatus}).`
@@ -342,6 +346,7 @@ function bridgeResponseToAgentResult(
 
   return {
     status: data.status === "failed" ? "failed" : "completed",
+    deliveryState: "confirmed",
     source,
     externalRunId: data.id,
     idempotencyKey: data.idempotencyKey ?? idempotencyKey,
@@ -653,6 +658,7 @@ async function invokeIntakeAgent(
 
     return {
       status: "completed",
+      deliveryState: "confirmed",
       source,
       repository,
       statusMessage: repository
@@ -668,6 +674,7 @@ async function invokeIntakeAgent(
   } catch (error) {
     return {
       status: "failed",
+      deliveryState: "confirmed",
       source,
       body: `Intake agent could not create or verify the GitHub repository: ${formatError(error)}`
     }
@@ -751,6 +758,7 @@ async function invokeOpenClawA2A(
     })
     return {
       status: result.exitCode === 0 ? "completed" : "failed",
+      deliveryState: result.deliveryState,
       source: "openclaw-a2a",
       externalRunId: idempotencyKey,
       idempotencyKey,
@@ -766,6 +774,7 @@ async function invokeOpenClawA2A(
   } catch (error) {
     return {
       status: "failed",
+      deliveryState: "confirmed",
       source: "openclaw-a2a",
       externalRunId: idempotencyKey,
       idempotencyKey,
@@ -800,6 +809,7 @@ async function invokeMinimaxA2A(
     })
     return {
       status: result.exitCode === 0 ? "completed" : "failed",
+      deliveryState: result.deliveryState,
       source: "minimax-a2a",
       externalRunId: idempotencyKey,
       idempotencyKey,
@@ -815,6 +825,7 @@ async function invokeMinimaxA2A(
   } catch (error) {
     return {
       status: "failed",
+      deliveryState: "confirmed",
       source: "minimax-a2a",
       externalRunId: idempotencyKey,
       idempotencyKey,
@@ -864,7 +875,11 @@ async function runCommandWithStdin(
   })
   let stdout = ""
   let stderr = ""
-  const timer = setTimeout(() => child.kill("SIGTERM"), timeoutMs)
+  let timedOut = false
+  const timer = setTimeout(() => {
+    timedOut = true
+    child.kill("SIGTERM")
+  }, timeoutMs)
 
   child.stdout.on("data", (chunk) => {
     stdout += chunk.toString()
@@ -880,7 +895,12 @@ async function runCommandWithStdin(
   })
   clearTimeout(timer)
 
-  return { exitCode, stdout, stderr }
+  return {
+    exitCode,
+    stdout,
+    stderr,
+    deliveryState: timedOut ? "unknown" as const : "confirmed" as const
+  }
 }
 
 function createMissingBridgeResult(
@@ -890,6 +910,7 @@ function createMissingBridgeResult(
   if (process.env.HARNESS_ALLOW_SIMULATED_AGENTS === "1") {
     return {
       status: "completed",
+      deliveryState: "confirmed",
       source: "simulated",
       body: input.fallbackBody,
       statusMessage: "Simulated because HARNESS_ALLOW_SIMULATED_AGENTS=1."
@@ -898,12 +919,16 @@ function createMissingBridgeResult(
 
   return {
     status: "failed",
+    deliveryState: "confirmed",
     source,
     body: `${getAgentProfile(input.executor).label} has no configured bridge. Set CODEX_BRIDGE_URL (for Codex and minimax), OPENCLAW_BRIDGE_URL, OPENCLAW_A2A_COMMAND, or MINIMAX_A2A_COMMAND.`
   }
 }
 
 function createIdempotencyKey(input: AgentInvocationInput) {
+  const explicitKey = input.idempotencyKey?.trim()
+  if (explicitKey) return explicitKey
+
   return [
     input.run.id,
     input.run.version,
@@ -976,17 +1001,6 @@ function getMinimaxA2ACommand(agent: AgentKind) {
   return process.env.MINIMAX_A2A_COMMAND
 }
 
-type OpenClawSessionHelper = {
-  deriveOpenClawSessionKey(input: {
-    mainAgent?: string
-    conversationId?: unknown
-    workflowRunId?: unknown
-    fallbackId?: unknown
-  }): string
-}
-
-let openClawSessionHelperPromise: Promise<OpenClawSessionHelper> | undefined
-
 async function getOpenClawSessionKey(input: {
   agent: AgentKind
   conversationId?: string
@@ -995,29 +1009,12 @@ async function getOpenClawSessionKey(input: {
   const profile = getAgentProfile(input.agent)
   const mainAgent = profile.mainAgent ?? "rowlet"
 
-  const sessionHelper = await loadOpenClawSessionHelper()
-  return sessionHelper.deriveOpenClawSessionKey({
+  return deriveOpenClawSessionKey({
     mainAgent,
     conversationId: input.conversationId,
     workflowRunId: input.workflowRunId,
     fallbackId: process.env.OPENCLAW_A2A_SESSION_KEY ?? "a2a-codex"
   })
-}
-
-async function loadOpenClawSessionHelper() {
-  if (!openClawSessionHelperPromise) {
-    // Native import keeps the CommonJS test build able to execute the ESM helper.
-    const loadModule = new Function(
-      "modulePath",
-      "return import(modulePath)"
-    ) as (modulePath: string) => Promise<OpenClawSessionHelper>
-    const helperPath = pathToFileURL(
-      resolve(process.cwd(), "scripts/openclaw-session.mjs")
-    ).href
-    openClawSessionHelperPromise = loadModule(helperPath)
-  }
-
-  return openClawSessionHelperPromise
 }
 
 function getBridgeSource(agent: AgentKind): AgentArtifactResult["source"] {

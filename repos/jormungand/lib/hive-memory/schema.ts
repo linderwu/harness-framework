@@ -1,7 +1,7 @@
 import type Database from "better-sqlite3"
 import { legacyConversationId } from "../conversation-identity"
 
-export const hiveSchemaVersion = 6
+export const hiveSchemaVersion = 8
 
 const migrationV1 = `
 CREATE TABLE schema_migrations (
@@ -271,6 +271,49 @@ CREATE INDEX execution_jobs_status_available_idx ON execution_jobs(status, avail
 CREATE INDEX execution_jobs_lease_expires_idx ON execution_jobs(lease_expires_at);
 `
 
+const migrationV7 = `
+ALTER TABLE codex_sessions ADD COLUMN mapping_state TEXT NOT NULL DEFAULT 'active';
+ALTER TABLE codex_sessions ADD COLUMN replacement_of_thread_id TEXT;
+ALTER TABLE codex_sessions ADD COLUMN native_name TEXT;
+ALTER TABLE codex_sessions ADD COLUMN native_cursor TEXT;
+ALTER TABLE codex_sessions ADD COLUMN last_sync_at TEXT;
+CREATE TABLE codex_sync_ledger (
+  id TEXT PRIMARY KEY,
+  conversation_id TEXT NOT NULL,
+  native_thread_id TEXT NOT NULL,
+  native_turn_id TEXT NOT NULL,
+  native_item_id TEXT NOT NULL,
+  source TEXT NOT NULL CHECK(source IN ('harness', 'codex')),
+  kind TEXT NOT NULL,
+  conversation_entry_id TEXT,
+  content_hash TEXT,
+  created_at TEXT NOT NULL,
+  UNIQUE(native_thread_id, native_turn_id, native_item_id)
+);
+CREATE INDEX codex_sync_ledger_conversation_idx
+  ON codex_sync_ledger(conversation_id, created_at, id);
+CREATE INDEX codex_sync_ledger_thread_idx
+  ON codex_sync_ledger(native_thread_id, native_turn_id, native_item_id);
+`
+
+const migrationV8 = `
+CREATE TABLE openclaw_runtime_sessions (
+  conversation_id TEXT NOT NULL,
+  agent_id TEXT NOT NULL,
+  provider TEXT NOT NULL CHECK(provider = 'openclaw'),
+  session_namespace TEXT NOT NULL CHECK(session_namespace = 'harness-direct-v1'),
+  state TEXT NOT NULL CHECK(state IN ('pending', 'active', 'delivery_unknown')),
+  session_key_fingerprint TEXT NOT NULL,
+  bootstrap_delivered INTEGER NOT NULL DEFAULT 0 CHECK(bootstrap_delivered IN (0, 1)),
+  last_delivered_entry_id TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY(conversation_id, agent_id)
+);
+CREATE INDEX openclaw_runtime_sessions_updated_idx
+  ON openclaw_runtime_sessions(updated_at);
+`
+
 export function migrateHiveSchema(database: Database.Database) {
   const hasMigrationTable = database
     .prepare("SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'")
@@ -329,6 +372,22 @@ export function migrateHiveSchema(database: Database.Database) {
       database.exec(migrationV6)
       database.prepare("INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)")
         .run(6, new Date().toISOString())
+    })()
+  }
+
+  if (currentVersion < 7) {
+    database.transaction(() => {
+      database.exec(migrationV7)
+      database.prepare("INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)")
+        .run(7, new Date().toISOString())
+    })()
+  }
+
+  if (currentVersion < 8) {
+    database.transaction(() => {
+      database.exec(migrationV8)
+      database.prepare("INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)")
+        .run(8, new Date().toISOString())
     })()
   }
 }

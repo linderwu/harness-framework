@@ -30,9 +30,37 @@ interface ConversationSummary {
   latestMessage?: string
 }
 
+type OpenClawRuntimeSessionState = "pending" | "active" | "delivery_unknown"
+
+interface OpenClawRuntimeSession {
+  conversationId: string
+  agentId: "openclaw.rowlet" | "openclaw.gengar"
+  provider: "openclaw"
+  sessionNamespace: "harness-direct-v1"
+  state: OpenClawRuntimeSessionState
+  sessionKeyFingerprint: string
+  bootstrapDelivered: boolean
+  lastDeliveredEntryId?: string
+  createdAt: string
+  updatedAt: string
+}
+
 type ConversationRepository = ReturnType<typeof createHiveMemoryRepository> & {
   getConversationMetadata(id: string): ConversationMetadata | undefined
   listConversationSummaries(input?: { includeArchived?: boolean }): ConversationSummary[]
+  getOpenClawRuntimeSession(
+    conversationId: string,
+    agentId: OpenClawRuntimeSession["agentId"]
+  ): OpenClawRuntimeSession | undefined
+  upsertOpenClawRuntimeSession(input: {
+    conversationId: string
+    agentId: OpenClawRuntimeSession["agentId"]
+    sessionNamespace: "harness-direct-v1"
+    state: OpenClawRuntimeSessionState
+    sessionKeyFingerprint: string
+    bootstrapDelivered: boolean
+    lastDeliveredEntryId?: string
+  }): Promise<OpenClawRuntimeSession | undefined>
 }
 
 test("repository isolates project memories and preserves lifecycle history", async (t) => {
@@ -142,6 +170,73 @@ test("agent identities retain stable permissions across restart", async (t) => {
   secondDatabase.close()
 })
 
+test("OpenClaw runtime sessions survive restart with bootstrap and delivery state intact", async (t) => {
+  const dataDir = await mkdtemp(join(tmpdir(), "jormungand-openclaw-runtime-session-"))
+  const firstDatabase = openHiveDatabase({ dataDir })
+  const reopened = {
+    database: undefined as ReturnType<typeof openHiveDatabase> | undefined
+  }
+  let firstDatabaseClosed = false
+  const closeFirstDatabase = () => {
+    if (firstDatabaseClosed) {
+      return
+    }
+    firstDatabase.close()
+    firstDatabaseClosed = true
+  }
+  const closeReopenedDatabase = () => {
+    reopened.database?.close()
+    reopened.database = undefined
+  }
+  t.after(async () => {
+    closeReopenedDatabase()
+    closeFirstDatabase()
+    await rm(dataDir, { recursive: true, force: true })
+  })
+
+  const firstRepository = createHiveMemoryRepository(firstDatabase) as ConversationRepository
+  assert.equal(typeof firstRepository.upsertOpenClawRuntimeSession, "function")
+  assert.equal(typeof firstRepository.getOpenClawRuntimeSession, "function")
+
+  await firstRepository.upsertOpenClawRuntimeSession({
+    conversationId: "conversation:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    agentId: "openclaw.rowlet",
+    sessionNamespace: "harness-direct-v1",
+    state: "delivery_unknown",
+    sessionKeyFingerprint: "fingerprint-initial",
+    bootstrapDelivered: true,
+    lastDeliveredEntryId: "entry-bootstrap-2"
+  })
+
+  closeFirstDatabase()
+
+  reopened.database = openHiveDatabase({ dataDir })
+  assert.equal(reopened.database.schemaVersion(), 8)
+
+  const secondRepository = createHiveMemoryRepository(reopened.database) as ConversationRepository
+  const persisted = secondRepository.getOpenClawRuntimeSession(
+    "conversation:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    "openclaw.rowlet"
+  )
+
+  assert.deepEqual(persisted, {
+    conversationId: "conversation:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    agentId: "openclaw.rowlet",
+    provider: "openclaw",
+    sessionNamespace: "harness-direct-v1",
+    state: "delivery_unknown",
+    sessionKeyFingerprint: "fingerprint-initial",
+    bootstrapDelivered: true,
+    lastDeliveredEntryId: "entry-bootstrap-2",
+    createdAt: persisted?.createdAt,
+    updatedAt: persisted?.updatedAt
+  })
+  assert.ok(persisted?.createdAt)
+  assert.ok(persisted?.updatedAt)
+
+  closeReopenedDatabase()
+})
+
 test("schema v3 backfills conversation metadata from legacy entries and keeps unbound listing compatible", async (t) => {
   const dataDir = await mkdtemp(join(tmpdir(), "jormungand-conversation-backfill-"))
   const databasePath = join(dataDir, "hive-memory.sqlite")
@@ -237,7 +332,7 @@ test("schema v3 backfills conversation metadata from legacy entries and keeps un
     await rm(dataDir, { recursive: true, force: true })
   })
 
-  assert.equal(migratedDatabase.schemaVersion(), 6)
+  assert.equal(migratedDatabase.schemaVersion(), 8)
   const migrated = repository.getConversationMetadata("conversation:44444444-4444-4444-8444-444444444444")
   assert.ok(migrated)
   assert.equal(migrated.title, "This migrated title should be truncated to eighty characters exactly after white")
@@ -317,6 +412,17 @@ test("schema v4 migrates a v3 database and creates durable A2A tables", async (t
       idempotency_key TEXT NOT NULL UNIQUE,
       created_at TEXT NOT NULL
     );
+    CREATE TABLE codex_sessions (
+      conversation_id TEXT PRIMARY KEY,
+      bridge_session_id TEXT NOT NULL UNIQUE,
+      codex_thread_id TEXT NOT NULL,
+      status TEXT NOT NULL,
+      turn_status TEXT NOT NULL,
+      current_turn_id TEXT,
+      cursor INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
   `)
   seed.prepare("INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(1, "2026-08-18T00:00:00.000Z")
   seed.prepare("INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(2, "2026-08-18T00:01:00.000Z")
@@ -329,16 +435,19 @@ test("schema v4 migrates a v3 database and creates durable A2A tables", async (t
     await rm(dataDir, { recursive: true, force: true })
   })
 
-  assert.equal(database.schemaVersion(), 6)
+  assert.equal(database.schemaVersion(), 8)
   const tables = database.read((connection) =>
     connection.prepare(`
       SELECT name
       FROM sqlite_master
-      WHERE type = 'table' AND name IN ('a2a_tasks', 'a2a_messages', 'a2a_events')
+      WHERE type = 'table' AND name IN ('a2a_tasks', 'a2a_messages', 'a2a_events', 'openclaw_runtime_sessions')
       ORDER BY name ASC
     `).all() as Array<{ name: string }>
   )
-  assert.deepEqual(tables.map((row) => row.name), ["a2a_events", "a2a_messages", "a2a_tasks"])
+  assert.deepEqual(
+    tables.map((row) => row.name),
+    ["a2a_events", "a2a_messages", "a2a_tasks", "openclaw_runtime_sessions"]
+  )
 })
 
 test("A2A repository persists redacted frames, idempotent tasks, ordered events, and restart-safe state", async (t) => {

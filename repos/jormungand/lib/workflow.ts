@@ -74,6 +74,7 @@ const superpowersRuntimeBundles = ["superpowers-full"]
 
 export interface AgentArtifactResult {
   status: "completed" | "failed"
+  deliveryState?: "confirmed" | "unknown"
   source: AgentRunSource
   body: string
   a2aTaskId?: string

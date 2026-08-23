@@ -7,6 +7,7 @@ const route = readFileSync("app/api/conversation/route.ts", "utf8")
 const controlRoute = readFileSync("app/api/conversation/control/route.ts", "utf8")
 const component = readFileSync("components/task-conversation.tsx", "utf8")
 const bridge = readFileSync("scripts/codex-bridge.mjs", "utf8")
+const appServerSession = readFileSync("scripts/codex-app-server-session.mjs", "utf8")
 
 test("Codex conversation persists an unbound session and idempotent entries", () => {
   assert.match(conversation, /global:unbound-conversation/)
@@ -49,7 +50,9 @@ test("unbound conversation exposes the registered OpenClaw agents", () => {
 
 test("Codex bridge exposes session events and pause controls", () => {
   assert.match(bridge, /\/sessions/)
-  assert.match(bridge, /thread\/start/)
+  assert.match(bridge, /codex-app-server-session\.mjs/)
+  assert.match(appServerSession, /thread\/start/)
+  assert.match(appServerSession, /thread\/resume/)
   assert.match(bridge, /turn\/interrupt/)
   assert.match(bridge, /turn_paused/)
   assert.match(bridge, /codex-session-events/)
@@ -57,11 +60,11 @@ test("Codex bridge exposes session events and pause controls", () => {
 
 test("Codex bridge conversation policies branch between full and restricted sessions", () => {
   assert.match(bridge, /permissionMode === "full"/)
-  assert.match(bridge, /sandbox:\s*"danger-full-access"/)
-  assert.match(bridge, /sandbox:\s*"workspace-write"/)
-  assert.match(bridge, /approvalPolicy:\s*"never"/)
-  assert.match(bridge, /type:\s*"dangerFullAccess"/)
-  assert.match(bridge, /type:\s*"workspaceWrite"/)
-  assert.match(bridge, /writableRoots:\s*\[session\.workspacePath\]/)
-  assert.match(bridge, /networkAccess:\s*false/)
+  assert.match(appServerSession, /sandbox:\s*"danger-full-access"/)
+  assert.match(appServerSession, /sandbox:\s*"workspace-write"/)
+  assert.match(appServerSession, /approvalPolicy:\s*"never"/)
+  assert.match(appServerSession, /type:\s*"dangerFullAccess"/)
+  assert.match(appServerSession, /type:\s*"workspaceWrite"/)
+  assert.match(appServerSession, /writableRoots:\s*\[input\.workspacePath\]/)
+  assert.match(appServerSession, /networkAccess:\s*false/)
 })

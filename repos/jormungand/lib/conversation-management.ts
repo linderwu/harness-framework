@@ -11,6 +11,9 @@ export interface ConversationManagementDependencies {
   repository: HiveMemoryRepository
   stopSession: (conversationId: string) => Promise<void>
   cancelQueuedMessages?: (conversationId: string) => Promise<unknown>
+  renameNativeThread?: (conversationId: string, title: string) => Promise<void>
+  setNativeThreadState?: (conversationId: string, state: ConversationState) => Promise<void>
+  deleteNativeThread?: (conversationId: string) => Promise<void>
 }
 
 export class ConversationManagementError extends Error {
@@ -51,14 +54,14 @@ export class ConversationManagementService {
     }
 
     if (hasTitle) {
-      await this.dependencies.repository.renameConversation(
-        metadata.conversationId,
-        parseRequiredTitle(input.title)
-      )
+      const title = parseRequiredTitle(input.title)
+      await this.dependencies.renameNativeThread?.(metadata.conversationId, title)
+      await this.dependencies.repository.renameConversation(metadata.conversationId, title)
       return this.requireConversationSummary(metadata.conversationId)
     }
 
     const nextState = parseConversationState(input.state)
+    await this.dependencies.setNativeThreadState?.(metadata.conversationId, nextState)
     await this.dependencies.repository.setConversationState(
       metadata.conversationId,
       nextState
@@ -78,6 +81,7 @@ export class ConversationManagementService {
     await this.dependencies.cancelQueuedMessages?.(metadata.conversationId)
 
     if (this.dependencies.repository.getCodexSession(metadata.conversationId)) {
+      await this.dependencies.deleteNativeThread?.(metadata.conversationId)
       try {
         await this.dependencies.stopSession(metadata.conversationId)
       } catch (error) {

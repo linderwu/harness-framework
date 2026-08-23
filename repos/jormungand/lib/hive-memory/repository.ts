@@ -29,8 +29,16 @@ import type {
   RequeueExecutionJobInput,
   ExecutionJob,
   FailExecutionJobInput,
+  OpenClawRuntimeSession,
+  OpenClawRuntimeSessionState,
   SubmitMemoryCandidate,
+  UpsertOpenClawRuntimeSessionInput,
   UpdateA2ATaskInput
+} from "./types"
+import type {
+  CodexMappingState,
+  CodexSyncItem,
+  RecordCodexSyncItemInput
 } from "./types"
 import type { AgentKind, ManagerCheckpoint, ManagerProposal } from "../types"
 import {
@@ -122,6 +130,49 @@ type ConversationSummaryRow = {
   messageCount: number
   latestMessageAt: string | null
   latestMessage: string | null
+}
+
+type CodexSyncLedgerRow = {
+  id: string
+  conversation_id: string
+  native_thread_id: string
+  native_turn_id: string
+  native_item_id: string
+  source: "harness" | "codex"
+  kind: string
+  conversation_entry_id: string | null
+  content_hash: string | null
+  created_at: string
+}
+
+type CodexSessionRow = {
+  conversation_id: string
+  bridge_session_id: string
+  codex_thread_id: string
+  status: string
+  turn_status: string
+  current_turn_id: string | null
+  cursor: number
+  mapping_state: CodexMappingState
+  replacement_of_thread_id: string | null
+  native_name: string | null
+  native_cursor: string | null
+  last_sync_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+type OpenClawRuntimeSessionRow = {
+  conversation_id: string
+  agent_id: string
+  provider: "openclaw"
+  session_namespace: "harness-direct-v1"
+  state: OpenClawRuntimeSessionState
+  session_key_fingerprint: string
+  bootstrap_delivered: number
+  last_delivered_entry_id: string | null
+  created_at: string
+  updated_at: string
 }
 
 interface CreateInboundA2ARequestInput {
@@ -1273,7 +1324,9 @@ export class HiveMemoryRepository {
         DELETE FROM execution_jobs
         WHERE kind = 'conversation_dispatch' AND workflow_run_id = ?
       `).run(id)
+      connection.prepare("DELETE FROM openclaw_runtime_sessions WHERE conversation_id = ?").run(id)
       connection.prepare("DELETE FROM codex_sessions WHERE conversation_id = ?").run(id)
+      connection.prepare("DELETE FROM codex_sync_ledger WHERE conversation_id = ?").run(id)
       connection.prepare("DELETE FROM conversation_entries WHERE workflow_run_id = ?").run(id)
       connection.prepare("DELETE FROM conversations WHERE id = ?").run(id)
     })
@@ -1283,30 +1336,20 @@ export class HiveMemoryRepository {
     return this.database.read((connection) => {
       const row = connection.prepare(`
         SELECT * FROM codex_sessions WHERE conversation_id = ?
-      `).get(conversationId) as {
-        conversation_id: string
-        bridge_session_id: string
-        codex_thread_id: string
-        status: string
-        turn_status: string
-        current_turn_id: string | null
-        cursor: number
-        created_at: string
-        updated_at: string
-      } | undefined
+      `).get(conversationId) as CodexSessionRow | undefined
 
       if (!row) return undefined
-      return {
-        conversationId: row.conversation_id,
-        bridgeSessionId: row.bridge_session_id,
-        codexThreadId: row.codex_thread_id,
-        status: row.status,
-        turnStatus: row.turn_status,
-        currentTurnId: row.current_turn_id ?? undefined,
-        cursor: row.cursor,
-        createdAt: row.created_at,
-        updatedAt: row.updated_at
-      }
+      return codexSessionFromRow(row)
+    })
+  }
+
+  listCodexSessions() {
+    return this.database.read((connection) => {
+      const rows = connection.prepare(`
+        SELECT * FROM codex_sessions
+        ORDER BY updated_at ASC, conversation_id ASC
+      `).all() as CodexSessionRow[]
+      return rows.map(codexSessionFromRow)
     })
   }
 
@@ -1318,14 +1361,21 @@ export class HiveMemoryRepository {
     turnStatus: string
     currentTurnId?: string
     cursor?: number
+    mappingState?: CodexMappingState
+    replacementOfThreadId?: string
+    nativeName?: string
+    nativeCursor?: string
+    lastSyncAt?: string
   }) {
     const now = new Date().toISOString()
     await this.database.write((connection) => {
       connection.prepare(`
         INSERT INTO codex_sessions(
           conversation_id, bridge_session_id, codex_thread_id, status,
-          turn_status, current_turn_id, cursor, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          turn_status, current_turn_id, cursor, mapping_state,
+          replacement_of_thread_id, native_name, native_cursor, last_sync_at,
+          created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(conversation_id) DO UPDATE SET
           bridge_session_id = excluded.bridge_session_id,
           codex_thread_id = excluded.codex_thread_id,
@@ -1333,6 +1383,11 @@ export class HiveMemoryRepository {
           turn_status = excluded.turn_status,
           current_turn_id = excluded.current_turn_id,
           cursor = excluded.cursor,
+          mapping_state = excluded.mapping_state,
+          replacement_of_thread_id = excluded.replacement_of_thread_id,
+          native_name = excluded.native_name,
+          native_cursor = excluded.native_cursor,
+          last_sync_at = excluded.last_sync_at,
           updated_at = excluded.updated_at
       `).run(
         input.conversationId,
@@ -1342,11 +1397,58 @@ export class HiveMemoryRepository {
         input.turnStatus,
         input.currentTurnId ?? null,
         input.cursor ?? 0,
+        input.mappingState ?? "active",
+        input.replacementOfThreadId ?? null,
+        input.nativeName ?? null,
+        input.nativeCursor ?? null,
+        input.lastSyncAt ?? null,
         now,
         now
       )
     })
     return this.getCodexSession(input.conversationId)
+  }
+
+  getOpenClawRuntimeSession(conversationId: string, agentId: AgentKind) {
+    return this.database.read((connection) => {
+      const row = connection.prepare(`
+        SELECT * FROM openclaw_runtime_sessions
+        WHERE conversation_id = ? AND agent_id = ?
+      `).get(conversationId, agentId) as OpenClawRuntimeSessionRow | undefined
+
+      if (!row) return undefined
+      return openClawRuntimeSessionFromRow(row)
+    })
+  }
+
+  async upsertOpenClawRuntimeSession(input: UpsertOpenClawRuntimeSessionInput) {
+    const now = new Date().toISOString()
+    await this.database.write((connection) => {
+      connection.prepare(`
+        INSERT INTO openclaw_runtime_sessions(
+          conversation_id, agent_id, provider, session_namespace, state,
+          session_key_fingerprint, bootstrap_delivered, last_delivered_entry_id,
+          created_at, updated_at
+        ) VALUES (?, ?, 'openclaw', ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(conversation_id, agent_id) DO UPDATE SET
+          state = excluded.state,
+          session_key_fingerprint = excluded.session_key_fingerprint,
+          bootstrap_delivered = excluded.bootstrap_delivered,
+          last_delivered_entry_id = excluded.last_delivered_entry_id,
+          updated_at = excluded.updated_at
+      `).run(
+        input.conversationId,
+        input.agentId,
+        input.sessionNamespace,
+        input.state,
+        input.sessionKeyFingerprint,
+        input.bootstrapDelivered ? 1 : 0,
+        input.lastDeliveredEntryId ?? null,
+        now,
+        now
+      )
+    })
+    return this.getOpenClawRuntimeSession(input.conversationId, input.agentId)
   }
 
   async updateCodexSession(input: {
@@ -1355,6 +1457,11 @@ export class HiveMemoryRepository {
     turnStatus?: string
     currentTurnId?: string
     cursor?: number
+    mappingState?: CodexMappingState
+    replacementOfThreadId?: string
+    nativeName?: string
+    nativeCursor?: string
+    lastSyncAt?: string
   }) {
     await this.database.write((connection) => {
       connection.prepare(`
@@ -1363,6 +1470,11 @@ export class HiveMemoryRepository {
           turn_status = COALESCE(?, turn_status),
           current_turn_id = COALESCE(?, current_turn_id),
           cursor = MAX(cursor, COALESCE(?, cursor)),
+          mapping_state = COALESCE(?, mapping_state),
+          replacement_of_thread_id = COALESCE(?, replacement_of_thread_id),
+          native_name = COALESCE(?, native_name),
+          native_cursor = COALESCE(?, native_cursor),
+          last_sync_at = COALESCE(?, last_sync_at),
           updated_at = ?
         WHERE conversation_id = ?
       `).run(
@@ -1370,11 +1482,70 @@ export class HiveMemoryRepository {
         input.turnStatus ?? null,
         input.currentTurnId ?? null,
         input.cursor ?? null,
+        input.mappingState ?? null,
+        input.replacementOfThreadId ?? null,
+        input.nativeName ?? null,
+        input.nativeCursor ?? null,
+        input.lastSyncAt ?? null,
         new Date().toISOString(),
         input.conversationId
       )
     })
     return this.getCodexSession(input.conversationId)
+  }
+
+  async recordCodexSyncItem(input: RecordCodexSyncItemInput) {
+    const id = crypto.randomUUID()
+    const createdAt = new Date().toISOString()
+    const inserted = await this.database.write((connection) => {
+      const result = connection.prepare(`
+        INSERT OR IGNORE INTO codex_sync_ledger(
+          id, conversation_id, native_thread_id, native_turn_id,
+          native_item_id, source, kind, conversation_entry_id,
+          content_hash, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        id,
+        input.conversationId,
+        input.nativeThreadId,
+        input.nativeTurnId,
+        input.nativeItemId,
+        input.source,
+        input.kind,
+        input.conversationEntryId ?? null,
+        input.contentHash ?? null,
+        createdAt
+      )
+      return result.changes > 0
+    })
+    const item = this.getCodexSyncItem(
+      input.nativeThreadId,
+      input.nativeTurnId,
+      input.nativeItemId
+    )
+    if (!item) throw new Error("Codex sync ledger item could not be read after insert.")
+    return { inserted, item }
+  }
+
+  getCodexSyncItem(nativeThreadId: string, nativeTurnId: string, nativeItemId: string): CodexSyncItem | undefined {
+    return this.database.read((connection) => {
+      const row = connection.prepare(`
+        SELECT * FROM codex_sync_ledger
+        WHERE native_thread_id = ? AND native_turn_id = ? AND native_item_id = ?
+      `).get(nativeThreadId, nativeTurnId, nativeItemId) as CodexSyncLedgerRow | undefined
+      return row ? codexSyncItemFromRow(row) : undefined
+    })
+  }
+
+  listCodexSyncItems(conversationId: string): CodexSyncItem[] {
+    return this.database.read((connection) => {
+      const rows = connection.prepare(`
+        SELECT * FROM codex_sync_ledger
+        WHERE conversation_id = ?
+        ORDER BY created_at ASC, id ASC
+      `).all(conversationId) as CodexSyncLedgerRow[]
+      return rows.map(codexSyncItemFromRow)
+    })
   }
 
   async createManagerTask(input: {
@@ -2116,6 +2287,55 @@ function conversationSummaryFromRow(row: ConversationSummaryRow): ConversationSu
     messageCount: Number(row.messageCount),
     latestMessageAt: row.latestMessageAt ?? undefined,
     latestMessage: row.latestMessage ?? undefined
+  }
+}
+
+function codexSyncItemFromRow(row: CodexSyncLedgerRow): CodexSyncItem {
+  return {
+    id: row.id,
+    conversationId: row.conversation_id,
+    nativeThreadId: row.native_thread_id,
+    nativeTurnId: row.native_turn_id,
+    nativeItemId: row.native_item_id,
+    source: row.source,
+    kind: row.kind,
+    conversationEntryId: row.conversation_entry_id ?? undefined,
+    contentHash: row.content_hash ?? undefined,
+    createdAt: row.created_at
+  }
+}
+
+function codexSessionFromRow(row: CodexSessionRow) {
+  return {
+    conversationId: row.conversation_id,
+    bridgeSessionId: row.bridge_session_id,
+    codexThreadId: row.codex_thread_id,
+    status: row.status,
+    turnStatus: row.turn_status,
+    currentTurnId: row.current_turn_id ?? undefined,
+    cursor: row.cursor,
+    mappingState: row.mapping_state,
+    replacementOfThreadId: row.replacement_of_thread_id ?? undefined,
+    nativeName: row.native_name ?? undefined,
+    nativeCursor: row.native_cursor ?? undefined,
+    lastSyncAt: row.last_sync_at ?? undefined,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  }
+}
+
+function openClawRuntimeSessionFromRow(row: OpenClawRuntimeSessionRow): OpenClawRuntimeSession {
+  return {
+    conversationId: row.conversation_id,
+    agentId: row.agent_id as AgentKind,
+    provider: row.provider,
+    sessionNamespace: row.session_namespace,
+    state: row.state,
+    sessionKeyFingerprint: row.session_key_fingerprint,
+    bootstrapDelivered: row.bootstrap_delivered === 1,
+    lastDeliveredEntryId: row.last_delivered_entry_id ?? undefined,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
   }
 }
 

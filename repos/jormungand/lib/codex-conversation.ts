@@ -1,5 +1,6 @@
 import { formatSharedConversationPrompt } from "./conversation-history"
 import { ConversationHistorySync } from "./conversation-history-sync"
+import { projectNativeThread, type NativeTurn } from "./codex-thread-sync"
 import type { HiveMemoryRepository } from "./hive-memory/repository"
 import type { ConversationEntry } from "./hive-memory/types"
 
@@ -29,6 +30,12 @@ export interface CodexConversationState {
     turnStatus: string
     currentTurnId?: string
     cursor: number
+    mappingState?: string
+    replacementOfThreadId?: string
+    nativeName?: string
+    nativeCursor?: string
+    lastSyncAt?: string
+    syncWarning?: string
     finalText?: string
     liveText?: string
   }
@@ -52,9 +59,18 @@ interface BridgeEventsResponse extends BridgeSessionSnapshot {
   nextCursor: number
 }
 
+interface BridgeThreadResponse extends BridgeSessionSnapshot {
+  thread?: {
+    id: string
+    name?: string | null
+    turns?: NativeTurn[]
+  }
+}
+
 export async function getCodexConversationState(
   repository: HiveMemoryRepository,
-  conversationId = codexConversationId
+  conversationId = codexConversationId,
+  recoveryAttempt = false
 ): Promise<CodexConversationState> {
   const session = repository.getCodexSession(conversationId)
   if (!session) {
@@ -70,9 +86,18 @@ export async function getCodexConversationState(
   const bridgeState = await readBridgeEvents(session.bridgeSessionId, session.cursor)
 
   if (!bridgeState) {
+    if (!recoveryAttempt) {
+      try {
+        await ensureCodexSession(repository, conversationId)
+        return getCodexConversationState(repository, conversationId, true)
+      } catch {
+        // Preserve the durable mapping and expose the offline state below.
+      }
+    }
     await repository.updateCodexSession({
       conversationId,
-      status: "offline"
+      status: "offline",
+      mappingState: "offline"
     })
     return {
       conversationId,
@@ -85,6 +110,28 @@ export async function getCodexConversationState(
   }
 
   await syncConversation(repository, conversationId, bridgeState)
+  let bridgeThread: BridgeThreadResponse | undefined
+  try {
+    bridgeThread = await readBridgeThread(session.bridgeSessionId)
+  } catch (error) {
+    if (error instanceof CodexConversationError && error.status === 404) {
+      await repository.updateCodexSession({
+        conversationId,
+        status: "offline",
+        mappingState: "replacement_pending"
+      })
+    }
+  }
+  if (bridgeThread?.thread?.turns) {
+    await syncNativeThread(repository, conversationId, bridgeThread.thread)
+    await repository.updateCodexSession({
+      conversationId,
+      mappingState: "active",
+      nativeName: bridgeThread.thread.name ?? undefined,
+      nativeCursor: latestNativeTurnId(bridgeThread.thread.turns),
+      lastSyncAt: new Date().toISOString()
+    })
+  }
   const refreshedSession = repository.getCodexSession(conversationId) ?? session
   const effectiveCursor = Math.max(
     refreshedSession.cursor,
@@ -314,6 +361,58 @@ export async function stopCodexConversationSession(
   await controlCodexConversation(repository, "stop", conversationId)
 }
 
+export async function renameCodexConversationThread(
+  repository: HiveMemoryRepository,
+  conversationId: string,
+  name: string
+) {
+  const session = repository.getCodexSession(conversationId)
+  if (!session) return
+  await bridgeRequest(`/sessions/${encodeURIComponent(session.bridgeSessionId)}/name`, {
+    method: "POST",
+    body: JSON.stringify({ name })
+  })
+  await repository.updateCodexSession({
+    conversationId,
+    nativeName: name,
+    mappingState: "active"
+  })
+}
+
+export async function setCodexConversationThreadState(
+  repository: HiveMemoryRepository,
+  conversationId: string,
+  state: "active" | "archived"
+) {
+  const session = repository.getCodexSession(conversationId)
+  if (!session) return
+  const action = state === "archived" ? "archive" : "unarchive"
+  await bridgeRequest(`/sessions/${encodeURIComponent(session.bridgeSessionId)}/${action}`, {
+    method: "POST",
+    body: JSON.stringify({})
+  })
+  await repository.updateCodexSession({
+    conversationId,
+    mappingState: state
+  })
+}
+
+export async function deleteCodexConversationThread(
+  repository: HiveMemoryRepository,
+  conversationId: string
+) {
+  const session = repository.getCodexSession(conversationId)
+  if (!session) return
+  await bridgeRequest(`/sessions/${encodeURIComponent(session.bridgeSessionId)}/delete`, {
+    method: "POST",
+    body: JSON.stringify({})
+  })
+  await repository.updateCodexSession({
+    conversationId,
+    mappingState: "deleted"
+  })
+}
+
 async function ensureCodexSession(
   repository: HiveMemoryRepository,
   conversationId: string
@@ -324,16 +423,36 @@ async function ensureCodexSession(
     if (
       existingState &&
       existingState.status !== "stopped" &&
-      existingState.status !== "failed"
+      existingState.status !== "failed" &&
+      existing.mappingState !== "replacement_pending" &&
+      existing.mappingState !== "native_deleted"
     ) {
       return existing
     }
   }
 
-  const created = (await bridgeRequest("/sessions", {
-    method: "POST",
-    body: JSON.stringify({})
-  })) as BridgeSessionSnapshot
+  const nativeName = existing?.nativeName ?? codexThreadName(repository, conversationId)
+  const resumeBody = {
+    threadId: existing?.codexThreadId,
+    name: nativeName
+  }
+  let replacementOfThreadId = existing?.replacementOfThreadId
+  let created: BridgeSessionSnapshot
+  try {
+    created = (await bridgeRequest("/sessions", {
+      method: "POST",
+      body: JSON.stringify(resumeBody)
+    })) as BridgeSessionSnapshot
+  } catch (error) {
+    if (!existing || !(error instanceof CodexConversationError) || error.status !== 404) {
+      throw error
+    }
+    replacementOfThreadId = existing.codexThreadId
+    created = (await bridgeRequest("/sessions", {
+      method: "POST",
+      body: JSON.stringify({ name: nativeName })
+    })) as BridgeSessionSnapshot
+  }
 
   const session = await repository.upsertCodexSession({
     conversationId,
@@ -342,7 +461,12 @@ async function ensureCodexSession(
     status: created.status,
     turnStatus: created.turnStatus,
     currentTurnId: created.currentTurnId,
-    cursor: created.cursor
+    cursor: created.cursor,
+    mappingState: existing?.mappingState ?? "active",
+    replacementOfThreadId,
+    nativeName,
+    nativeCursor: existing?.nativeCursor,
+    lastSyncAt: existing?.lastSyncAt
   })
   if (!session) throw new Error("Codex session could not be persisted.")
   return session
@@ -400,6 +524,100 @@ async function syncConversation(
   })
 }
 
+async function syncNativeThread(
+  repository: HiveMemoryRepository,
+  conversationId: string,
+  thread: NonNullable<BridgeThreadResponse["thread"]>
+) {
+  const ledgerItems = repository.listCodexSyncItems(conversationId)
+  const harnessTurnIds = new Set(
+    ledgerItems
+      .filter((item) => item.source === "harness")
+      .map((item) => item.nativeTurnId)
+  )
+  const ledgerKeys = new Set(
+    ledgerItems.map((item) => `${item.nativeThreadId}:${item.nativeTurnId}:${item.nativeItemId}`)
+  )
+  const projection = projectNativeThread({
+    conversationId,
+    nativeThreadId: thread.id,
+    turns: thread.turns ?? [],
+    harnessTurnIds,
+    ledgerKeys
+  })
+  const nativeUserEntries = new Map(
+    ledgerItems
+      .filter((item) => item.source === "harness" && item.conversationEntryId)
+      .map((item) => [item.nativeTurnId, item.conversationEntryId!] as const)
+  )
+
+  for (const projected of projection.entries) {
+    let conversationEntryId: string
+    const replyToId = projected.replyToNativeTurnId
+      ? nativeUserEntries.get(projected.replyToNativeTurnId)
+      : undefined
+
+    if (projected.role === "user") {
+      const inserted = await repository.insertConversation({
+        workflowRunId: conversationId,
+        role: "user",
+        agentId: "codex",
+        content: projected.content,
+        importance: "normal",
+        status: projected.status,
+        artifactIds: [],
+        memoryIds: [],
+        idempotencyKey: projected.idempotencyKey
+      })
+      conversationEntryId = inserted.entry.id
+      nativeUserEntries.set(projected.nativeTurnId, conversationEntryId)
+    } else {
+      const existingResponse = replyToId
+        ? repository.listConversation(conversationId).find(
+          (entry) => entry.id === replyToId && entry.role === "user"
+        )
+          ? repository.listConversation(conversationId).find(
+            (entry) => entry.role === "agent" && entry.replyToId === replyToId && entry.agentId === "codex"
+          )
+          : undefined
+        : undefined
+      if (existingResponse) {
+        await repository.updateConversation({
+          id: existingResponse.id,
+          content: projected.content,
+          status: projected.status
+        })
+        conversationEntryId = existingResponse.id
+      } else {
+        const inserted = await repository.insertConversation({
+          workflowRunId: conversationId,
+          role: "agent",
+          agentId: "codex",
+          content: projected.content,
+          importance: "important",
+          status: projected.status,
+          replyToId,
+          artifactIds: [],
+          memoryIds: [],
+          idempotencyKey: projected.idempotencyKey
+        })
+        conversationEntryId = inserted.entry.id
+      }
+    }
+
+    await repository.recordCodexSyncItem({
+      conversationId,
+      nativeThreadId: projected.nativeThreadId,
+      nativeTurnId: projected.nativeTurnId,
+      nativeItemId: projected.nativeItemId,
+      source: projected.source,
+      kind: projected.role === "user" ? "userMessage" : "agentMessage",
+      conversationEntryId,
+      contentHash: projected.content
+    })
+  }
+}
+
 async function readBridgeEvents(bridgeSessionId: string, cursor: number) {
   try {
     return (await bridgeRequest(
@@ -407,6 +625,18 @@ async function readBridgeEvents(bridgeSessionId: string, cursor: number) {
       { method: "GET" }
     )) as BridgeEventsResponse
   } catch {
+    return undefined
+  }
+}
+
+async function readBridgeThread(bridgeSessionId: string) {
+  try {
+    return (await bridgeRequest(
+      `/sessions/${encodeURIComponent(bridgeSessionId)}/thread`,
+      { method: "GET" }
+    )) as BridgeThreadResponse
+  } catch (error) {
+    if (error instanceof CodexConversationError && error.status === 404) throw error
     return undefined
   }
 }
@@ -448,6 +678,12 @@ function toSessionState(
     turnStatus: string
     currentTurnId?: string
     cursor: number
+    mappingState?: string
+    replacementOfThreadId?: string
+    nativeName?: string
+    nativeCursor?: string
+    lastSyncAt?: string
+    syncWarning?: string
   },
   bridgeState?: BridgeSessionSnapshot
 ) {
@@ -458,6 +694,16 @@ function toSessionState(
     turnStatus: bridgeState?.turnStatus ?? session.turnStatus,
     currentTurnId: bridgeState?.currentTurnId ?? session.currentTurnId,
     cursor: bridgeState?.cursor ?? session.cursor,
+    mappingState: session.mappingState,
+    replacementOfThreadId: session.replacementOfThreadId,
+    nativeName: session.nativeName,
+    nativeCursor: session.nativeCursor,
+    lastSyncAt: session.lastSyncAt,
+    syncWarning: session.mappingState === "replacement_pending"
+      ? "Native Codex thread unavailable; the next Codex message will create a replacement."
+      : session.replacementOfThreadId
+        ? `Native Codex thread replaced: ${session.replacementOfThreadId}`
+        : session.syncWarning,
     finalText: bridgeState?.finalText,
     liveText: bridgeState?.liveText
   }
@@ -465,6 +711,15 @@ function toSessionState(
 
 function normalizeUrl(value: string) {
   return value.endsWith("/") ? value : `${value}/`
+}
+
+function latestNativeTurnId(turns: NativeTurn[]) {
+  return turns.at(-1)?.id
+}
+
+function codexThreadName(repository: HiveMemoryRepository, conversationId: string) {
+  const title = repository.getConversationMetadata(conversationId)?.title?.trim()
+  return title ? `Harness · ${title}` : undefined
 }
 
 function delay(milliseconds: number) {

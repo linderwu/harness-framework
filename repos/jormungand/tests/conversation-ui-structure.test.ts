@@ -71,6 +71,14 @@ test("conversation header surfaces the managed title, access mode, dialog copy, 
   assert.match(taskConversation, /Delete this conversation and its Codex session\?/)
 })
 
+test("conversation surfaces native Codex sync state without focus controls", () => {
+  assert.match(taskConversation, /Codex sync/)
+  assert.match(taskConversation, /formatCodexSyncStatus\(session\)/)
+  assert.match(taskConversation, /replacement_pending/)
+  assert.match(taskConversation, /Waiting for sync|Synced/)
+  assert.doesNotMatch(taskConversation, /window\.focus\(|focusCodex|bring.*foreground/i)
+})
+
 test("openclaw live stream state stays ephemeral and uses the conversation SSE before post dispatch", () => {
   assert.match(taskConversation, /AgentLiveEvent/)
   assert.match(taskConversation, /const \[agentLiveEvents, setAgentLiveEvents\] = useState<AgentLiveEvent\[\]>\(\[\]\)/)
