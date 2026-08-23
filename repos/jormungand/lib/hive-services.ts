@@ -1,8 +1,8 @@
-import { agentProfiles } from "./agents"
+import { agentProfiles, getAgentProfile, getOpenClawMainAgent } from "./agents"
 import type { AgentInvocationInput } from "./agent-bridge"
 import { invokeConfiguredAgent, invokeConfiguredHiveManager } from "./agent-bridge"
 import { getAgentPermissionMode } from "./agent-permissions"
-import { createConversationService, parseUnboundManagerDecision } from "./conversation"
+import { createConversationService } from "./conversation"
 import {
   ConversationDispatcher,
   ConversationQueueService
@@ -16,8 +16,9 @@ import { openHiveDatabase, type HiveDatabase } from "./hive-memory/database"
 import type { ConversationEntry } from "./hive-memory/types"
 import { createHiveMemoryRepository, type HiveMemoryRepository } from "./hive-memory/repository"
 import { createManagerScheduler, type ManagerSchedulerDependencies } from "./manager-scheduler"
+import { deriveOpenClawSessionIdentity } from "./openclaw-session"
 import { getWorkflowRun, listProjects, listWorkflowRuns, upsertWorkflowRun } from "./store"
-import type { AgentKind, WorkflowRun } from "./types"
+import type { AgentKind, WorkflowEventSkill, WorkflowRun } from "./types"
 import type { AgentArtifactResult } from "./workflow"
 import { createWorkflowRun } from "./workflow"
 
@@ -50,12 +51,9 @@ export function createHiveServices(options: HiveServicesOptions = {}) {
   const database = options.database ?? openHiveDatabase()
   const repository = options.repository ?? createHiveMemoryRepository(database)
   const contextBuilder = createContextBuilder(repository)
-  const openClawUnboundConversationSync = new ConversationHistorySync()
   const conversationQueue = new ConversationQueueService(repository)
   const getRun = options.getRun ?? getWorkflowRun
   const saveRun = options.saveRun ?? ((run) => upsertWorkflowRun(run, { expectedVersion: run.version }))
-  const listProjectsFn = options.listProjects ?? listProjects
-  const listWorkflowRunsFn = options.listWorkflowRuns ?? listWorkflowRuns
   const invokeAgent = options.invokeAgent ?? invokeConfiguredAgent
   const invokeManager = options.invokeManager ?? invokeConfiguredHiveManager
   const dispatchWorker: NonNullable<ManagerSchedulerDependencies["dispatchWorker"]> = async ({ run, task, agentId }) => {
@@ -185,68 +183,8 @@ export function createHiveServices(options: HiveServicesOptions = {}) {
     },
     enqueueManagerWake: (input) => scheduler.enqueue(input),
     routeUnbound: async ({ conversationId, targetAgent, content, entries }) => {
-      const syntheticRun = createWorkflowRun({
-        projectId: "",
-        projectName: "Unbound conversation",
-        repository: "",
-        requirement: content,
-        selectedAgent: targetAgent,
-        designApprovalActor: "human",
-        verificationApprovalActor: "human"
-      })
-
-      if (targetAgent === "codex") {
-        const [projects, runs] = await Promise.all([listProjectsFn(), listWorkflowRunsFn()])
-        const candidateLines = projects.map((project) => {
-          const projectRuns = runs.filter((run) => run.projectId === project.id)
-          return `- ${project.name}: projectId=${project.id}; workflowRuns=${projectRuns.map((run) => `${run.id} (${run.status})`).join(", ") || "none"}`
-        })
-        const prompt = [
-          "You are the Jormungand conversation manager.",
-          "Answer the operator and decide whether this conversation clearly belongs to one existing project and workflow run.",
-          "You may inspect and operate the local Jormungand harness when the operator asks, within the current sandbox and approval policy.",
-          "Use the recent conversation as continuity, explain what you did, and state any permission or project-binding blocker.",
-          "Keep it unbound when intent is general, ambiguous, or no matching workflow run exists.",
-          "Return exactly one JSON object: {\"reply\":\"...\",\"projectId\":string|null,\"workflowRunId\":string|null}.",
-          "Existing targets:",
-          ...(candidateLines.length ? candidateLines : ["- none"]),
-          "Recent conversation:",
-          ...entries.slice(-12).map((entry) => `${entry.role}: ${entry.content}`),
-          `Latest operator message: ${content}`
-        ].join("\n")
-        const result = await invokeAgent({
-          run: syntheticRun,
-          executor: "codex",
-          stage: "intake",
-          artifactType: "log",
-          title: "Route unbound conversation",
-          fallbackBody: JSON.stringify({ reply: content, projectId: null, workflowRunId: null }),
-          skill: {
-            id: "hive_manager.route_conversation",
-            eventType: "requirement_intake",
-            stage: "intake",
-            name: "Route unbound conversation",
-            purpose: prompt,
-            trigger: "The operator posted to the persistent unbound conversation.",
-            allowedActors: ["codex"],
-            inputs: ["recent conversation", "existing project and workflow targets"],
-            outputs: ["reply and optional validated binding"],
-            constraints: [
-              "Bind only when the target is unambiguous.",
-              "Never invent project or workflow identifiers.",
-              permissionText.workflowAuthorityConstraint
-            ],
-            gates: ["Jormungand validates the selected target."],
-            knowledgeSources: ["persisted conversation", "workspace index"],
-            verificationRules: ["Output exactly one JSON object matching the requested shape."]
-          }
-        })
-        if (result.status === "failed") return { status: "failed" as const, body: result.body }
-        return { status: "completed" as const, ...parseUnboundManagerDecision(result.body, runs) }
-      }
-
-      return routeOpenClawUnboundConversation({
-        sync: openClawUnboundConversationSync,
+      return routeUnboundConversation({
+        repository,
         conversationId,
         targetAgent,
         content,
@@ -321,30 +259,11 @@ export async function routeOpenClawUnboundConversation(input: {
     executor: input.targetAgent,
     stage: "intake",
     artifactType: "log",
-    title: "Unbound limited conversation",
-    fallbackBody: "The requested agent can only reply in unbound conversation mode.",
+    title: "Direct conversation execution",
+    fallbackBody: input.content,
     conversationId: input.conversationId,
     conversationHistory: delta.history,
-    skill: {
-      id: "conversation.unbound_limited",
-      eventType: "requirement_intake",
-      stage: "intake",
-      name: "Unbound limited conversation",
-      purpose:
-        "Respond to operator questions in safe, unbound mode without project binding, workflow mutation, or manager action.",
-      trigger: "The operator posted to the persistent unbound conversation.",
-      allowedActors: [input.targetAgent],
-      inputs: ["recent conversation text", "agent style guidance"],
-      outputs: ["final response without workflow side effects"],
-      constraints: [
-        "Do not perform project binding or manager routing.",
-        "Do not invoke external systems or irreversible actions.",
-        "Keep the answer focused on user support and guidance."
-      ],
-      gates: ["Unbound conversation is read-only and non-mutating."],
-      knowledgeSources: ["persisted unbound conversation"],
-      verificationRules: ["Return one concise text response."]
-    }
+    skill: createDirectExecutionSkill(input.targetAgent)
   })
 
   if (result.status !== "failed") {
@@ -361,8 +280,161 @@ export async function routeOpenClawUnboundConversation(input: {
   }
 }
 
-export const routeUnboundConversation = routeOpenClawUnboundConversation
+export async function routeUnboundConversation(input: {
+  repository: HiveMemoryRepository
+  conversationId: string
+  targetAgent: AgentKind
+  content: string
+  entries: Array<Pick<ConversationEntry, "id" | "role" | "agentId" | "content">>
+  invokeAgent: (
+    input: AgentInvocationInput
+  ) => Promise<{ status: "completed" | "failed"; body: string }>
+}) {
+  if (getAgentProfile(input.targetAgent).family === "openclaw") {
+    return routeDirectOpenClawConversation(input)
+  }
+
+  const syntheticRun = createWorkflowRun({
+    projectId: "",
+    projectName: "Unbound conversation",
+    repository: "",
+    requirement: input.content,
+    selectedAgent: input.targetAgent,
+    designApprovalActor: "human",
+    verificationApprovalActor: "human"
+  })
+  const result = await input.invokeAgent({
+    run: syntheticRun,
+    executor: input.targetAgent,
+    stage: "intake",
+    artifactType: "log",
+    title: "Direct conversation execution",
+    fallbackBody: input.content,
+    conversationId: input.conversationId,
+    conversationHistory: buildShareableConversationHistory(input.entries),
+    skill: createDirectExecutionSkill(input.targetAgent)
+  })
+
+  return {
+    status: result.status === "failed" ? "failed" as const : "completed" as const,
+    body: result.body
+  }
+}
 
 function isShareableConversationEntry(entry: { role: string }) {
   return entry.role === "user" || entry.role === "agent" || entry.role === "manager"
+}
+
+const directSessionNamespace = "harness-direct-v1" as const
+
+function createDirectExecutionSkill(targetAgent: AgentKind): WorkflowEventSkill {
+  return {
+    id: "conversation.direct_execution",
+    eventType: "requirement_intake",
+    stage: "intake",
+    name: "Direct conversation execution",
+    purpose:
+      "Execute the authenticated operator request directly without requiring project or workflow binding.",
+    trigger: "The operator posted to the persistent unbound conversation.",
+    allowedActors: [targetAgent],
+    inputs: ["shareable conversation history", "latest operator message"],
+    outputs: ["agent response and requested execution results"],
+    constraints: ["Report tool results, side effects, and blockers accurately."],
+    gates: ["Server authentication and bridge authorization remain required."],
+    knowledgeSources: ["persisted conversation transcript"],
+    verificationRules: ["Preserve the conversation identity and return the direct response."]
+  }
+}
+
+function buildShareableConversationHistory(
+  entries: Array<Pick<ConversationEntry, "id" | "role" | "agentId" | "content">>
+) {
+  return buildSharedConversationHistory(entries.filter(isShareableConversationEntry))
+}
+
+async function routeDirectOpenClawConversation(input: {
+  repository: HiveMemoryRepository
+  conversationId: string
+  targetAgent: AgentKind
+  content: string
+  entries: Array<Pick<ConversationEntry, "id" | "role" | "agentId" | "content">>
+  invokeAgent: (
+    input: AgentInvocationInput
+  ) => Promise<{ status: "completed" | "failed"; body: string }>
+}) {
+  const syntheticRun = createWorkflowRun({
+    projectId: "",
+    projectName: "Unbound conversation",
+    repository: "",
+    requirement: input.content,
+    selectedAgent: input.targetAgent,
+    designApprovalActor: "human",
+    verificationApprovalActor: "human"
+  })
+  const mainAgent =
+    getOpenClawMainAgent(input.targetAgent) ??
+    getAgentProfile(input.targetAgent).mainAgent ??
+    "rowlet"
+  const sessionIdentity = await deriveOpenClawSessionIdentity({
+    mainAgent,
+    conversationId: input.conversationId
+  })
+  const existingState = input.repository.getOpenClawRuntimeSession(
+    input.conversationId,
+    input.targetAgent
+  )
+  const bootstrapDelivered =
+    existingState?.sessionNamespace === directSessionNamespace &&
+    existingState.sessionKeyFingerprint === sessionIdentity.sessionKeyFingerprint &&
+    existingState.bootstrapDelivered
+  const persistedRuntime = await input.repository.upsertOpenClawRuntimeSession({
+    conversationId: input.conversationId,
+    agentId: input.targetAgent,
+    sessionNamespace: directSessionNamespace,
+    state: bootstrapDelivered ? "active" : "pending",
+    sessionKeyFingerprint: sessionIdentity.sessionKeyFingerprint,
+    bootstrapDelivered,
+    lastDeliveredEntryId: bootstrapDelivered
+      ? existingState?.lastDeliveredEntryId
+      : undefined
+  })
+  const currentUserEntryId = input.entries.at(-1)?.id
+  const result = await input.invokeAgent({
+    run: syntheticRun,
+    executor: input.targetAgent,
+    stage: "intake",
+    artifactType: "log",
+    title: "Direct conversation execution",
+    fallbackBody: input.content,
+    conversationId: input.conversationId,
+    conversationHistory: bootstrapDelivered
+      ? undefined
+      : buildShareableConversationHistory(input.entries),
+    skill: createDirectExecutionSkill(input.targetAgent)
+  })
+
+  if (result.status === "failed") {
+    await input.repository.upsertOpenClawRuntimeSession({
+      conversationId: input.conversationId,
+      agentId: input.targetAgent,
+      sessionNamespace: directSessionNamespace,
+      state: persistedRuntime?.bootstrapDelivered ? "active" : "pending",
+      sessionKeyFingerprint: sessionIdentity.sessionKeyFingerprint,
+      bootstrapDelivered: persistedRuntime?.bootstrapDelivered ?? false,
+      lastDeliveredEntryId: persistedRuntime?.lastDeliveredEntryId
+    })
+    return { status: "failed" as const, body: result.body }
+  }
+
+  await input.repository.upsertOpenClawRuntimeSession({
+    conversationId: input.conversationId,
+    agentId: input.targetAgent,
+    sessionNamespace: directSessionNamespace,
+    state: "active",
+    sessionKeyFingerprint: sessionIdentity.sessionKeyFingerprint,
+    bootstrapDelivered: true,
+    lastDeliveredEntryId: currentUserEntryId
+  })
+
+  return { status: "completed" as const, body: result.body }
 }

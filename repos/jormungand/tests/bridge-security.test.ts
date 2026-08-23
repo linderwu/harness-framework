@@ -60,7 +60,15 @@ test("Codex bridge rejects a successful exit without a final response", () => {
 
 test("unbound conversation source contracts direct agent execution", () => {
   assert.match(hiveServicesSource, /routeUnboundConversation/)
-  assert.match(hiveServicesSource, /id: "conversation\.unbound"/)
+  assert.match(hiveServicesSource, /id: "conversation\.direct_execution"/)
+  assert.match(
+    hiveServicesSource,
+    /directly without requiring project or workflow binding/
+  )
+  assert.match(
+    hiveServicesSource,
+    /Server authentication and bridge authorization remain required/
+  )
   assert.doesNotMatch(hiveServicesSource, /conversation\.unbound_limited/)
   assert.doesNotMatch(hiveServicesSource, /Recent conversation:/)
 })
