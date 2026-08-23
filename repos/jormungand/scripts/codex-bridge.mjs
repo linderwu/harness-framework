@@ -127,7 +127,7 @@ const server = http.createServer(async (request, response) => {
     }
 
     const codexSessionMatch = requestUrl.pathname.match(
-      /^\/sessions\/([^/]+)(?:\/(events|turns|thread|interrupt|resume|stop|name|archive|delete))?$/
+      /^\/sessions\/([^/]+)(?:\/(events|turns|thread|interrupt|resume|stop|name|archive|unarchive|delete))?$/
     )
 
     if (request.method === "POST" && requestUrl.pathname === "/sessions") {
@@ -164,11 +164,19 @@ const server = http.createServer(async (request, response) => {
       }
 
       if (request.method === "GET" && action === "thread") {
-        const thread = await session.appServerSession.readThread()
-        sendJson(response, 200, {
-          ...codexSessionSnapshot(session),
-          thread: thread?.thread ?? thread
-        })
+        try {
+          const thread = await session.appServerSession.readThread()
+          sendJson(response, 200, {
+            ...codexSessionSnapshot(session),
+            thread: thread?.thread ?? thread
+          })
+        } catch (error) {
+          if (isMissingNativeThreadError(error)) {
+            sendJson(response, 404, { error: formatError(error) })
+          } else {
+            throw error
+          }
+        }
         return
       }
 
@@ -201,6 +209,13 @@ const server = http.createServer(async (request, response) => {
       if (request.method === "POST" && action === "archive") {
         await session.appServerSession.archive()
         session.status = "archived"
+        sendJson(response, 200, codexSessionSnapshot(session))
+        return
+      }
+
+      if (request.method === "POST" && action === "unarchive") {
+        await session.appServerSession.unarchive()
+        session.status = "idle"
         sendJson(response, 200, codexSessionSnapshot(session))
         return
       }
@@ -453,7 +468,8 @@ const server = http.createServer(async (request, response) => {
     rememberCompletedAgentRun(responseBody)
     sendJson(response, 200, responseBody)
   } catch (error) {
-    sendJson(response, 500, { error: formatError(error) })
+    const status = Number.isInteger(error?.httpStatus) ? error.httpStatus : 500
+    sendJson(response, status, { error: formatError(error) })
   }
 })
 
@@ -1403,7 +1419,15 @@ async function createCodexSession(
     threadId: options.threadId,
     name: options.name
   })
-  const started = await session.appServerSession.start()
+  let started
+  try {
+    started = await session.appServerSession.start()
+  } catch (error) {
+    if (options.threadId && isMissingNativeThreadError(error)) {
+      error.httpStatus = 404
+    }
+    throw error
+  }
   session.threadId = started.threadId
   session.status = "idle"
   addCodexSessionEvent(session, {
@@ -1487,8 +1511,11 @@ function handleCodexSessionMessage(session, message) {
   if (message.id !== undefined && session.pendingRequests.has(message.id)) {
     const pending = session.pendingRequests.get(message.id)
     session.pendingRequests.delete(message.id)
-    if (message.error) pending.reject(new Error(message.error.message ?? "Codex request failed."))
-    else pending.resolve(message.result)
+        if (message.error) {
+          const error = new Error(message.error.message ?? "Codex request failed.")
+          error.codexCode = message.error.code
+          pending.reject(error)
+        } else pending.resolve(message.result)
     return
   }
 
@@ -1756,6 +1783,12 @@ function tail(value, maxLength) {
 
 function formatError(error) {
   return error instanceof Error ? error.message : String(error)
+}
+
+function isMissingNativeThreadError(error) {
+  return /thread(?:\s+|[-_])?(?:not found|does not exist|unknown)|(?:not found|does not exist|unknown).*thread/i.test(
+    formatError(error)
+  )
 }
 
 function isLoopbackHost(value) {

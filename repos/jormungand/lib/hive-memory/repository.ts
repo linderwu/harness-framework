@@ -142,6 +142,23 @@ type CodexSyncLedgerRow = {
   created_at: string
 }
 
+type CodexSessionRow = {
+  conversation_id: string
+  bridge_session_id: string
+  codex_thread_id: string
+  status: string
+  turn_status: string
+  current_turn_id: string | null
+  cursor: number
+  mapping_state: CodexMappingState
+  replacement_of_thread_id: string | null
+  native_name: string | null
+  native_cursor: string | null
+  last_sync_at: string | null
+  created_at: string
+  updated_at: string
+}
+
 interface CreateInboundA2ARequestInput {
   workflowRunId?: string
   contextId: string
@@ -1302,40 +1319,20 @@ export class HiveMemoryRepository {
     return this.database.read((connection) => {
       const row = connection.prepare(`
         SELECT * FROM codex_sessions WHERE conversation_id = ?
-      `).get(conversationId) as {
-        conversation_id: string
-        bridge_session_id: string
-        codex_thread_id: string
-        status: string
-        turn_status: string
-        current_turn_id: string | null
-        cursor: number
-        mapping_state: CodexMappingState
-        replacement_of_thread_id: string | null
-        native_name: string | null
-        native_cursor: string | null
-        last_sync_at: string | null
-        created_at: string
-        updated_at: string
-      } | undefined
+      `).get(conversationId) as CodexSessionRow | undefined
 
       if (!row) return undefined
-      return {
-        conversationId: row.conversation_id,
-        bridgeSessionId: row.bridge_session_id,
-        codexThreadId: row.codex_thread_id,
-        status: row.status,
-        turnStatus: row.turn_status,
-        currentTurnId: row.current_turn_id ?? undefined,
-        cursor: row.cursor,
-        mappingState: row.mapping_state,
-        replacementOfThreadId: row.replacement_of_thread_id ?? undefined,
-        nativeName: row.native_name ?? undefined,
-        nativeCursor: row.native_cursor ?? undefined,
-        lastSyncAt: row.last_sync_at ?? undefined,
-        createdAt: row.created_at,
-        updatedAt: row.updated_at
-      }
+      return codexSessionFromRow(row)
+    })
+  }
+
+  listCodexSessions() {
+    return this.database.read((connection) => {
+      const rows = connection.prepare(`
+        SELECT * FROM codex_sessions
+        ORDER BY updated_at ASC, conversation_id ASC
+      `).all() as CodexSessionRow[]
+      return rows.map(codexSessionFromRow)
     })
   }
 
@@ -2246,6 +2243,25 @@ function codexSyncItemFromRow(row: CodexSyncLedgerRow): CodexSyncItem {
     conversationEntryId: row.conversation_entry_id ?? undefined,
     contentHash: row.content_hash ?? undefined,
     createdAt: row.created_at
+  }
+}
+
+function codexSessionFromRow(row: CodexSessionRow) {
+  return {
+    conversationId: row.conversation_id,
+    bridgeSessionId: row.bridge_session_id,
+    codexThreadId: row.codex_thread_id,
+    status: row.status,
+    turnStatus: row.turn_status,
+    currentTurnId: row.current_turn_id ?? undefined,
+    cursor: row.cursor,
+    mappingState: row.mapping_state,
+    replacementOfThreadId: row.replacement_of_thread_id ?? undefined,
+    nativeName: row.native_name ?? undefined,
+    nativeCursor: row.native_cursor ?? undefined,
+    lastSyncAt: row.last_sync_at ?? undefined,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
   }
 }
 

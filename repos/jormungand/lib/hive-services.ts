@@ -9,7 +9,8 @@ import {
 } from "./conversation-dispatcher"
 import { buildSharedConversationHistory } from "./conversation-history"
 import { ConversationHistorySync } from "./conversation-history-sync"
-import { dispatchCodexConversationEntry } from "./codex-conversation"
+import { dispatchCodexConversationEntry, getCodexConversationState } from "./codex-conversation"
+import { createCodexSyncWorker } from "./codex-sync-worker"
 import { createContextBuilder, createPermissionModeText } from "./context-builder"
 import { openHiveDatabase, type HiveDatabase } from "./hive-memory/database"
 import type { ConversationEntry } from "./hive-memory/types"
@@ -33,12 +34,13 @@ type HiveServicesOptions = Partial<HiveServicesStore> & {
   permissionMode?: ReturnType<typeof getAgentPermissionMode>
   invokeAgent?: (input: AgentInvocationInput) => Promise<AgentArtifactResult>
   invokeManager?: typeof invokeConfiguredHiveManager
+  startCodexSyncWorker?: boolean
 }
 
 let services: ReturnType<typeof createHiveServices> | undefined
 
 export function getDefaultHiveServices() {
-  services ??= createHiveServices()
+  services ??= createHiveServices({ startCodexSyncWorker: true })
   return services
 }
 
@@ -265,7 +267,21 @@ export function createHiveServices(options: HiveServicesOptions = {}) {
     }
     return conversation.dispatchQueuedEntry(input)
   })
-  return { database, repository, scheduler, conversation, conversationQueue, conversationDispatcher, dispatchWorker }
+  const codexSyncWorker = createCodexSyncWorker({
+    repository,
+    syncConversation: (conversationId) => getCodexConversationState(repository, conversationId)
+  })
+  if (options.startCodexSyncWorker) codexSyncWorker.start()
+  return {
+    database,
+    repository,
+    scheduler,
+    conversation,
+    conversationQueue,
+    conversationDispatcher,
+    dispatchWorker,
+    codexSyncWorker
+  }
 }
 
 function workerHandoffArtifactId(taskId: string, attemptCount: number) {

@@ -38,7 +38,10 @@ async function loadSessionModule() {
       permissionMode: "full" | "restricted"
       threadId?: string
       name?: string
-    }) => { start: () => Promise<{ threadId: string }> }
+    }) => {
+      start: () => Promise<{ threadId: string }>
+      unarchive: () => Promise<void>
+    }
   }
 }
 
@@ -84,5 +87,25 @@ test("full mode applies danger full access without administrator elevation", asy
   assert.deepEqual(
     transport.requests.find((request) => request.method === "thread/name/set")?.params,
     { threadId: "thread-new", name: "Harness · New" }
+  )
+})
+
+test("unarchives a native thread through the App Server", async () => {
+  const module = await loadSessionModule()
+  const transport = createRecordingTransport()
+  const session = module.createCodexAppServerSession({
+    request: transport.request,
+    notify: (method, params) => transport.requests.push({ method, params }),
+    workspacePath: "C:/workspace",
+    permissionMode: "full",
+    threadId: "thread-archived"
+  })
+
+  await session.start()
+  await session.unarchive()
+
+  assert.equal(
+    transport.requests.some((request) => request.method === "thread/unarchive"),
+    true
   )
 })

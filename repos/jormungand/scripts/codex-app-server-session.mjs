@@ -55,6 +55,10 @@ export function createCodexAppServerSession(input) {
       await input.request("thread/archive", { threadId: requireThreadId() })
     },
 
+    async unarchive() {
+      await input.request("thread/unarchive", { threadId: requireThreadId() })
+    },
+
     async delete() {
       await input.request("thread/delete", { threadId: requireThreadId() })
     },

@@ -30,6 +30,12 @@ export interface CodexConversationState {
     turnStatus: string
     currentTurnId?: string
     cursor: number
+    mappingState?: string
+    replacementOfThreadId?: string
+    nativeName?: string
+    nativeCursor?: string
+    lastSyncAt?: string
+    syncWarning?: string
     finalText?: string
     liveText?: string
   }
@@ -63,7 +69,8 @@ interface BridgeThreadResponse extends BridgeSessionSnapshot {
 
 export async function getCodexConversationState(
   repository: HiveMemoryRepository,
-  conversationId = codexConversationId
+  conversationId = codexConversationId,
+  recoveryAttempt = false
 ): Promise<CodexConversationState> {
   const session = repository.getCodexSession(conversationId)
   if (!session) {
@@ -79,9 +86,18 @@ export async function getCodexConversationState(
   const bridgeState = await readBridgeEvents(session.bridgeSessionId, session.cursor)
 
   if (!bridgeState) {
+    if (!recoveryAttempt) {
+      try {
+        await ensureCodexSession(repository, conversationId)
+        return getCodexConversationState(repository, conversationId, true)
+      } catch {
+        // Preserve the durable mapping and expose the offline state below.
+      }
+    }
     await repository.updateCodexSession({
       conversationId,
-      status: "offline"
+      status: "offline",
+      mappingState: "offline"
     })
     return {
       conversationId,
@@ -334,6 +350,58 @@ export async function stopCodexConversationSession(
   await controlCodexConversation(repository, "stop", conversationId)
 }
 
+export async function renameCodexConversationThread(
+  repository: HiveMemoryRepository,
+  conversationId: string,
+  name: string
+) {
+  const session = repository.getCodexSession(conversationId)
+  if (!session) return
+  await bridgeRequest(`/sessions/${encodeURIComponent(session.bridgeSessionId)}/name`, {
+    method: "POST",
+    body: JSON.stringify({ name })
+  })
+  await repository.updateCodexSession({
+    conversationId,
+    nativeName: name,
+    mappingState: "active"
+  })
+}
+
+export async function setCodexConversationThreadState(
+  repository: HiveMemoryRepository,
+  conversationId: string,
+  state: "active" | "archived"
+) {
+  const session = repository.getCodexSession(conversationId)
+  if (!session) return
+  const action = state === "archived" ? "archive" : "unarchive"
+  await bridgeRequest(`/sessions/${encodeURIComponent(session.bridgeSessionId)}/${action}`, {
+    method: "POST",
+    body: JSON.stringify({})
+  })
+  await repository.updateCodexSession({
+    conversationId,
+    mappingState: state
+  })
+}
+
+export async function deleteCodexConversationThread(
+  repository: HiveMemoryRepository,
+  conversationId: string
+) {
+  const session = repository.getCodexSession(conversationId)
+  if (!session) return
+  await bridgeRequest(`/sessions/${encodeURIComponent(session.bridgeSessionId)}/delete`, {
+    method: "POST",
+    body: JSON.stringify({})
+  })
+  await repository.updateCodexSession({
+    conversationId,
+    mappingState: "deleted"
+  })
+}
+
 async function ensureCodexSession(
   repository: HiveMemoryRepository,
   conversationId: string
@@ -350,10 +418,28 @@ async function ensureCodexSession(
     }
   }
 
-  const created = (await bridgeRequest("/sessions", {
-    method: "POST",
-    body: JSON.stringify({})
-  })) as BridgeSessionSnapshot
+  const nativeName = existing?.nativeName ?? codexThreadName(repository, conversationId)
+  const resumeBody = {
+    threadId: existing?.codexThreadId,
+    name: nativeName
+  }
+  let replacementOfThreadId = existing?.replacementOfThreadId
+  let created: BridgeSessionSnapshot
+  try {
+    created = (await bridgeRequest("/sessions", {
+      method: "POST",
+      body: JSON.stringify(resumeBody)
+    })) as BridgeSessionSnapshot
+  } catch (error) {
+    if (!existing || !(error instanceof CodexConversationError) || error.status !== 404) {
+      throw error
+    }
+    replacementOfThreadId = existing.codexThreadId
+    created = (await bridgeRequest("/sessions", {
+      method: "POST",
+      body: JSON.stringify({ name: nativeName })
+    })) as BridgeSessionSnapshot
+  }
 
   const session = await repository.upsertCodexSession({
     conversationId,
@@ -362,7 +448,12 @@ async function ensureCodexSession(
     status: created.status,
     turnStatus: created.turnStatus,
     currentTurnId: created.currentTurnId,
-    cursor: created.cursor
+    cursor: created.cursor,
+    mappingState: existing?.mappingState ?? "active",
+    replacementOfThreadId,
+    nativeName,
+    nativeCursor: existing?.nativeCursor,
+    lastSyncAt: existing?.lastSyncAt
   })
   if (!session) throw new Error("Codex session could not be persisted.")
   return session
@@ -573,6 +664,12 @@ function toSessionState(
     turnStatus: string
     currentTurnId?: string
     cursor: number
+    mappingState?: string
+    replacementOfThreadId?: string
+    nativeName?: string
+    nativeCursor?: string
+    lastSyncAt?: string
+    syncWarning?: string
   },
   bridgeState?: BridgeSessionSnapshot
 ) {
@@ -583,6 +680,12 @@ function toSessionState(
     turnStatus: bridgeState?.turnStatus ?? session.turnStatus,
     currentTurnId: bridgeState?.currentTurnId ?? session.currentTurnId,
     cursor: bridgeState?.cursor ?? session.cursor,
+    mappingState: session.mappingState,
+    replacementOfThreadId: session.replacementOfThreadId,
+    nativeName: session.nativeName,
+    nativeCursor: session.nativeCursor,
+    lastSyncAt: session.lastSyncAt,
+    syncWarning: session.syncWarning,
     finalText: bridgeState?.finalText,
     liveText: bridgeState?.liveText
   }
@@ -594,6 +697,11 @@ function normalizeUrl(value: string) {
 
 function latestNativeTurnId(turns: NativeTurn[]) {
   return turns.at(-1)?.id
+}
+
+function codexThreadName(repository: HiveMemoryRepository, conversationId: string) {
+  const title = repository.getConversationMetadata(conversationId)?.title?.trim()
+  return title ? `Harness · ${title}` : undefined
 }
 
 function delay(milliseconds: number) {
