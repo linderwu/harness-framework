@@ -1,5 +1,6 @@
 import { formatSharedConversationPrompt } from "./conversation-history"
 import { ConversationHistorySync } from "./conversation-history-sync"
+import { projectNativeThread, type NativeTurn } from "./codex-thread-sync"
 import type { HiveMemoryRepository } from "./hive-memory/repository"
 import type { ConversationEntry } from "./hive-memory/types"
 
@@ -52,6 +53,14 @@ interface BridgeEventsResponse extends BridgeSessionSnapshot {
   nextCursor: number
 }
 
+interface BridgeThreadResponse extends BridgeSessionSnapshot {
+  thread?: {
+    id: string
+    name?: string | null
+    turns?: NativeTurn[]
+  }
+}
+
 export async function getCodexConversationState(
   repository: HiveMemoryRepository,
   conversationId = codexConversationId
@@ -85,6 +94,17 @@ export async function getCodexConversationState(
   }
 
   await syncConversation(repository, conversationId, bridgeState)
+  const bridgeThread = await readBridgeThread(session.bridgeSessionId)
+  if (bridgeThread?.thread?.turns) {
+    await syncNativeThread(repository, conversationId, bridgeThread.thread)
+    await repository.updateCodexSession({
+      conversationId,
+      mappingState: "active",
+      nativeName: bridgeThread.thread.name ?? undefined,
+      nativeCursor: latestNativeTurnId(bridgeThread.thread.turns),
+      lastSyncAt: new Date().toISOString()
+    })
+  }
   const refreshedSession = repository.getCodexSession(conversationId) ?? session
   const effectiveCursor = Math.max(
     refreshedSession.cursor,
@@ -400,12 +420,117 @@ async function syncConversation(
   })
 }
 
+async function syncNativeThread(
+  repository: HiveMemoryRepository,
+  conversationId: string,
+  thread: NonNullable<BridgeThreadResponse["thread"]>
+) {
+  const ledgerItems = repository.listCodexSyncItems(conversationId)
+  const harnessTurnIds = new Set(
+    ledgerItems
+      .filter((item) => item.source === "harness")
+      .map((item) => item.nativeTurnId)
+  )
+  const ledgerKeys = new Set(
+    ledgerItems.map((item) => `${item.nativeThreadId}:${item.nativeTurnId}:${item.nativeItemId}`)
+  )
+  const projection = projectNativeThread({
+    conversationId,
+    nativeThreadId: thread.id,
+    turns: thread.turns ?? [],
+    harnessTurnIds,
+    ledgerKeys
+  })
+  const nativeUserEntries = new Map(
+    ledgerItems
+      .filter((item) => item.source === "harness" && item.conversationEntryId)
+      .map((item) => [item.nativeTurnId, item.conversationEntryId!] as const)
+  )
+
+  for (const projected of projection.entries) {
+    let conversationEntryId: string
+    const replyToId = projected.replyToNativeTurnId
+      ? nativeUserEntries.get(projected.replyToNativeTurnId)
+      : undefined
+
+    if (projected.role === "user") {
+      const inserted = await repository.insertConversation({
+        workflowRunId: conversationId,
+        role: "user",
+        agentId: "codex",
+        content: projected.content,
+        importance: "normal",
+        status: projected.status,
+        artifactIds: [],
+        memoryIds: [],
+        idempotencyKey: projected.idempotencyKey
+      })
+      conversationEntryId = inserted.entry.id
+      nativeUserEntries.set(projected.nativeTurnId, conversationEntryId)
+    } else {
+      const existingResponse = replyToId
+        ? repository.listConversation(conversationId).find(
+          (entry) => entry.id === replyToId && entry.role === "user"
+        )
+          ? repository.listConversation(conversationId).find(
+            (entry) => entry.role === "agent" && entry.replyToId === replyToId && entry.agentId === "codex"
+          )
+          : undefined
+        : undefined
+      if (existingResponse) {
+        await repository.updateConversation({
+          id: existingResponse.id,
+          content: projected.content,
+          status: projected.status
+        })
+        conversationEntryId = existingResponse.id
+      } else {
+        const inserted = await repository.insertConversation({
+          workflowRunId: conversationId,
+          role: "agent",
+          agentId: "codex",
+          content: projected.content,
+          importance: "important",
+          status: projected.status,
+          replyToId,
+          artifactIds: [],
+          memoryIds: [],
+          idempotencyKey: projected.idempotencyKey
+        })
+        conversationEntryId = inserted.entry.id
+      }
+    }
+
+    await repository.recordCodexSyncItem({
+      conversationId,
+      nativeThreadId: projected.nativeThreadId,
+      nativeTurnId: projected.nativeTurnId,
+      nativeItemId: projected.nativeItemId,
+      source: projected.source,
+      kind: projected.role === "user" ? "userMessage" : "agentMessage",
+      conversationEntryId,
+      contentHash: projected.content
+    })
+  }
+}
+
 async function readBridgeEvents(bridgeSessionId: string, cursor: number) {
   try {
     return (await bridgeRequest(
       `/sessions/${encodeURIComponent(bridgeSessionId)}/events?after=${cursor}`,
       { method: "GET" }
     )) as BridgeEventsResponse
+  } catch {
+    return undefined
+  }
+}
+
+async function readBridgeThread(bridgeSessionId: string) {
+  try {
+    return (await bridgeRequest(
+      `/sessions/${encodeURIComponent(bridgeSessionId)}/thread`,
+      { method: "GET" }
+    )) as BridgeThreadResponse
   } catch {
     return undefined
   }
@@ -465,6 +590,10 @@ function toSessionState(
 
 function normalizeUrl(value: string) {
   return value.endsWith("/") ? value : `${value}/`
+}
+
+function latestNativeTurnId(turns: NativeTurn[]) {
+  return turns.at(-1)?.id
 }
 
 function delay(milliseconds: number) {
