@@ -215,10 +215,18 @@ export async function postCodexConversationMessage(input: {
   const requestContent = formatSharedConversationPrompt(delta.history)
 
   try {
-    await bridgeRequest(`/sessions/${encodeURIComponent(session.bridgeSessionId)}/turns`, {
+    const turnResult = await bridgeRequest(`/sessions/${encodeURIComponent(session.bridgeSessionId)}/turns`, {
       method: "POST",
       body: JSON.stringify({ content: requestContent })
     })
+    await recordHarnessTurnStart(
+      input.repository,
+      conversationId,
+      session,
+      userEntry,
+      turnResult,
+      requestContent
+    )
     codexConversationSync.markDelivered({
       key: syncKey,
       sessionIdentity,
@@ -290,10 +298,18 @@ export async function dispatchCodexConversationEntry(input: {
   })
   const requestContent = formatSharedConversationPrompt(delta.history)
 
-  await bridgeRequest(`/sessions/${encodeURIComponent(session.bridgeSessionId)}/turns`, {
+  const turnResult = await bridgeRequest(`/sessions/${encodeURIComponent(session.bridgeSessionId)}/turns`, {
     method: "POST",
     body: JSON.stringify({ content: requestContent })
   })
+  await recordHarnessTurnStart(
+    input.repository,
+    input.conversationId,
+    session,
+    userEntry,
+    turnResult,
+    requestContent
+  )
   codexConversationSync.markDelivered({
     key: syncKey,
     sessionIdentity,
@@ -725,6 +741,28 @@ function normalizeUrl(value: string) {
 
 function latestNativeTurnId(turns: NativeTurn[]) {
   return turns.at(-1)?.id
+}
+
+async function recordHarnessTurnStart(
+  repository: HiveMemoryRepository,
+  conversationId: string,
+  session: { codexThreadId: string },
+  userEntry: ConversationEntry,
+  turnResult: unknown,
+  requestContent: string
+) {
+  const turnId = (turnResult as { turn?: { id?: unknown } } | undefined)?.turn?.id
+  if (typeof turnId !== "string" || !turnId) return
+  await repository.recordCodexSyncItem({
+    conversationId,
+    nativeThreadId: session.codexThreadId,
+    nativeTurnId: turnId,
+    nativeItemId: `harness-user:${turnId}`,
+    source: "harness",
+    kind: "userMessage",
+    conversationEntryId: userEntry.id,
+    contentHash: requestContent
+  })
 }
 
 function codexThreadName(repository: HiveMemoryRepository, conversationId: string) {

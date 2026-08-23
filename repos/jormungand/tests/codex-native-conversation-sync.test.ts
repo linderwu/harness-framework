@@ -4,6 +4,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
 import {
+  dispatchCodexConversationEntry,
   getCodexConversationState,
   postCodexConversationMessage
 } from "../lib/codex-conversation"
@@ -437,4 +438,124 @@ test("marks a deleted native thread replacement-pending without deleting Harness
   assert.equal(state.session?.mappingState, "replacement_pending")
   assert.match(state.session?.syncWarning ?? "", /replacement/i)
   assert.equal(repository.listConversation(conversationId)[0]?.id, entry.entry.id)
+})
+
+test("does not project the shared Harness prompt back as a duplicate native user entry", async (t) => {
+  const dataDir = await mkdtemp(join(tmpdir(), "jormungand-native-codex-synthetic-"))
+  const database = openHiveDatabase({ dataDir })
+  const repository = createHiveMemoryRepository(database)
+  const conversationId = "conversation:native-synthetic"
+  const user = await repository.insertConversation({
+    workflowRunId: conversationId,
+    role: "user",
+    agentId: "codex",
+    content: "real Harness prompt",
+    importance: "normal",
+    status: "queued",
+    artifactIds: [],
+    memoryIds: [],
+    idempotencyKey: "synthetic-user"
+  })
+  const response = await repository.insertConversation({
+    workflowRunId: conversationId,
+    role: "agent",
+    agentId: "codex",
+    content: "Codex is working...",
+    importance: "important",
+    status: "queued",
+    replyToId: user.entry.id,
+    artifactIds: [],
+    memoryIds: [],
+    idempotencyKey: "synthetic-user:response"
+  })
+  await repository.upsertCodexSession({
+    conversationId,
+    bridgeSessionId: "bridge-synthetic",
+    codexThreadId: "thread-synthetic",
+    status: "idle",
+    turnStatus: "completed",
+    cursor: 0
+  })
+  t.after(async () => {
+    database.close()
+    await rm(dataDir, { recursive: true, force: true })
+  })
+
+  const previousBridgeUrl = process.env.CODEX_BRIDGE_URL
+  process.env.CODEX_BRIDGE_URL = "http://codex.test"
+  t.after(() => {
+    if (previousBridgeUrl === undefined) delete process.env.CODEX_BRIDGE_URL
+    else process.env.CODEX_BRIDGE_URL = previousBridgeUrl
+  })
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = async (input, init) => {
+    const url = String(input)
+    if (url.endsWith("/sessions/bridge-synthetic/turns")) {
+      return jsonResponse({
+        id: "bridge-synthetic",
+        threadId: "thread-synthetic",
+        status: "running",
+        turnStatus: "inProgress",
+        cursor: 0,
+        turn: { id: "turn-synthetic", status: "inProgress" }
+      }, 202)
+    }
+    if (url.endsWith("/sessions/bridge-synthetic/events?after=0")) {
+      return jsonResponse({
+        id: "bridge-synthetic",
+        threadId: "thread-synthetic",
+        status: "idle",
+        turnStatus: "completed",
+        cursor: 0,
+        events: [],
+        nextCursor: 0,
+        finalText: "native Harness response"
+      })
+    }
+    if (url.endsWith("/sessions/bridge-synthetic/thread")) {
+      return jsonResponse({
+        id: "bridge-synthetic",
+        threadId: "thread-synthetic",
+        thread: {
+          id: "thread-synthetic",
+          turns: [{
+            id: "turn-synthetic",
+            status: "completed",
+            items: [
+              {
+                id: "item-native-user",
+                type: "userMessage",
+                content: [{ type: "text", text: "[shared Harness context] real Harness prompt" }]
+              },
+              {
+                id: "item-native-agent",
+                type: "agentMessage",
+                text: "native Harness response",
+                phase: "final_answer"
+              }
+            ]
+          }]
+        }
+      })
+    }
+    throw new Error(`Unexpected fetch: ${url} ${String(init?.method ?? "GET")}`)
+  }
+  t.after(() => {
+    globalThis.fetch = originalFetch
+  })
+
+  const result = await dispatchCodexConversationEntry({
+    repository,
+    conversationId,
+    userEntryId: user.entry.id,
+    responseEntryId: response.entry.id,
+    pollIntervalMs: 1
+  })
+
+  assert.equal(result.status, "completed")
+  assert.deepEqual(repository.listConversation(conversationId).map((entry) => entry.content), [
+    "real Harness prompt",
+    "native Harness response"
+  ])
+  assert.equal(repository.listCodexSyncItems(conversationId).filter((item) => item.nativeTurnId === "turn-synthetic").length, 2)
 })
