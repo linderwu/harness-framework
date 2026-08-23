@@ -234,6 +234,7 @@ export async function invokeConfiguredAgent(
   } catch (error) {
     const result: AgentArtifactResult = {
       status: "failed",
+      deliveryState: "unknown",
       source,
       body: `${profile.label} bridge is not reachable: ${formatError(error)}`
     }
@@ -321,6 +322,7 @@ async function pollBridgeRunByIdempotencyKey(input: {
 
   return {
     status: "failed",
+    deliveryState: "unknown",
     source: input.source,
     idempotencyKey: input.idempotencyKey,
     body: `${input.profileLabel} bridge timed out and recovery polling did not return a completed result (${lastStatus}).`

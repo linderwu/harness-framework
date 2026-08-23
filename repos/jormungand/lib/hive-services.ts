@@ -282,7 +282,7 @@ export async function routeUnboundConversation(input: {
   entries: Array<Pick<ConversationEntry, "id" | "role" | "agentId" | "content">>
   invokeAgent: (
     input: AgentInvocationInput
-  ) => Promise<{ status: "completed" | "failed"; body: string }>
+  ) => Promise<Pick<AgentArtifactResult, "status" | "body" | "deliveryState">>
 }) {
   if (getAgentProfile(input.targetAgent).family === "openclaw") {
     return routeDirectOpenClawConversation(input)
@@ -358,7 +358,7 @@ async function routeDirectOpenClawConversation(input: {
   entries: Array<Pick<ConversationEntry, "id" | "role" | "agentId" | "content">>
   invokeAgent: (
     input: AgentInvocationInput
-  ) => Promise<{ status: "completed" | "failed"; body: string }>
+  ) => Promise<Pick<AgentArtifactResult, "status" | "body" | "deliveryState">>
 }) {
   const syntheticRun = createWorkflowRun({
     projectId: "",
@@ -381,18 +381,23 @@ async function routeDirectOpenClawConversation(input: {
     input.conversationId,
     input.targetAgent
   )
-  const bootstrapDelivered =
+  const sessionMatches =
     existingState?.sessionNamespace === directSessionNamespace &&
-    existingState.sessionKeyFingerprint === sessionIdentity.sessionKeyFingerprint &&
-    existingState.bootstrapDelivered
+    existingState.sessionKeyFingerprint === sessionIdentity.sessionKeyFingerprint
+  const bootstrapDelivered = sessionMatches && existingState?.bootstrapDelivered === true
+  const deliveryUnknown = sessionMatches && existingState?.state === "delivery_unknown"
   const persistedRuntime = await input.repository.upsertOpenClawRuntimeSession({
     conversationId: input.conversationId,
     agentId: input.targetAgent,
     sessionNamespace: directSessionNamespace,
-    state: bootstrapDelivered ? "active" : "pending",
+    state: deliveryUnknown
+      ? "delivery_unknown"
+      : bootstrapDelivered
+        ? "active"
+        : "pending",
     sessionKeyFingerprint: sessionIdentity.sessionKeyFingerprint,
     bootstrapDelivered,
-    lastDeliveredEntryId: bootstrapDelivered
+    lastDeliveredEntryId: sessionMatches
       ? existingState?.lastDeliveredEntryId
       : undefined
   })
@@ -407,18 +412,31 @@ async function routeDirectOpenClawConversation(input: {
     title: "Direct conversation execution",
     fallbackBody: input.content,
     conversationId: input.conversationId,
-    conversationHistory: bootstrapDelivered
+    conversationHistory: bootstrapDelivered || deliveryUnknown
       ? undefined
       : buildShareableConversationHistory(input.entries),
     skill: createDirectExecutionSkill(input.targetAgent)
   })
+
+  if (result.deliveryState === "unknown") {
+    await input.repository.upsertOpenClawRuntimeSession({
+      conversationId: input.conversationId,
+      agentId: input.targetAgent,
+      sessionNamespace: directSessionNamespace,
+      state: "delivery_unknown",
+      sessionKeyFingerprint: sessionIdentity.sessionKeyFingerprint,
+      bootstrapDelivered: persistedRuntime?.bootstrapDelivered ?? false,
+      lastDeliveredEntryId: persistedRuntime?.lastDeliveredEntryId
+    })
+    return { status: "failed" as const, body: result.body }
+  }
 
   if (result.status === "failed") {
     await input.repository.upsertOpenClawRuntimeSession({
       conversationId: input.conversationId,
       agentId: input.targetAgent,
       sessionNamespace: directSessionNamespace,
-      state: persistedRuntime?.bootstrapDelivered ? "active" : "pending",
+      state: persistedRuntime?.state ?? "pending",
       sessionKeyFingerprint: sessionIdentity.sessionKeyFingerprint,
       bootstrapDelivered: persistedRuntime?.bootstrapDelivered ?? false,
       lastDeliveredEntryId: persistedRuntime?.lastDeliveredEntryId

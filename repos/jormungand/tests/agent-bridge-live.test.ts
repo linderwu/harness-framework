@@ -716,3 +716,36 @@ test("falls back to stderr when the bridge output is exactly empty", { concurren
   assert.equal(result.status, "failed")
   assert.equal(result.body, "Actionable stderr")
 })
+
+test("marks recovery timeout delivery as unknown", { concurrency: false }, async (t) => {
+  restoreEnv(t, "OPENCLAW_BRIDGE_URL")
+  restoreEnv(t, "AGENT_BRIDGE_RECOVERY_TIMEOUT_MS")
+  restoreEnv(t, "AGENT_BRIDGE_RECOVERY_POLL_INTERVAL_MS")
+  process.env.OPENCLAW_BRIDGE_URL = "http://openclaw.test"
+  process.env.AGENT_BRIDGE_RECOVERY_TIMEOUT_MS = "0"
+  process.env.AGENT_BRIDGE_RECOVERY_POLL_INTERVAL_MS = "0"
+
+  __setAgentBridgeTestHooks({
+    fetch: async (input: RequestInfo | URL) => {
+      assert.equal(String(input), "http://openclaw.test/agent-runs")
+      return jsonResponse({ error: "upstream request timed out" }, 524)
+    }
+  })
+  t.after(() => {
+    __resetAgentBridgeTestHooks()
+  })
+
+  const result = await invokeConfiguredAgent({
+    run: createOpenClawRun(),
+    executor: "openclaw.rowlet",
+    stage: "implementation",
+    artifactType: "log",
+    title: "Mark ambiguous recovery timeout",
+    fallbackBody: "fallback",
+    skill: liveSkill
+  })
+
+  assert.equal(result.status, "failed")
+  assert.equal(result.deliveryState, "unknown")
+  assert.match(result.body, /recovery polling did not return a completed result/)
+})

@@ -1091,6 +1091,161 @@ test("unbound OpenClaw direct routing keeps bootstrap pending after failed first
   assert.equal(afterRetry?.lastDeliveredEntryId, retriedTurn.userEntry.id)
 })
 
+test("unbound OpenClaw direct routing records ambiguous first delivery without retrying it", async (t) => {
+  const { database, repository } = await repositoryFixture(t)
+  const capturedInputs: AgentInvocationInput[] = []
+  const services = createHiveServices({
+    database,
+    repository,
+    startCodexSyncWorker: false,
+    invokeAgent: async (input) => {
+      capturedInputs.push(input)
+      return {
+        status: "failed",
+        source: "simulated",
+        body: "Delivery outcome is ambiguous.",
+        deliveryState: "unknown"
+      }
+    }
+  })
+
+  const first = await services.conversation.postUnboundMessage({
+    conversationId: "conversation:ambiguous-first",
+    targetAgent: "openclaw.gengar",
+    content: "The first request may have been accepted.",
+    idempotencyKey: "conversation:ambiguous-first:request"
+  })
+  const duplicate = await services.conversation.postUnboundMessage({
+    conversationId: "conversation:ambiguous-first",
+    targetAgent: "openclaw.gengar",
+    content: "The first request may have been accepted.",
+    idempotencyKey: "conversation:ambiguous-first:request"
+  })
+  const runtime = repository.getOpenClawRuntimeSession(
+    "conversation:ambiguous-first",
+    "openclaw.gengar"
+  )
+
+  assert.equal(first.userEntry.status, "failed")
+  assert.equal(duplicate.userEntry.id, first.userEntry.id)
+  assert.equal(capturedInputs.length, 1)
+  assert.equal(runtime?.state, "delivery_unknown")
+  assert.equal(runtime?.bootstrapDelivered, false)
+  assert.equal(runtime?.lastDeliveredEntryId, undefined)
+})
+
+test("unbound OpenClaw direct routing preserves the cursor after ambiguous later delivery", async (t) => {
+  const { database, repository } = await repositoryFixture(t)
+  const capturedInputs: AgentInvocationInput[] = []
+  let attempt = 0
+  const services = createHiveServices({
+    database,
+    repository,
+    startCodexSyncWorker: false,
+    invokeAgent: async (input) => {
+      capturedInputs.push(input)
+      attempt += 1
+      return attempt === 1
+        ? {
+            status: "completed" as const,
+            source: "simulated" as const,
+            body: "First turn confirmed."
+          }
+        : {
+            status: "failed" as const,
+            source: "simulated" as const,
+            body: "Later turn outcome is ambiguous.",
+            deliveryState: "unknown" as const
+          }
+    }
+  })
+
+  const first = await services.conversation.postUnboundMessage({
+    conversationId: "conversation:ambiguous-later",
+    targetAgent: "openclaw.gengar",
+    content: "Confirmed first turn.",
+    idempotencyKey: "conversation:ambiguous-later:first"
+  })
+  const second = await services.conversation.postUnboundMessage({
+    conversationId: "conversation:ambiguous-later",
+    targetAgent: "openclaw.gengar",
+    content: "The later request may have been accepted.",
+    idempotencyKey: "conversation:ambiguous-later:second"
+  })
+  const runtime = repository.getOpenClawRuntimeSession(
+    "conversation:ambiguous-later",
+    "openclaw.gengar"
+  )
+
+  assert.equal(first.userEntry.status, "completed")
+  assert.equal(second.userEntry.status, "failed")
+  assert.equal(capturedInputs.length, 2)
+  assert.equal(capturedInputs[1]?.conversationHistory, undefined)
+  assert.equal(runtime?.state, "delivery_unknown")
+  assert.equal(runtime?.bootstrapDelivered, true)
+  assert.equal(runtime?.lastDeliveredEntryId, first.userEntry.id)
+})
+
+test("a new OpenClaw entry after ambiguous delivery uses the persistent session without old bootstrap", async (t) => {
+  const { database, repository } = await repositoryFixture(t)
+  const capturedInputs: AgentInvocationInput[] = []
+  let attempt = 0
+  const services = createHiveServices({
+    database,
+    repository,
+    startCodexSyncWorker: false,
+    invokeAgent: async (input) => {
+      capturedInputs.push(input)
+      attempt += 1
+      return attempt === 1
+        ? {
+            status: "failed" as const,
+            source: "simulated" as const,
+            body: "First turn outcome is ambiguous.",
+            deliveryState: "unknown" as const
+          }
+        : {
+            status: "completed" as const,
+            source: "simulated" as const,
+            body: "Fresh turn confirmed."
+          }
+    }
+  })
+
+  const first = await services.conversation.postUnboundMessage({
+    conversationId: "conversation:ambiguous-recovery",
+    targetAgent: "openclaw.gengar",
+    content: "The first request may have been accepted.",
+    idempotencyKey: "conversation:ambiguous-recovery:first"
+  })
+  const afterAmbiguous = repository.getOpenClawRuntimeSession(
+    "conversation:ambiguous-recovery",
+    "openclaw.gengar"
+  )
+  assert.equal(capturedInputs.length, 1)
+
+  const second = await services.conversation.postUnboundMessage({
+    conversationId: "conversation:ambiguous-recovery",
+    targetAgent: "openclaw.gengar",
+    content: "This is a new operator turn.",
+    idempotencyKey: "conversation:ambiguous-recovery:second"
+  })
+  const afterConfirmed = repository.getOpenClawRuntimeSession(
+    "conversation:ambiguous-recovery",
+    "openclaw.gengar"
+  )
+
+  assert.equal(first.userEntry.status, "failed")
+  assert.equal(afterAmbiguous?.state, "delivery_unknown")
+  assert.equal(afterAmbiguous?.lastDeliveredEntryId, undefined)
+  assert.equal(second.userEntry.status, "completed")
+  assert.equal(capturedInputs.length, 2)
+  assert.equal(capturedInputs[1]?.conversationHistory, undefined)
+  assert.equal(afterConfirmed?.state, "active")
+  assert.equal(afterConfirmed?.bootstrapDelivered, true)
+  assert.equal(afterConfirmed?.lastDeliveredEntryId, second.userEntry.id)
+})
+
 test("OpenClaw bridge session identity is derived from stable conversation input instead of only workflow ids", () => {
   assert.match(openClawBridgeSource, /sessionKey/)
   assert.match(openClawBridgeSource, /payload\.conversationId|payload\.sessionKey/)
