@@ -598,14 +598,15 @@ async function syncNativeThread(
       conversationEntryId = inserted.entry.id
       nativeUserEntries.set(projected.nativeTurnId, conversationEntryId)
     } else {
-      const existingResponse = replyToId
-        ? repository.listConversation(conversationId).find(
-          (entry) => entry.id === replyToId && entry.role === "user"
-        )
-          ? repository.listConversation(conversationId).find(
-            (entry) => entry.role === "agent" && entry.replyToId === replyToId && entry.agentId === "codex"
-          )
-          : undefined
+      const conversationEntries = repository.listConversation(conversationId)
+      const fallbackReplyToId = [...conversationEntries]
+        .reverse()
+        .find((entry) => entry.role === "user")?.id
+      const responseReplyToId = replyToId ?? fallbackReplyToId
+      const existingResponse = responseReplyToId
+        ? [...conversationEntries]
+          .reverse()
+          .find((entry) => entry.role === "agent" && entry.replyToId === responseReplyToId && entry.agentId === "codex")
         : undefined
       if (existingResponse) {
         await repository.updateConversation({
