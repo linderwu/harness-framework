@@ -120,6 +120,7 @@ export async function invokeConfiguredAgent(
   if (requiredProtocol === bridgeProtocolV3 && configuredProtocol !== bridgeProtocolV3) {
     return {
       status: "failed",
+      deliveryState: "confirmed",
       source: getBridgeSource(input.executor),
       body: `${profile.label} bridge does not support runtime skill bundles.`,
       statusMessage: JSON.stringify({
@@ -216,6 +217,7 @@ export async function invokeConfiguredAgent(
       } else {
         result = {
           status: "failed",
+          deliveryState: "confirmed",
           source,
           body: [
             `${profile.label} bridge request failed with HTTP ${response.status}.`,
@@ -343,6 +345,7 @@ function bridgeResponseToAgentResult(
 
   return {
     status: data.status === "failed" ? "failed" : "completed",
+    deliveryState: "confirmed",
     source,
     externalRunId: data.id,
     idempotencyKey: data.idempotencyKey ?? idempotencyKey,
@@ -654,6 +657,7 @@ async function invokeIntakeAgent(
 
     return {
       status: "completed",
+      deliveryState: "confirmed",
       source,
       repository,
       statusMessage: repository
@@ -669,6 +673,7 @@ async function invokeIntakeAgent(
   } catch (error) {
     return {
       status: "failed",
+      deliveryState: "confirmed",
       source,
       body: `Intake agent could not create or verify the GitHub repository: ${formatError(error)}`
     }
@@ -752,6 +757,7 @@ async function invokeOpenClawA2A(
     })
     return {
       status: result.exitCode === 0 ? "completed" : "failed",
+      deliveryState: "confirmed",
       source: "openclaw-a2a",
       externalRunId: idempotencyKey,
       idempotencyKey,
@@ -767,6 +773,7 @@ async function invokeOpenClawA2A(
   } catch (error) {
     return {
       status: "failed",
+      deliveryState: "confirmed",
       source: "openclaw-a2a",
       externalRunId: idempotencyKey,
       idempotencyKey,
@@ -801,6 +808,7 @@ async function invokeMinimaxA2A(
     })
     return {
       status: result.exitCode === 0 ? "completed" : "failed",
+      deliveryState: "confirmed",
       source: "minimax-a2a",
       externalRunId: idempotencyKey,
       idempotencyKey,
@@ -816,6 +824,7 @@ async function invokeMinimaxA2A(
   } catch (error) {
     return {
       status: "failed",
+      deliveryState: "confirmed",
       source: "minimax-a2a",
       externalRunId: idempotencyKey,
       idempotencyKey,
@@ -891,6 +900,7 @@ function createMissingBridgeResult(
   if (process.env.HARNESS_ALLOW_SIMULATED_AGENTS === "1") {
     return {
       status: "completed",
+      deliveryState: "confirmed",
       source: "simulated",
       body: input.fallbackBody,
       statusMessage: "Simulated because HARNESS_ALLOW_SIMULATED_AGENTS=1."
@@ -899,6 +909,7 @@ function createMissingBridgeResult(
 
   return {
     status: "failed",
+    deliveryState: "confirmed",
     source,
     body: `${getAgentProfile(input.executor).label} has no configured bridge. Set CODEX_BRIDGE_URL (for Codex and minimax), OPENCLAW_BRIDGE_URL, OPENCLAW_A2A_COMMAND, or MINIMAX_A2A_COMMAND.`
   }

@@ -184,6 +184,7 @@ test("publishes started reasoning and completed before the final OpenClaw POST r
 
   const result = await invokePromise
   assert.equal(result.status, "completed")
+  assert.equal(result.deliveryState, "confirmed")
   assert.equal(result.body, "Final answer")
 })
 
@@ -714,7 +715,29 @@ test("falls back to stderr when the bridge output is exactly empty", { concurren
   })
 
   assert.equal(result.status, "failed")
+  assert.equal(result.deliveryState, "confirmed")
   assert.equal(result.body, "Actionable stderr")
+})
+
+test("marks a missing bridge as a confirmed terminal failure", { concurrency: false }, async (t) => {
+  restoreEnv(t, "OPENCLAW_BRIDGE_URL")
+  restoreEnv(t, "OPENCLAW_A2A_COMMAND")
+  delete process.env.OPENCLAW_BRIDGE_URL
+  delete process.env.OPENCLAW_A2A_COMMAND
+
+  const result = await invokeConfiguredAgent({
+    run: createOpenClawRun(),
+    executor: "openclaw.rowlet",
+    stage: "implementation",
+    artifactType: "log",
+    title: "Mark missing bridge failure",
+    fallbackBody: "fallback",
+    skill: liveSkill
+  })
+
+  assert.equal(result.status, "failed")
+  assert.equal(result.deliveryState, "confirmed")
+  assert.match(result.body, /has no configured bridge/)
 })
 
 test("marks recovery timeout delivery as unknown", { concurrency: false }, async (t) => {
