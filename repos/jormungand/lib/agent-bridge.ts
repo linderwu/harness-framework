@@ -7,8 +7,6 @@ import type {
   WorkflowRun,
   WorkflowStage
 } from "./types"
-import { resolve } from "node:path"
-import { pathToFileURL } from "node:url"
 import {
   createOpenClawA2AEnvelope,
   extractA2AResponseText,
@@ -23,6 +21,7 @@ import type { AgentLiveEvent } from "./agent-live-events"
 import { normalizeAgentLiveEvent } from "./agent-live-events"
 import { getAgentPermissionMode } from "./agent-permissions"
 import { ensureGitHubRepository } from "./github-repository"
+import { deriveOpenClawSessionKey } from "./openclaw-session"
 import type { AgentArtifactResult } from "@/lib/workflow"
 import type { ContextPack } from "./context-builder"
 
@@ -976,17 +975,6 @@ function getMinimaxA2ACommand(agent: AgentKind) {
   return process.env.MINIMAX_A2A_COMMAND
 }
 
-type OpenClawSessionHelper = {
-  deriveOpenClawSessionKey(input: {
-    mainAgent?: string
-    conversationId?: unknown
-    workflowRunId?: unknown
-    fallbackId?: unknown
-  }): string
-}
-
-let openClawSessionHelperPromise: Promise<OpenClawSessionHelper> | undefined
-
 async function getOpenClawSessionKey(input: {
   agent: AgentKind
   conversationId?: string
@@ -995,29 +983,12 @@ async function getOpenClawSessionKey(input: {
   const profile = getAgentProfile(input.agent)
   const mainAgent = profile.mainAgent ?? "rowlet"
 
-  const sessionHelper = await loadOpenClawSessionHelper()
-  return sessionHelper.deriveOpenClawSessionKey({
+  return deriveOpenClawSessionKey({
     mainAgent,
     conversationId: input.conversationId,
     workflowRunId: input.workflowRunId,
     fallbackId: process.env.OPENCLAW_A2A_SESSION_KEY ?? "a2a-codex"
   })
-}
-
-async function loadOpenClawSessionHelper() {
-  if (!openClawSessionHelperPromise) {
-    // Native import keeps the CommonJS test build able to execute the ESM helper.
-    const loadModule = new Function(
-      "modulePath",
-      "return import(modulePath)"
-    ) as (modulePath: string) => Promise<OpenClawSessionHelper>
-    const helperPath = pathToFileURL(
-      resolve(process.cwd(), "scripts/openclaw-session.mjs")
-    ).href
-    openClawSessionHelperPromise = loadModule(helperPath)
-  }
-
-  return openClawSessionHelperPromise
 }
 
 function getBridgeSource(agent: AgentKind): AgentArtifactResult["source"] {

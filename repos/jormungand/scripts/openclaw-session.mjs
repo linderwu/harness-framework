@@ -16,7 +16,7 @@ export function deriveOpenClawSessionKey(input = {}) {
 
   if (typeof input.conversationId === "string" && input.conversationId.trim()) {
     return capSessionKey(
-      `agent:${mainAgent}:harness-conversation-${sanitizeSessionSegment(input.conversationId)}`
+      `agent:${mainAgent}:harness-direct-v1-${sanitizeSessionSegment(input.conversationId)}`
     )
   }
 
@@ -28,6 +28,14 @@ export function deriveOpenClawSessionKey(input = {}) {
   return capSessionKey(
     `agent:${mainAgent}:harness-${sanitizeSessionSegment(fallbackIdentity)}`
   )
+}
+
+export function deriveOpenClawSessionIdentity(input = {}) {
+  const sessionKey = deriveOpenClawSessionKey(input)
+  return {
+    sessionKey,
+    sessionKeyFingerprint: `sha256:${createSha256Hex(sessionKey)}`
+  }
 }
 
 export function sanitizeConversationHistory(value) {
@@ -73,10 +81,7 @@ function capSessionSegment(value) {
     return value
   }
 
-  const hash = createHash("sha256")
-    .update(value, "utf8")
-    .digest("hex")
-    .slice(0, sessionKeyHashLength)
+  const hash = createSha256Hex(value).slice(0, sessionKeyHashLength)
   return `${value.slice(0, sessionSegmentCharacterLimit - hash.length - 1)}-${hash}`
 }
 
@@ -85,9 +90,12 @@ function capSessionKey(value) {
     return value
   }
 
-  const hash = createHash("sha256")
+  const hash = createSha256Hex(value).slice(0, sessionKeyHashLength)
+  return `${value.slice(0, sessionKeyCharacterLimit - hash.length - 1)}-${hash}`
+}
+
+function createSha256Hex(value) {
+  return createHash("sha256")
     .update(value, "utf8")
     .digest("hex")
-    .slice(0, sessionKeyHashLength)
-  return `${value.slice(0, sessionKeyCharacterLimit - hash.length - 1)}-${hash}`
 }

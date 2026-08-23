@@ -30,6 +30,7 @@ import type { WorkflowRun } from "../lib/types"
 import { createWorkflowRun } from "../lib/workflow"
 
 const openClawBridgeSource = readFileSync("scripts/openclaw-bridge.mjs", "utf8")
+const agentBridgeSource = readFileSync("lib/agent-bridge.ts", "utf8")
 
 interface ConversationSummary {
   conversationId: string
@@ -698,6 +699,12 @@ test("unbound Codex routing dispatches directly to Codex with unrestricted conve
 test("OpenClaw bridge session identity is derived from stable conversation input instead of only workflow ids", () => {
   assert.match(openClawBridgeSource, /sessionKey/)
   assert.match(openClawBridgeSource, /payload\.conversationId|payload\.sessionKey/)
+})
+
+test("OpenClaw agent bridge uses the shared typed session adapter", () => {
+  assert.match(agentBridgeSource, /from "\.\/openclaw-session"/)
+  assert.doesNotMatch(agentBridgeSource, /new Function\(\s*"modulePath"/)
+  assert.doesNotMatch(agentBridgeSource, /scripts\/openclaw-session\.mjs/)
 })
 
 test("unbound OpenClaw routing preserves conversation and agent identity at the bridge boundary", { concurrency: false }, async (t) => {

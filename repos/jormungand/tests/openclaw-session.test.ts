@@ -18,12 +18,50 @@ async function loadOpenClawSessionHelper() {
       fallbackId?: unknown
       sessionKey?: unknown
     }) => string
+    deriveOpenClawSessionIdentity: (input: {
+      mainAgent?: string
+      conversationId?: unknown
+      workflowRunId?: unknown
+      fallbackId?: unknown
+      sessionKey?: unknown
+    }) => {
+      sessionKey: string
+      sessionKeyFingerprint: string
+    }
     sanitizeConversationHistory: (value: unknown) => Array<{
       role: "user" | "assistant"
       content: string
     }>
   }
 }
+
+test("direct session keys use a stable versioned Harness namespace", async () => {
+  const helper = await loadOpenClawSessionHelper()
+
+  assert.equal(
+    helper.deriveOpenClawSessionKey({
+      mainAgent: "gengar",
+      conversationId: "conversation:abc"
+    }),
+    "agent:gengar:harness-direct-v1-conversation-abc"
+  )
+})
+
+test("direct session identity exposes a deterministic fingerprint", async () => {
+  const helper = await loadOpenClawSessionHelper()
+  const first = helper.deriveOpenClawSessionIdentity({
+    mainAgent: "gengar",
+    conversationId: "conversation:abc"
+  })
+  const second = helper.deriveOpenClawSessionIdentity({
+    mainAgent: "gengar",
+    conversationId: "conversation:abc"
+  })
+
+  assert.deepEqual(first, second)
+  assert.equal(first.sessionKey, "agent:gengar:harness-direct-v1-conversation-abc")
+  assert.match(first.sessionKeyFingerprint, /^sha256:[0-9a-f]{64}$/)
+})
 
 test("OpenClaw session derivation ignores caller-supplied session keys", async () => {
   const helper = await loadOpenClawSessionHelper()
@@ -34,7 +72,7 @@ test("OpenClaw session derivation ignores caller-supplied session keys", async (
       conversationId: "conversation:11111111-1111-4111-8111-111111111111",
       sessionKey: "attacker-controlled"
     }),
-    "agent:gengar:harness-conversation-conversation-11111111-1111-4111-8111-111111111111"
+    "agent:gengar:harness-direct-v1-conversation-11111111-1111-4111-8111-111111111111"
   )
 
   assert.equal(
@@ -52,6 +90,7 @@ test("OpenClaw session keys stay bounded and isolate long identities", async () 
   const helper = await loadOpenClawSessionHelper()
   const maxSessionKeyLength = 160
   const longIdentity = `conversation:${"x".repeat(2400)}`
+  const longConversationB = `conversation:${"q".repeat(2400)}`
   const longWorkflowRunId = `workflow:${"y".repeat(2400)}`
   const longFallbackId = `fallback:${"z".repeat(2400)}`
 
@@ -78,6 +117,11 @@ test("OpenClaw session keys stay bounded and isolate long identities", async () 
 
   assert.equal(conversationKey, repeatedConversationKey)
   assert.notEqual(conversationKey, otherAgentConversationKey)
+  assert.notEqual(conversationKey, helper.deriveOpenClawSessionKey({
+    mainAgent: "gengar",
+    conversationId: longConversationB
+  }))
+  assert.match(conversationKey, /^agent:gengar:harness-direct-v1-.*-[0-9a-f]{16}$/)
   for (const key of [
     conversationKey,
     otherAgentConversationKey,
