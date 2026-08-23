@@ -29,7 +29,10 @@ import type {
   RequeueExecutionJobInput,
   ExecutionJob,
   FailExecutionJobInput,
+  OpenClawRuntimeSession,
+  OpenClawRuntimeSessionState,
   SubmitMemoryCandidate,
+  UpsertOpenClawRuntimeSessionInput,
   UpdateA2ATaskInput
 } from "./types"
 import type {
@@ -155,6 +158,19 @@ type CodexSessionRow = {
   native_name: string | null
   native_cursor: string | null
   last_sync_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+type OpenClawRuntimeSessionRow = {
+  conversation_id: string
+  agent_id: string
+  provider: "openclaw"
+  session_namespace: "harness-direct-v1"
+  state: OpenClawRuntimeSessionState
+  session_key_fingerprint: string
+  bootstrap_delivered: number
+  last_delivered_entry_id: string | null
   created_at: string
   updated_at: string
 }
@@ -1308,6 +1324,7 @@ export class HiveMemoryRepository {
         DELETE FROM execution_jobs
         WHERE kind = 'conversation_dispatch' AND workflow_run_id = ?
       `).run(id)
+      connection.prepare("DELETE FROM openclaw_runtime_sessions WHERE conversation_id = ?").run(id)
       connection.prepare("DELETE FROM codex_sessions WHERE conversation_id = ?").run(id)
       connection.prepare("DELETE FROM codex_sync_ledger WHERE conversation_id = ?").run(id)
       connection.prepare("DELETE FROM conversation_entries WHERE workflow_run_id = ?").run(id)
@@ -1390,6 +1407,48 @@ export class HiveMemoryRepository {
       )
     })
     return this.getCodexSession(input.conversationId)
+  }
+
+  getOpenClawRuntimeSession(conversationId: string, agentId: AgentKind) {
+    return this.database.read((connection) => {
+      const row = connection.prepare(`
+        SELECT * FROM openclaw_runtime_sessions
+        WHERE conversation_id = ? AND agent_id = ?
+      `).get(conversationId, agentId) as OpenClawRuntimeSessionRow | undefined
+
+      if (!row) return undefined
+      return openClawRuntimeSessionFromRow(row)
+    })
+  }
+
+  async upsertOpenClawRuntimeSession(input: UpsertOpenClawRuntimeSessionInput) {
+    const now = new Date().toISOString()
+    await this.database.write((connection) => {
+      connection.prepare(`
+        INSERT INTO openclaw_runtime_sessions(
+          conversation_id, agent_id, provider, session_namespace, state,
+          session_key_fingerprint, bootstrap_delivered, last_delivered_entry_id,
+          created_at, updated_at
+        ) VALUES (?, ?, 'openclaw', ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(conversation_id, agent_id) DO UPDATE SET
+          state = excluded.state,
+          session_key_fingerprint = excluded.session_key_fingerprint,
+          bootstrap_delivered = excluded.bootstrap_delivered,
+          last_delivered_entry_id = excluded.last_delivered_entry_id,
+          updated_at = excluded.updated_at
+      `).run(
+        input.conversationId,
+        input.agentId,
+        input.sessionNamespace,
+        input.state,
+        input.sessionKeyFingerprint,
+        input.bootstrapDelivered ? 1 : 0,
+        input.lastDeliveredEntryId ?? null,
+        now,
+        now
+      )
+    })
+    return this.getOpenClawRuntimeSession(input.conversationId, input.agentId)
   }
 
   async updateCodexSession(input: {
@@ -2260,6 +2319,21 @@ function codexSessionFromRow(row: CodexSessionRow) {
     nativeName: row.native_name ?? undefined,
     nativeCursor: row.native_cursor ?? undefined,
     lastSyncAt: row.last_sync_at ?? undefined,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  }
+}
+
+function openClawRuntimeSessionFromRow(row: OpenClawRuntimeSessionRow): OpenClawRuntimeSession {
+  return {
+    conversationId: row.conversation_id,
+    agentId: row.agent_id as AgentKind,
+    provider: row.provider,
+    sessionNamespace: row.session_namespace,
+    state: row.state,
+    sessionKeyFingerprint: row.session_key_fingerprint,
+    bootstrapDelivered: row.bootstrap_delivered === 1,
+    lastDeliveredEntryId: row.last_delivered_entry_id ?? undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at
   }

@@ -1,7 +1,7 @@
 import type Database from "better-sqlite3"
 import { legacyConversationId } from "../conversation-identity"
 
-export const hiveSchemaVersion = 7
+export const hiveSchemaVersion = 8
 
 const migrationV1 = `
 CREATE TABLE schema_migrations (
@@ -296,6 +296,24 @@ CREATE INDEX codex_sync_ledger_thread_idx
   ON codex_sync_ledger(native_thread_id, native_turn_id, native_item_id);
 `
 
+const migrationV8 = `
+CREATE TABLE openclaw_runtime_sessions (
+  conversation_id TEXT NOT NULL,
+  agent_id TEXT NOT NULL,
+  provider TEXT NOT NULL CHECK(provider = 'openclaw'),
+  session_namespace TEXT NOT NULL CHECK(session_namespace = 'harness-direct-v1'),
+  state TEXT NOT NULL CHECK(state IN ('pending', 'active', 'delivery_unknown')),
+  session_key_fingerprint TEXT NOT NULL,
+  bootstrap_delivered INTEGER NOT NULL DEFAULT 0 CHECK(bootstrap_delivered IN (0, 1)),
+  last_delivered_entry_id TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY(conversation_id, agent_id)
+);
+CREATE INDEX openclaw_runtime_sessions_updated_idx
+  ON openclaw_runtime_sessions(updated_at);
+`
+
 export function migrateHiveSchema(database: Database.Database) {
   const hasMigrationTable = database
     .prepare("SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'")
@@ -362,6 +380,14 @@ export function migrateHiveSchema(database: Database.Database) {
       database.exec(migrationV7)
       database.prepare("INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)")
         .run(7, new Date().toISOString())
+    })()
+  }
+
+  if (currentVersion < 8) {
+    database.transaction(() => {
+      database.exec(migrationV8)
+      database.prepare("INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)")
+        .run(8, new Date().toISOString())
     })()
   }
 }

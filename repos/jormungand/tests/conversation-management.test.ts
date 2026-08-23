@@ -30,6 +30,21 @@ interface ConversationSummary {
   latestMessage?: string
 }
 
+type OpenClawRuntimeSessionState = "pending" | "active" | "delivery_unknown"
+
+interface OpenClawRuntimeSession {
+  conversationId: string
+  agentId: "openclaw.rowlet" | "openclaw.gengar"
+  provider: "openclaw"
+  sessionNamespace: "harness-direct-v1"
+  state: OpenClawRuntimeSessionState
+  sessionKeyFingerprint: string
+  bootstrapDelivered: boolean
+  lastDeliveredEntryId?: string
+  createdAt: string
+  updatedAt: string
+}
+
 type ConversationManagementRepository = ReturnType<typeof createHiveMemoryRepository> & {
   createConversation(input: { id: string; title: string }): Promise<ConversationMetadata>
   getConversationMetadata(id: string): ConversationMetadata | undefined
@@ -38,6 +53,19 @@ type ConversationManagementRepository = ReturnType<typeof createHiveMemoryReposi
   setConversationState(id: string, state: ConversationState): Promise<ConversationMetadata>
   isConversationRunning(id: string): boolean
   deleteConversation(id: string): Promise<void>
+  getOpenClawRuntimeSession(
+    conversationId: string,
+    agentId: OpenClawRuntimeSession["agentId"]
+  ): OpenClawRuntimeSession | undefined
+  upsertOpenClawRuntimeSession(input: {
+    conversationId: string
+    agentId: OpenClawRuntimeSession["agentId"]
+    sessionNamespace: "harness-direct-v1"
+    state: OpenClawRuntimeSessionState
+    sessionKeyFingerprint: string
+    bootstrapDelivered: boolean
+    lastDeliveredEntryId?: string
+  }): Promise<OpenClawRuntimeSession | undefined>
 }
 
 interface ConversationManagementService {
@@ -201,6 +229,8 @@ test("conversation deletion removes unbound metadata, entries, and sessions whil
   const conversationId = "conversation:33333333-3333-4333-8333-333333333333"
 
   assert.equal(typeof repository.deleteConversation, "function")
+  assert.equal(typeof repository.upsertOpenClawRuntimeSession, "function")
+  assert.equal(typeof repository.getOpenClawRuntimeSession, "function")
   await repository.createConversation({ id: conversationId, title: "Disposable thread" })
   await repository.insertConversation({
     workflowRunId: conversationId,
@@ -219,11 +249,24 @@ test("conversation deletion removes unbound metadata, entries, and sessions whil
     status: "running",
     turnStatus: "inProgress"
   })
+  await repository.upsertOpenClawRuntimeSession({
+    conversationId,
+    agentId: "openclaw.rowlet",
+    sessionNamespace: "harness-direct-v1",
+    state: "active",
+    sessionKeyFingerprint: "fingerprint-delete",
+    bootstrapDelivered: true,
+    lastDeliveredEntryId: "entry-delete-1"
+  })
 
   await repository.deleteConversation(conversationId)
   assert.equal(repository.getConversationMetadata(conversationId), undefined)
   assert.deepEqual(repository.listConversation(conversationId), [])
   assert.equal(repository.getCodexSession(conversationId), undefined)
+  assert.equal(
+    repository.getOpenClawRuntimeSession(conversationId, "openclaw.rowlet"),
+    undefined
+  )
 
   await repository.insertConversation({
     workflowRunId: "run-bound-1",
