@@ -623,7 +623,7 @@ async function syncNativeThread(
           content: projected.content,
           importance: "important",
           status: projected.status,
-          replyToId,
+          replyToId: responseReplyToId,
           artifactIds: [],
           memoryIds: [],
           idempotencyKey: projected.idempotencyKey
