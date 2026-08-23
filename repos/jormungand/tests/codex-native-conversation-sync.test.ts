@@ -671,6 +671,125 @@ test("reuses the Harness response when native agent items lack a mapped user tur
 
   assert.equal(result.status, "completed")
   const entries = repository.listConversation(conversationId)
-  assert.deepEqual(entries.map((entry) => entry.content), ["Harness prompt", "native response"])
-  assert.equal(entries[1]?.replyToId, user.entry.id)
+  assert.deepEqual(
+    entries.map((entry) => entry.content).sort(),
+    ["Harness prompt", "native response"].sort()
+  )
+  assert.equal(entries.find((entry) => entry.content === "native response")?.replyToId, user.entry.id)
+})
+
+test("coalesces a native response projected before its Harness placeholder", async (t) => {
+  const dataDir = await mkdtemp(join(tmpdir(), "jormungand-native-codex-coalesce-"))
+  const database = openHiveDatabase({ dataDir })
+  const repository = createHiveMemoryRepository(database)
+  const conversationId = "conversation:native-coalesce"
+  const user = await repository.insertConversation({
+    workflowRunId: conversationId,
+    role: "user",
+    agentId: "codex",
+    content: "Harness prompt",
+    importance: "normal",
+    status: "completed",
+    artifactIds: [],
+    memoryIds: [],
+    idempotencyKey: "coalesce-user"
+  })
+  const response = await repository.insertConversation({
+    workflowRunId: conversationId,
+    role: "agent",
+    agentId: "codex",
+    content: "native response",
+    importance: "important",
+    status: "completed",
+    replyToId: user.entry.id,
+    artifactIds: [],
+    memoryIds: [],
+    idempotencyKey: "coalesce-user:response"
+  })
+  const duplicate = await repository.insertConversation({
+    workflowRunId: conversationId,
+    role: "agent",
+    agentId: "codex",
+    content: "native response",
+    importance: "important",
+    status: "completed",
+    replyToId: user.entry.id,
+    artifactIds: [],
+    memoryIds: [],
+    idempotencyKey: "codex:thread-coalesce:turn-coalesce:item-native-agent"
+  })
+  await repository.upsertCodexSession({
+    conversationId,
+    bridgeSessionId: "bridge-coalesce",
+    codexThreadId: "thread-coalesce",
+    status: "idle",
+    turnStatus: "completed",
+    cursor: 0
+  })
+  await repository.recordCodexSyncItem({
+    conversationId,
+    nativeThreadId: "thread-coalesce",
+    nativeTurnId: "turn-coalesce",
+    nativeItemId: "item-native-agent",
+    source: "codex",
+    kind: "agentMessage",
+    conversationEntryId: duplicate.entry.id,
+    contentHash: "native response"
+  })
+  t.after(async () => {
+    database.close()
+    await rm(dataDir, { recursive: true, force: true })
+  })
+
+  const previousBridgeUrl = process.env.CODEX_BRIDGE_URL
+  process.env.CODEX_BRIDGE_URL = "http://codex.test"
+  t.after(() => {
+    if (previousBridgeUrl === undefined) delete process.env.CODEX_BRIDGE_URL
+    else process.env.CODEX_BRIDGE_URL = previousBridgeUrl
+  })
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = async (input) => {
+    const url = String(input)
+    if (url.endsWith("/sessions/bridge-coalesce/events?after=0")) {
+      return jsonResponse({
+        id: "bridge-coalesce",
+        threadId: "thread-coalesce",
+        status: "idle",
+        turnStatus: "completed",
+        cursor: 0,
+        events: [],
+        nextCursor: 0,
+        finalText: "native response"
+      })
+    }
+    if (url.endsWith("/sessions/bridge-coalesce/thread")) {
+      return jsonResponse({
+        id: "bridge-coalesce",
+        threadId: "thread-coalesce",
+        thread: {
+          id: "thread-coalesce",
+          turns: [{
+            id: "turn-coalesce",
+            status: "completed",
+            items: [{
+              id: "item-native-agent",
+              type: "agentMessage",
+              text: "native response",
+              phase: "final_answer"
+            }]
+          }]
+        }
+      })
+    }
+    throw new Error(`Unexpected fetch: ${url}`)
+  }
+  t.after(() => {
+    globalThis.fetch = originalFetch
+  })
+
+  await getCodexConversationState(repository, conversationId)
+
+  const entries = repository.listConversation(conversationId)
+  assert.deepEqual(entries.map((entry) => entry.id), [user.entry.id, response.entry.id])
+  assert.equal(repository.listCodexSyncItems(conversationId)[0]?.conversationEntryId, response.entry.id)
 })

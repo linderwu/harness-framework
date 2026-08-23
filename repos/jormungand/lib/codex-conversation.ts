@@ -643,6 +643,62 @@ async function syncNativeThread(
       contentHash: projected.content
     })
   }
+
+  await coalesceNativeAgentDuplicates(repository, conversationId, thread)
+}
+
+async function coalesceNativeAgentDuplicates(
+  repository: HiveMemoryRepository,
+  conversationId: string,
+  thread: NonNullable<BridgeThreadResponse["thread"]>
+) {
+  const entries = repository.listConversation(conversationId)
+  const ledgerItems = repository.listCodexSyncItems(conversationId)
+
+  for (const turn of thread.turns ?? []) {
+    const nativeAgentLedger = ledgerItems.filter((item) =>
+      item.nativeThreadId === thread.id &&
+      item.nativeTurnId === turn.id &&
+      item.kind === "agentMessage" &&
+      item.conversationEntryId
+    )
+    if (nativeAgentLedger.length < 1) continue
+
+    const nativeEntryIds = new Set(nativeAgentLedger.map((item) => item.conversationEntryId!))
+    const replyToIds = new Set(
+      entries
+        .filter((entry) => nativeEntryIds.has(entry.id))
+        .map((entry) => entry.replyToId)
+        .filter((id): id is string => Boolean(id))
+    )
+    const nativeContent = new Set(nativeAgentLedger.map((item) => normalizeContent(item.contentHash ?? "")))
+    const candidates = entries.filter((entry) =>
+      entry.role === "agent" &&
+      entry.agentId === "codex" &&
+      (
+        nativeEntryIds.has(entry.id) ||
+        (entry.replyToId !== undefined && replyToIds.has(entry.replyToId))
+      ) &&
+      nativeContent.has(normalizeContent(entry.content))
+    )
+    const byContent = new Map<string, ConversationEntry[]>()
+    for (const entry of candidates) {
+      const key = normalizeContent(entry.content)
+      const group = byContent.get(key) ?? []
+      group.push(entry)
+      byContent.set(key, group)
+    }
+
+    for (const group of byContent.values()) {
+      if (group.length < 2) continue
+      const preferred = group.find((entry) => entry.idempotencyKey.endsWith(":response")) ?? group[0]
+      for (const duplicate of group) {
+        if (duplicate.id !== preferred.id) {
+          await repository.mergeConversationEntries(preferred.id, duplicate.id)
+        }
+      }
+    }
+  }
 }
 
 async function readBridgeEvents(bridgeSessionId: string, cursor: number) {
@@ -742,6 +798,10 @@ function normalizeUrl(value: string) {
 
 function latestNativeTurnId(turns: NativeTurn[]) {
   return turns.at(-1)?.id
+}
+
+function normalizeContent(value: string) {
+  return value.trim().replace(/\s+/g, " ")
 }
 
 async function recordHarnessTurnStart(

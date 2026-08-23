@@ -1199,6 +1199,25 @@ export class HiveMemoryRepository {
     return this.getConversationEntry(input.id)
   }
 
+  async mergeConversationEntries(preferredId: string, duplicateId: string) {
+    if (preferredId === duplicateId) return
+    await this.database.transaction((connection) => {
+      const preferred = connection.prepare(
+        "SELECT workflow_run_id FROM conversation_entries WHERE id = ?"
+      ).get(preferredId) as { workflow_run_id: string } | undefined
+      const duplicate = connection.prepare(
+        "SELECT workflow_run_id FROM conversation_entries WHERE id = ?"
+      ).get(duplicateId) as { workflow_run_id: string } | undefined
+      if (!preferred || !duplicate || preferred.workflow_run_id !== duplicate.workflow_run_id) return
+      connection.prepare(`
+        UPDATE codex_sync_ledger
+        SET conversation_entry_id = ?
+        WHERE conversation_entry_id = ?
+      `).run(preferredId, duplicateId)
+      connection.prepare("DELETE FROM conversation_entries WHERE id = ?").run(duplicateId)
+    })
+  }
+
   async createConversation(input: { id: string; title: string }): Promise<ConversationMetadata> {
     const now = new Date().toISOString()
     const title = normalizeConversationTitle(input.title)
