@@ -86,6 +86,12 @@ const killGraceMs = Number(process.env.LUCKY_BRIDGE_KILL_GRACE_MS ?? 5_000)
 const completedRunTtlMs = Number(
   process.env.LUCKY_BRIDGE_COMPLETED_RUN_TTL_MS ?? 30 * 60 * 1000
 )
+const completedRunMax = Number(
+  process.env.LUCKY_BRIDGE_MAX_COMPLETED_RUNS ?? 100
+)
+const maxJournalEvents = Number(
+  process.env.LUCKY_BRIDGE_MAX_JOURNAL_EVENTS ?? 2000
+)
 const toolIterationCap = Number(
   process.env.LUCKY_TOOL_ITERATION_CAP ?? 25
 )
@@ -326,6 +332,11 @@ const activeIdempotencyKeys = new Map()
 const completedRuns = new Map()
 /** @type {Map<string, string>} idempotencyKey -> runId (completed) */
 const completedIdempotencyKeys = new Map()
+
+const maintenanceTimer = setInterval(() => {
+  pruneCompletedRuns()
+}, 60_000)
+maintenanceTimer.unref()
 
 // ---------- request helpers ------------------------------------------------
 
@@ -1008,6 +1019,7 @@ function validateProtocol(payload) {
 
 function appendJournal(runId, event) {
   const list = journalsByRunId.get(runId) ?? []
+  while (list.length >= maxJournalEvents) list.shift()
   event.cursor = list.length
   event.at = event.at ?? new Date().toISOString()
   list.push(event)
@@ -1031,6 +1043,7 @@ function clearJournal(runId) {
 // ---------- run lifecycle --------------------------------------------------
 
 function rememberCompletedRun(runId, response) {
+  pruneCompletedRuns()
   completedRuns.set(runId, response)
   if (response.idempotencyKey) {
     completedIdempotencyKeys.set(response.idempotencyKey, runId)
@@ -1047,6 +1060,29 @@ function rememberCompletedRun(runId, response) {
     }
     clearJournal(runId)
   }, completedRunTtlMs)
+}
+
+function pruneCompletedRuns(now = Date.now()) {
+  for (const [runId, response] of completedRuns) {
+    const finishedAt = Date.parse(response.finishedAt ?? "")
+    if (Number.isFinite(finishedAt) && now - finishedAt > completedRunTtlMs) {
+      completedRuns.delete(runId)
+      if (response.idempotencyKey) {
+        completedIdempotencyKeys.delete(response.idempotencyKey)
+      }
+      clearJournal(runId)
+    }
+  }
+
+  while (completedRuns.size > completedRunMax) {
+    const oldestId = completedRuns.keys().next().value
+    const oldest = completedRuns.get(oldestId)
+    completedRuns.delete(oldestId)
+    if (oldest?.idempotencyKey) {
+      completedIdempotencyKeys.delete(oldest.idempotencyKey)
+    }
+    clearJournal(oldestId)
+  }
 }
 
 function stopWorkflowRun(workflowRunId) {

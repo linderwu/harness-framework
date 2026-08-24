@@ -37,6 +37,10 @@ const activeIdempotencyKeys = new Map()
 const completedAgentRuns = new Map()
 const completedIdempotencyKeys = new Map()
 const codexSessions = new Map()
+const codexSessionKeys = new Map()
+const inFlightCodexSessionCreations = new Map()
+const childClosePromiseSymbol = Symbol("codexBridgeChildClosePromise")
+const childTerminationPromiseSymbol = Symbol("codexBridgeChildTerminationPromise")
 
 // ---------- mavis (Lucky) forwarder ----------------------------------------
 // When the dashboard sends `executor: "mavis"`, codex-bridge becomes a thin
@@ -50,11 +54,60 @@ const luckyBridgeUrl = process.env.LUCKY_BRIDGE_URL ?? "http://127.0.0.1:4198"
 const luckyBridgeBase = luckyBridgeUrl.endsWith("/")
   ? luckyBridgeUrl
   : `${luckyBridgeUrl}/`
-const mavisIdempotencyKeys = new Set()
-const mavisRunIds = new Set()
+const mavisIdempotencyKeys = new Map()
+const mavisRunIds = new Map()
 const completedAgentRunTtlMs = Number(
   process.env.CODEX_BRIDGE_COMPLETED_RUN_TTL_MS ?? 3600000
 )
+const completedAgentRunMax = Number(
+  process.env.CODEX_BRIDGE_MAX_COMPLETED_RUNS ?? 100
+)
+const mavisRouteTtlMs = Number(
+  process.env.CODEX_BRIDGE_MAVIS_ROUTE_TTL_MS ?? 30 * 60 * 1000
+)
+const maxCodexOutputBytes = Number(
+  process.env.CODEX_BRIDGE_MAX_OUTPUT_BYTES ?? 4 * 1024 * 1024
+)
+const maxCodexProcessOutputBytes = Number(
+  process.env.CODEX_BRIDGE_MAX_PROCESS_OUTPUT_BYTES ?? 1024 * 1024
+)
+const maxCodexSessionBufferBytes = Number(
+  process.env.CODEX_BRIDGE_MAX_SESSION_BUFFER_BYTES ?? 1024 * 1024
+)
+const defaultMaxCodexSessions = 8
+const configuredMaxCodexSessions = Number(
+  process.env.CODEX_BRIDGE_MAX_SESSIONS ?? defaultMaxCodexSessions
+)
+const maxCodexSessions =
+  Number.isFinite(configuredMaxCodexSessions) && configuredMaxCodexSessions > 0
+    ? Math.floor(configuredMaxCodexSessions)
+    : defaultMaxCodexSessions
+const codexSessionIdleTtlMs = Number(
+  process.env.CODEX_BRIDGE_SESSION_IDLE_TTL_MS ?? 30 * 60 * 1000
+)
+const codexSessionDebug = process.env.CODEX_BRIDGE_SESSION_DEBUG === "1"
+const codexQuotaCacheTtlMs = Number(
+  process.env.CODEX_BRIDGE_QUOTA_CACHE_TTL_MS ?? 60_000
+)
+const codexQuotaFailureTtlMs = Number(
+  process.env.CODEX_BRIDGE_QUOTA_FAILURE_TTL_MS ?? 5_000
+)
+const codexQuotaTimeoutMs = Number(
+  process.env.CODEX_BRIDGE_QUOTA_TIMEOUT_MS ?? 20_000
+)
+const codexQuotaDebug = process.env.CODEX_BRIDGE_QUOTA_DEBUG === "1"
+let cachedCodexQuota
+let cachedCodexQuotaExpiresAt = 0
+let cachedCodexQuotaError
+let cachedCodexQuotaErrorExpiresAt = 0
+let inFlightCodexQuotaPromise
+
+const maintenanceTimer = setInterval(() => {
+  pruneMavisRoutes()
+  pruneCompletedAgentRuns()
+  void pruneCodexSessions()
+}, 60_000)
+maintenanceTimer.unref()
 const ouroborosAgentContract = `Ouroboros Knowledge Protocol:
 - Before substantial work, count important source files and choose an operating level.
 - S (<5 important source files): do not activate full Ouroboros; read code directly.
@@ -121,7 +174,7 @@ const server = http.createServer(async (request, response) => {
       sendJson(response, 200, {
         ok: true,
         [action === "cancel" ? "cancelled" : "stopped"]:
-          stopWorkflowRun(workflowRunId)
+          await stopWorkflowRun(workflowRunId)
       })
       return
     }
@@ -139,23 +192,33 @@ const server = http.createServer(async (request, response) => {
         return
       }
 
-      const session = await createCodexSession(workspace.path, permissionMode, {
-        threadId: typeof payload.threadId === "string" ? payload.threadId : undefined,
-        name: typeof payload.name === "string" ? payload.name.trim() : undefined
-      })
-      sendJson(response, 201, codexSessionSnapshot(session))
+      const { session, created } = await getOrCreateCodexSession(
+        workspace.path,
+        permissionMode,
+        payload,
+        {
+          threadId: typeof payload.threadId === "string" ? payload.threadId : undefined,
+          name: typeof payload.name === "string" ? payload.name.trim() : undefined
+        }
+      )
+      sendJson(response, created ? 201 : 200, codexSessionSnapshot(session))
       return
     }
 
     if (codexSessionMatch) {
       const session = codexSessions.get(decodeURIComponent(codexSessionMatch[1]))
 
-      if (!session) {
-        sendJson(response, 404, { error: "Codex session not found" })
-        return
+    if (!session || !isCodexSessionRoutable(session)) {
+      if (session) {
+        forgetCodexSession(session, "route-unavailable")
       }
+      sendJson(response, 404, { error: "Codex session not found" })
+      return
+    }
 
-      const action = codexSessionMatch[2]
+    session.lastActivityAt = Date.now()
+
+    const action = codexSessionMatch[2]
 
       if (request.method === "GET" && action === "events") {
         const after = Number(requestUrl.searchParams.get("after") ?? 0)
@@ -224,6 +287,9 @@ const server = http.createServer(async (request, response) => {
         await session.appServerSession.delete()
         session.status = "deleted"
         session.turnStatus = "idle"
+        rejectPendingCodexRequests(session, new Error("Codex session deleted."))
+        await terminateProcessTree(session.child)
+        forgetCodexSession(session, "delete")
         sendJson(response, 200, codexSessionSnapshot(session))
         return
       }
@@ -238,7 +304,7 @@ const server = http.createServer(async (request, response) => {
       }
 
       if (request.method === "POST" && action === "stop") {
-        stopCodexSession(session)
+        await stopCodexSession(session)
         sendJson(response, 200, codexSessionSnapshot(session))
         return
       }
@@ -258,7 +324,7 @@ const server = http.createServer(async (request, response) => {
       const slashIndex = rawTail.indexOf("/")
       const idempotencyKey = slashIndex === -1 ? rawTail : rawTail.slice(0, slashIndex)
 
-      if (mavisIdempotencyKeys.has(idempotencyKey)) {
+      if (hasMavisRoute(mavisIdempotencyKeys, idempotencyKey)) {
         try {
           const forwarded = await forwardToLuckyBridge(
             request,
@@ -293,7 +359,7 @@ const server = http.createServer(async (request, response) => {
     if (request.method === "GET" && agentRunMatch) {
       const agentRunId = decodeURIComponent(agentRunMatch[1])
 
-      if (mavisRunIds.has(agentRunId)) {
+      if (hasMavisRoute(mavisRunIds, agentRunId)) {
         try {
           const forwarded = await forwardToLuckyBridge(
             request,
@@ -343,7 +409,7 @@ const server = http.createServer(async (request, response) => {
       const idempotencyKey =
         payload.idempotencyKey || request.headers["idempotency-key"]
       if (idempotencyKey) {
-        mavisIdempotencyKeys.add(String(idempotencyKey))
+        rememberMavisRoute(mavisIdempotencyKeys, String(idempotencyKey))
       }
       try {
         const forwarded = await forwardToLuckyBridge(
@@ -355,7 +421,7 @@ const server = http.createServer(async (request, response) => {
         // for this run also route back to lucky instead of 404'ing here.
         try {
           const data = JSON.parse(forwarded.body)
-          if (data?.id) mavisRunIds.add(String(data.id))
+          if (data?.id) rememberMavisRoute(mavisRunIds, String(data.id))
         } catch {
           // Non-JSON body — leave mavisRunIds alone.
         }
@@ -650,6 +716,52 @@ function pruneCompletedAgentRuns(now = Date.now()) {
       completedIdempotencyKeys.delete(result.idempotencyKey)
     }
   }
+
+  while (completedAgentRuns.size > completedAgentRunMax) {
+    const oldestId = completedAgentRuns.keys().next().value
+    const oldest = completedAgentRuns.get(oldestId)
+    completedAgentRuns.delete(oldestId)
+    if (oldest?.idempotencyKey) {
+      completedIdempotencyKeys.delete(oldest.idempotencyKey)
+    }
+  }
+}
+
+function rememberMavisRoute(routeMap, key) {
+  routeMap.set(key, Date.now())
+}
+
+function hasMavisRoute(routeMap, key) {
+  pruneMavisRoutes()
+  return routeMap.has(key)
+}
+
+function pruneMavisRoutes(now = Date.now()) {
+  for (const [key, createdAt] of mavisIdempotencyKeys) {
+    if (now - createdAt > mavisRouteTtlMs) mavisIdempotencyKeys.delete(key)
+  }
+  for (const [key, createdAt] of mavisRunIds) {
+    if (now - createdAt > mavisRouteTtlMs) mavisRunIds.delete(key)
+  }
+}
+
+async function pruneCodexSessions(now = Date.now()) {
+  for (const [id, session] of codexSessions) {
+    if (session.turnStatus === "inProgress") continue
+    if (now - (session.lastActivityAt ?? now) <= codexSessionIdleTtlMs) continue
+    rejectPendingCodexRequests(
+      session,
+      new Error("Codex session pruned after exceeding the idle TTL.")
+    )
+    try {
+      await terminateProcessTree(session.child)
+      forgetCodexSession(session, "idle-prune")
+    } catch (error) {
+      console.warn(
+        `Codex session prune cleanup failed for ${id}: ${formatError(error)}`
+      )
+    }
+  }
 }
 
 async function runCodex(
@@ -693,8 +805,16 @@ async function runCodex(
 
   let stdout = ""
   let stderr = ""
-  const cancel = () => child.kill("SIGTERM")
-  const timer = setTimeout(cancel, timeoutMs)
+  let cleanupPromise
+  const cancel = () => {
+    if (!cleanupPromise) {
+      cleanupPromise = terminateProcessTree(child)
+    }
+    return cleanupPromise
+  }
+  const timer = setTimeout(() => {
+    void cancel().catch(() => {})
+  }, timeoutMs)
   activeAgentRuns.set(id, {
     cancel,
     idempotencyKey,
@@ -707,17 +827,23 @@ async function runCodex(
   }
 
   child.stdout.on("data", (chunk) => {
-    stdout += chunk.toString()
+    stdout = appendBoundedText(stdout, chunk, maxCodexOutputBytes)
   })
   child.stderr.on("data", (chunk) => {
-    stderr += chunk.toString()
+    stderr = appendBoundedText(stderr, chunk, maxCodexOutputBytes)
   })
   child.stdin.end(prompt)
 
-  const exitCode = await new Promise((resolve, reject) => {
-    child.on("error", reject)
-    child.on("close", resolve)
-  })
+  let exitCode
+  let childError
+  try {
+    exitCode = await new Promise((resolve, reject) => {
+      child.on("error", reject)
+      child.on("close", resolve)
+    })
+  } catch (error) {
+    childError = error
+  }
   clearTimeout(timer)
   activeAgentRuns.delete(id)
 
@@ -725,7 +851,24 @@ async function runCodex(
     activeWorkflowRuns.delete(workflowRunId)
   }
 
-  const output = await fs.readFile(outputFile, "utf8").catch(() => "")
+  let cleanupError
+  if (cleanupPromise) {
+    try {
+      await cleanupPromise
+    } catch (error) {
+      cleanupError = error
+    }
+  }
+
+  if (childError) {
+    throw childError
+  }
+
+  if (cleanupError && exitCode === 0) {
+    throw cleanupError
+  }
+
+  const output = await readTextFileBounded(outputFile, maxCodexOutputBytes)
   await fs.unlink(outputFile).catch(() => {})
   const finalOutput = output.trim() || tail(stdout, 8000).trim()
   const completed = exitCode === 0 && Boolean(finalOutput)
@@ -827,10 +970,10 @@ async function readProcessOutput(command, args) {
   let stderr = ""
 
   child.stdout.on("data", (chunk) => {
-    stdout += chunk.toString()
+    stdout = appendBoundedText(stdout, chunk, maxCodexProcessOutputBytes)
   })
   child.stderr.on("data", (chunk) => {
-    stderr += chunk.toString()
+    stderr = appendBoundedText(stderr, chunk, maxCodexProcessOutputBytes)
   })
 
   const exitCode = await new Promise((resolve, reject) => {
@@ -845,7 +988,7 @@ async function readProcessOutput(command, args) {
   return stdout
 }
 
-function stopWorkflowRun(workflowRunId) {
+async function stopWorkflowRun(workflowRunId) {
   const agentRunId = activeWorkflowRuns.get(workflowRunId)
 
   if (!agentRunId) {
@@ -855,14 +998,14 @@ function stopWorkflowRun(workflowRunId) {
   return stopAgentRun(agentRunId)
 }
 
-function stopAgentRun(agentRunId) {
+async function stopAgentRun(agentRunId) {
   const activeRun = activeAgentRuns.get(agentRunId)
 
   if (!activeRun) {
     return false
   }
 
-  activeRun.cancel()
+  await activeRun.cancel()
   return true
 }
 
@@ -1034,7 +1177,7 @@ async function runProcess(command, args) {
   let stderr = ""
 
   child.stderr.on("data", (chunk) => {
-    stderr += chunk.toString()
+    stderr = appendBoundedText(stderr, chunk, maxCodexProcessOutputBytes)
   })
 
   const exitCode = await new Promise((resolve, reject) => {
@@ -1044,6 +1187,34 @@ async function runProcess(command, args) {
 
   if (exitCode !== 0) {
     throw new Error(stderr.trim() || `${command} exited with ${exitCode}`)
+  }
+}
+
+function appendBoundedText(current, chunk, maxBytes) {
+  const currentBytes = Buffer.byteLength(current, "utf8")
+  if (currentBytes >= maxBytes) return current
+
+  const chunkText = Buffer.isBuffer(chunk) ? chunk.toString("utf8") : String(chunk)
+  const chunkBuffer = Buffer.from(chunkText, "utf8")
+  const remaining = maxBytes - currentBytes
+  if (chunkBuffer.length <= remaining) return current + chunkText
+  return current + chunkBuffer.subarray(0, remaining).toString("utf8")
+}
+
+async function readTextFileBounded(filePath, maxBytes) {
+  try {
+    const handle = await fs.open(filePath, "r")
+    try {
+      const stat = await handle.stat()
+      const length = Math.min(Number(stat.size), maxBytes)
+      const buffer = Buffer.alloc(length)
+      const { bytesRead } = await handle.read(buffer, 0, length, 0)
+      return buffer.subarray(0, bytesRead).toString("utf8")
+    } finally {
+      await handle.close()
+    }
+  } catch {
+    return ""
   }
 }
 
@@ -1345,12 +1516,14 @@ async function createCodexSession(
     }),
     permissionMode: normalizePermissionMode(sessionPermissionMode),
     workspacePath,
+    sessionKey: options.sessionKey,
     threadId: options.threadId,
     name: options.name,
     appServerSession: undefined,
     currentTurnId: undefined,
     status: "starting",
     turnStatus: "idle",
+    lastActivityAt: Date.now(),
     finalText: "",
     assistantText: "",
     sequence: 0,
@@ -1361,8 +1534,14 @@ async function createCodexSession(
   }
 
   codexSessions.set(id, session)
+  if (session.sessionKey) {
+    codexSessionKeys.set(session.sessionKey, session.id)
+  }
   session.child.stdout.on("data", (chunk) => {
     session.buffer += chunk.toString()
+    if (Buffer.byteLength(session.buffer, "utf8") > maxCodexSessionBufferBytes) {
+      session.buffer = session.buffer.slice(-maxCodexSessionBufferBytes)
+    }
     const lines = session.buffer.split(/\r?\n/)
     session.buffer = lines.pop() ?? ""
 
@@ -1386,17 +1565,24 @@ async function createCodexSession(
     })
   })
   session.child.on("error", (error) => {
-    session.status = "failed"
-    session.turnStatus = "failed"
+    if (session.status !== "deleted") {
+      session.status = "failed"
+      session.turnStatus = "failed"
+    }
     rejectPendingCodexRequests(session, error)
+    forgetCodexSession(session, "child-error")
     addCodexSessionEvent(session, {
       type: "session_failed",
       message: formatError(error)
     })
   })
   session.child.on("close", (code) => {
-    if (session.status !== "stopped" && session.status !== "completed") {
-      session.status = code === 0 ? "idle" : "failed"
+    if (
+      session.status !== "stopped" &&
+      session.status !== "completed" &&
+      session.status !== "deleted"
+    ) {
+      session.status = code === 0 ? "completed" : "failed"
       if (code !== 0) session.turnStatus = "failed"
       addCodexSessionEvent(session, {
         type: "session_closed",
@@ -1407,6 +1593,7 @@ async function createCodexSession(
       session,
       new Error(`Codex app-server exited with status ${code ?? 0}.`)
     )
+    forgetCodexSession(session, "child-close")
   })
 
   session.appServerSession = createCodexAppServerSession({
@@ -1425,6 +1612,12 @@ async function createCodexSession(
     if (options.threadId && isMissingNativeThreadError(error)) {
       error.httpStatus = 404
     }
+    session.status = "failed"
+    session.turnStatus = "failed"
+    unregisterCodexSessionKey(session, "create-failed")
+    codexSessions.delete(session.id)
+    rejectPendingCodexRequests(session, error)
+    await terminateProcessTree(session.child).catch(() => {})
     throw error
   }
   session.threadId = started.threadId
@@ -1433,13 +1626,19 @@ async function createCodexSession(
     type: "session_ready",
     message: "Codex session is ready."
   })
+  logCodexSessionLifecycle("create", describeCodexSession(session))
   return session
 }
 
 async function startCodexTurn(session, content) {
+  assertCodexSessionAvailable(session)
   const prompt = content.trim()
   if (!prompt) throw new Error("Codex turn content is required.")
-  if (session.status === "stopped" || session.status === "failed") {
+  if (
+    session.status === "stopped" ||
+    session.status === "failed" ||
+    session.status === "deleted"
+  ) {
     throw new Error(`Codex session is ${session.status}.`)
   }
   if (session.turnStatus === "inProgress") {
@@ -1473,15 +1672,21 @@ async function interruptCodexTurn(session) {
   return true
 }
 
-function stopCodexSession(session) {
-  if (session.status === "stopped") return
-  session.status = "stopped"
-  session.turnStatus = "interrupted"
-  addCodexSessionEvent(session, { type: "session_stopped", message: "Codex session stopped." })
-  session.child.kill("SIGTERM")
+async function stopCodexSession(session) {
+  if (session.status !== "stopped") {
+    session.status = "stopped"
+    session.turnStatus = "interrupted"
+    addCodexSessionEvent(session, {
+      type: "session_stopped",
+      message: "Codex session stopped."
+    })
+    rejectPendingCodexRequests(session, new Error("Codex session stopped."))
+  }
+  await terminateProcessTree(session.child)
 }
 
 function codexSessionRequest(session, method, params) {
+  session.lastActivityAt = Date.now()
   const id = session.nextRequestId++
   writeCodexSessionMessage(session, { jsonrpc: "2.0", id, method, params })
   return new Promise((resolve, reject) => {
@@ -1685,19 +1890,383 @@ function codexSessionEvents(session, after) {
   }
 }
 
+async function getOrCreateCodexSession(
+  workspacePath,
+  sessionPermissionMode,
+  payload = {},
+  options = {}
+) {
+  const sessionKey = deriveCodexSessionKey(workspacePath, payload)
+
+  if (sessionKey) {
+    const activeSession = getReusableCodexSessionByKey(sessionKey)
+    if (activeSession) {
+      logCodexSessionLifecycle("reuse", `${describeCodexSession(activeSession)} source=live`)
+      return { session: activeSession, created: false }
+    }
+
+    const inFlightCreation = inFlightCodexSessionCreations.get(sessionKey)
+    if (inFlightCreation) {
+      const session = await inFlightCreation
+      logCodexSessionLifecycle("reuse", `${describeCodexSession(session)} source=in-flight`)
+      return { session, created: false }
+    }
+  }
+
+  const activeSessionCount = countActiveCodexSessions()
+  if (activeSessionCount >= maxCodexSessions) {
+    logCodexSessionLifecycle(
+      "cap-reject",
+      `active=${activeSessionCount} limit=${maxCodexSessions}`
+    )
+    const error = new Error("Codex session capacity reached.")
+    error.httpStatus = 429
+    throw error
+  }
+
+  const creationPromise = createCodexSession(workspacePath, sessionPermissionMode, {
+    ...options,
+    sessionKey
+  })
+
+  if (!sessionKey) {
+    const session = await creationPromise
+    return { session, created: true }
+  }
+
+  inFlightCodexSessionCreations.set(sessionKey, creationPromise)
+
+  try {
+    const session = await creationPromise
+    return { session, created: true }
+  } finally {
+    if (inFlightCodexSessionCreations.get(sessionKey) === creationPromise) {
+      inFlightCodexSessionCreations.delete(sessionKey)
+    }
+  }
+}
+
+function deriveCodexSessionKey(workspacePath, payload = {}) {
+  const explicitSessionKey =
+    typeof payload.sessionKey === "string" && payload.sessionKey.trim()
+      ? payload.sessionKey
+      : typeof payload.threadId === "string" && payload.threadId.trim()
+        ? payload.threadId
+        : undefined
+
+  if (!explicitSessionKey) {
+    return undefined
+  }
+
+  return JSON.stringify({
+    workspacePath,
+    sessionKey: explicitSessionKey
+  })
+}
+
+function getReusableCodexSessionByKey(sessionKey) {
+  const sessionId = codexSessionKeys.get(sessionKey)
+  if (!sessionId) {
+    return undefined
+  }
+
+  const session = codexSessions.get(sessionId)
+  if (!session || !isCodexSessionReusable(session)) {
+    if (session) {
+      forgetCodexSession(session, "stale")
+    } else {
+      codexSessionKeys.delete(sessionKey)
+    }
+    return undefined
+  }
+
+  return session
+}
+
+function countActiveCodexSessions() {
+  let count = 0
+
+  for (const session of codexSessions.values()) {
+    if (isCodexSessionActive(session)) {
+      count += 1
+    }
+  }
+
+  return count
+}
+
+function isCodexSessionReusable(session) {
+  return (
+    isCodexSessionRoutable(session) &&
+    session.status !== "starting" &&
+    session.status !== "failed" &&
+    session.status !== "stopped"
+  )
+}
+
+function isCodexSessionActive(session) {
+  return session.child.exitCode === null && session.child.signalCode === null
+}
+
+function isCodexSessionRoutable(session) {
+  return session.status !== "deleted" && isCodexSessionActive(session)
+}
+
+function assertCodexSessionAvailable(session) {
+  if (isCodexSessionRoutable(session)) {
+    return
+  }
+
+  const error = new Error("Codex session not found")
+  error.httpStatus = 404
+  throw error
+}
+
+function unregisterCodexSessionKey(session, reason) {
+  if (!session?.sessionKey) {
+    return
+  }
+
+  if (codexSessionKeys.get(session.sessionKey) !== session.id) {
+    return
+  }
+
+  codexSessionKeys.delete(session.sessionKey)
+  logCodexSessionLifecycle("cleanup", `${describeCodexSession(session)} reason=${reason}`)
+}
+
+function forgetCodexSession(session, reason) {
+  unregisterCodexSessionKey(session, reason)
+  codexSessions.delete(session.id)
+}
+
+function describeCodexSession(session) {
+  const parts = [`id=${session.id}`]
+
+  if (session.threadId) {
+    parts.push(`threadId=${session.threadId}`)
+  }
+
+  if (session.sessionKey) {
+    parts.push(`key=${fingerprintCodexSessionKey(session.sessionKey)}`)
+  }
+
+  return parts.join(" ")
+}
+
+function fingerprintCodexSessionKey(sessionKey) {
+  return createHash("sha256")
+    .update(sessionKey, "utf8")
+    .digest("hex")
+    .slice(0, 12)
+}
+
 function rejectPendingCodexRequests(session, error) {
   for (const pending of session.pendingRequests.values()) pending.reject(error)
   session.pendingRequests.clear()
 }
 
+function getChildClosePromise(child) {
+  if (child[childClosePromiseSymbol]) {
+    return child[childClosePromiseSymbol]
+  }
+
+  child[childClosePromiseSymbol] = new Promise((resolve) => {
+    if (child.exitCode !== null || child.signalCode !== null) {
+      resolve({ code: child.exitCode, signal: child.signalCode })
+      return
+    }
+
+    child.once("close", (code, signal) => {
+      resolve({ code, signal })
+    })
+  })
+
+  return child[childClosePromiseSymbol]
+}
+
+async function waitForChildClose(child, timeoutMs = 1_500) {
+  if (child.exitCode !== null || child.signalCode !== null) {
+    await getChildClosePromise(child)
+    return true
+  }
+
+  return await new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(false), timeoutMs)
+    timer.unref?.()
+    getChildClosePromise(child).then(() => {
+      clearTimeout(timer)
+      resolve(true)
+    })
+  })
+}
+
+async function terminateWindowsProcessTree(pid) {
+  await new Promise((resolve, reject) => {
+    const taskkill = spawn("taskkill", ["/PID", String(pid), "/T", "/F"], {
+      shell: false,
+      stdio: "ignore",
+      windowsHide: true
+    })
+
+    taskkill.once("error", reject)
+    taskkill.once("close", (code) => {
+      if (code === 0) {
+        resolve()
+        return
+      }
+
+      reject(new Error(`taskkill exited with status ${code ?? 0}.`))
+    })
+  })
+}
+
+function rejectPendingQuotaRequests(pendingRequests, error) {
+  for (const [id, pending] of pendingRequests) {
+    pendingRequests.delete(id)
+    pending.reject(error)
+  }
+}
+
+function logQuotaLifecycle(event, detail) {
+  if (!codexQuotaDebug) return
+  console.log(
+    detail === undefined ? `[quota] ${event}` : `[quota] ${event} ${detail}`
+  )
+}
+
+function logCodexSessionLifecycle(event, detail) {
+  if (!codexSessionDebug) return
+  console.log(
+    detail === undefined ? `[session] ${event}` : `[session] ${event} ${detail}`
+  )
+}
+
+// Full descendant-tree termination is Windows-specific via taskkill /T.
+// Non-Windows cleanup intentionally targets only the direct child, first with
+// SIGTERM and then SIGKILL if needed; it does not claim descendant cleanup.
+async function terminateProcessTree(child) {
+  if (!child) return
+  if (child[childTerminationPromiseSymbol]) {
+    return child[childTerminationPromiseSymbol]
+  }
+
+  child[childTerminationPromiseSymbol] = (async () => {
+    if (!Number.isInteger(child.pid) || child.pid <= 0) {
+      await waitForChildClose(child)
+      return
+    }
+
+    const closePromise = getChildClosePromise(child)
+
+    if (child.exitCode === null && child.signalCode === null) {
+      let terminationError
+
+      if (process.platform === "win32") {
+        try {
+          await terminateWindowsProcessTree(child.pid)
+        } catch (error) {
+          terminationError = error
+        }
+      } else {
+        try {
+          child.kill("SIGTERM")
+        } catch (error) {
+          if (error?.code !== "ESRCH") {
+            terminationError = error
+          }
+        }
+
+        const closedAfterSigterm = await waitForChildClose(child)
+        if (!closedAfterSigterm && child.exitCode === null && child.signalCode === null) {
+          try {
+            child.kill("SIGKILL")
+          } catch (error) {
+            if (!terminationError && error?.code !== "ESRCH") {
+              terminationError = error
+            }
+          }
+        }
+      }
+
+      const closed = await waitForChildClose(child)
+      if (!closed && !terminationError) {
+        terminationError = new Error(
+          `Timed out waiting for process ${child.pid} to exit.`
+        )
+      }
+
+      if (terminationError && child.exitCode === null && child.signalCode === null) {
+        throw terminationError
+      }
+    }
+
+    await closePromise
+  })()
+
+  return child[childTerminationPromiseSymbol]
+}
+
 async function readCodexQuota() {
+  const now = Date.now()
+
+  if (cachedCodexQuota && now < cachedCodexQuotaExpiresAt) {
+    logQuotaLifecycle("cache-hit", "type=success")
+    return cachedCodexQuota
+  }
+
+  if (cachedCodexQuotaError && now < cachedCodexQuotaErrorExpiresAt) {
+    logQuotaLifecycle("cache-hit", "type=failure")
+    throw cachedCodexQuotaError
+  }
+
+  if (inFlightCodexQuotaPromise) {
+    logQuotaLifecycle("single-flight-join")
+    return inFlightCodexQuotaPromise
+  }
+
+  const freshReadPromise = readFreshCodexQuota()
+    .then((quota) => {
+      cachedCodexQuota = quota
+      cachedCodexQuotaExpiresAt = Date.now() + codexQuotaCacheTtlMs
+      cachedCodexQuotaError = undefined
+      cachedCodexQuotaErrorExpiresAt = 0
+      return quota
+    })
+    .catch((error) => {
+      cachedCodexQuotaError = error
+      cachedCodexQuotaErrorExpiresAt = Date.now() + codexQuotaFailureTtlMs
+      throw error
+    })
+    .finally(() => {
+      if (inFlightCodexQuotaPromise === freshReadPromise) {
+        inFlightCodexQuotaPromise = undefined
+      }
+    })
+
+  inFlightCodexQuotaPromise = freshReadPromise
+  return freshReadPromise
+}
+
+async function readFreshCodexQuota() {
   const child = spawnCodex(["app-server", "--stdio"], {
     cwd: repoRoot,
     stdio: ["pipe", "pipe", "pipe"]
   })
-  const responses = new Map()
+  logQuotaLifecycle("spawn", `pid=${child.pid ?? "unknown"}`)
+  const pendingRequests = new Map()
   let buffer = ""
   let nextId = 1
+  let quotaError
+  const overallTimeout = setTimeout(() => {
+    rejectPendingQuotaRequests(
+      pendingRequests,
+      new Error(
+        `Codex quota request timed out after ${codexQuotaTimeoutMs}ms.`
+      )
+    )
+  }, codexQuotaTimeoutMs)
+  overallTimeout.unref?.()
 
   child.stdout.on("data", (chunk) => {
     buffer += chunk.toString()
@@ -1707,26 +2276,37 @@ async function readCodexQuota() {
       if (!line.trim()) continue
       try {
         const message = JSON.parse(line)
-        if (message.id !== undefined) responses.get(message.id)?.(message)
+        if (message.id === undefined) continue
+        const pending = pendingRequests.get(message.id)
+        if (!pending) continue
+        pendingRequests.delete(message.id)
+        if (message.error) pending.reject(new Error(message.error.message ?? pending.method))
+        else pending.resolve(message.result)
       } catch {
         // Ignore non-JSON startup output from the CLI.
       }
     }
+  })
+  child.on("error", (error) => {
+    rejectPendingQuotaRequests(pendingRequests, error)
+  })
+  child.on("close", (code, signal) => {
+    rejectPendingQuotaRequests(
+      pendingRequests,
+      new Error(
+        `Codex quota app-server exited with status ${code ?? signal ?? 0}.`
+      )
+    )
   })
 
   const request = (method, params) => {
     const id = nextId++
     child.stdin.write(`${JSON.stringify({ method, id, params })}\n`)
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        responses.delete(id)
-        reject(new Error(`${method} timed out`))
-      }, 15_000)
-      responses.set(id, (message) => {
-        clearTimeout(timer)
-        responses.delete(id)
-        if (message.error) reject(new Error(message.error.message ?? method))
-        else resolve(message.result)
+      pendingRequests.set(id, {
+        method,
+        resolve,
+        reject
       })
     })
   }
@@ -1769,8 +2349,27 @@ async function readCodexQuota() {
             ? "warning"
             : "healthy"
     }
+  } catch (error) {
+    quotaError = error
+    throw error
   } finally {
-    child.kill()
+    clearTimeout(overallTimeout)
+    rejectPendingQuotaRequests(
+      pendingRequests,
+      quotaError ?? new Error("Codex quota request completed during cleanup.")
+    )
+    try {
+      await terminateProcessTree(child)
+      logQuotaLifecycle("cleanup outcome", `pid=${child.pid ?? "unknown"} status=ok`)
+    } catch (cleanupError) {
+      logQuotaLifecycle(
+        "cleanup outcome",
+        `pid=${child.pid ?? "unknown"} status=error`
+      )
+      if (!quotaError) {
+        throw cleanupError
+      }
+    }
   }
 }
 
@@ -1827,4 +2426,29 @@ function quoteWindowsArgument(value) {
   const text = String(value)
   if (!/[\s"]/.test(text)) return text
   return `"${text.replaceAll(/(\\*)"/g, "$1$1\\\"").replaceAll(/(\\+)$/g, "$1$1")}"`
+}
+
+function resolveCodexCommandLegacy() {
+  const configured = process.env.CODEX_BRIDGE_COMMAND?.trim()
+  if (configured) return configured
+  return process.platform === "win32" ? "codex.cmd" : "codex"
+}
+
+function spawnCodexLegacy(command, args, options) {
+  const commandName =
+    process.platform === "win32"
+      ? path.win32.basename(command)
+      : path.basename(command)
+  const isWindowsCmdShim = /\.(cmd|bat)$/i.test(commandName)
+  const isWindowsBarePathCommand =
+    process.platform === "win32" &&
+    !/[\\/]/.test(command) &&
+    !/\.[^\\/.\s]+$/i.test(commandName)
+  const useShell =
+    process.platform === "win32" &&
+    (isWindowsCmdShim || isWindowsBarePathCommand)
+  return spawn(command, args, {
+    ...options,
+    shell: useShell
+  })
 }

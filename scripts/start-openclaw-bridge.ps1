@@ -51,6 +51,7 @@ function Convert-ToWslPath([string] $path) {
 
 function Invoke-OpenClawRemoteScript([string] $remoteScript) {
   $sshPassword = Get-OpenClawSshPassword
+  $remoteScript = $remoteScript -replace "`r`n", "`n"
   $remoteB64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($remoteScript))
   $runner = New-TemporaryFile
   $runnerScript = @'
@@ -79,6 +80,7 @@ printf '%s\n' "$remote_script" |
 
 rm -f "$askpass"
 '@
+  $runnerScript = $runnerScript -replace "`r`n", "`n"
 
   [System.IO.File]::WriteAllText(
     $runner.FullName,

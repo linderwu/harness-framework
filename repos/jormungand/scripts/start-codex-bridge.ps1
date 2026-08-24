@@ -19,6 +19,20 @@
 # Optional env:
 #   CODEX_BRIDGE_HOST         (default 127.0.0.1)
 #   CODEX_BRIDGE_PORT         (default 4177)
+#   CODEX_BRIDGE_QUOTA_CACHE_TTL_MS (default 60000) — successful /agent-quota
+#                              reads are cached for this long, so repeated
+#                              dashboard polls do not keep respawning Codex.
+#   CODEX_BRIDGE_QUOTA_FAILURE_TTL_MS (default 5000) — failed /agent-quota
+#                              reads are short-cached for this long to avoid
+#                              respawn bursts while Codex is unhealthy.
+#   CODEX_BRIDGE_QUOTA_TIMEOUT_MS (default 20000) — overall timeout for a
+#                              single Codex quota read before exact-PID
+#                              cleanup is awaited. Full descendant-tree
+#                              termination is Windows-specific; non-Windows
+#                              guarantees direct-child SIGTERM/SIGKILL only.
+#   CODEX_BRIDGE_QUOTA_DEBUG  (default off; set to 1 for non-secret lifecycle
+#                              logs: cache-hit, single-flight join, spawn pid,
+#                              cleanup outcome)
 #   CODEX_BRIDGE_RUNTIME_SKILLS (default off; set to 1 to accept v0.3 with
 #                              runtime skill bundles — needed when the
 #                              dashboard sends v0.3 for mavis calls that

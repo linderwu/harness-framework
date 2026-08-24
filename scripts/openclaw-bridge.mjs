@@ -98,13 +98,45 @@ const server = http.createServer(async (request, response) => {
   }
 })
 
-server.listen(port, host, () => {
-  console.log(`OpenClaw bridge listening at http://${host}:${port}`)
-  console.log(`OpenClaw container: ${container}`)
-  if (!token) {
-    console.log("OPENCLAW_BRIDGE_TOKEN is not set; keep this bridge private.")
+if (process.env.OPENCLAW_BRIDGE_DISABLE_LISTEN !== "1") {
+  server.listen(port, host, () => {
+    console.log(`OpenClaw bridge listening at http://${host}:${port}`)
+    console.log(`OpenClaw container: ${container}`)
+    if (!token) {
+      console.log("OPENCLAW_BRIDGE_TOKEN is not set; keep this bridge private.")
+    }
+  })
+}
+
+export function buildOpenClawInvocation({
+  executionMode,
+  executable,
+  container,
+  siteAuth,
+  agentArgs
+}) {
+  if (executionMode === "host") {
+    return { command: executable, args: agentArgs }
   }
-})
+
+  return {
+    command: "docker",
+    args: [
+      "exec",
+      ...(siteAuth.username && siteAuth.password
+        ? [
+            "-e",
+            `SITE_AUTH_USERNAME=${siteAuth.username}`,
+            "-e",
+            `SITE_AUTH_PASSWORD=${siteAuth.password}`
+          ]
+        : []),
+      container,
+      "openclaw",
+      ...agentArgs
+    ]
+  }
+}
 
 async function runOpenClawAgent({
   id,
@@ -114,18 +146,7 @@ async function runOpenClawAgent({
   sessionKey,
   message
 }) {
-  const args = [
-    "exec",
-    ...(siteAuth.username && siteAuth.password
-      ? [
-          "-e",
-          `SITE_AUTH_USERNAME=${siteAuth.username}`,
-          "-e",
-          `SITE_AUTH_PASSWORD=${siteAuth.password}`
-        ]
-      : []),
-    container,
-    "openclaw",
+  const agentArgs = [
     "agent",
     "--agent",
     mainAgent,
@@ -139,7 +160,14 @@ async function runOpenClawAgent({
     "--timeout",
     String(Number(process.env.OPENCLAW_AGENT_TIMEOUT_SECONDS ?? 600))
   ]
-  const child = spawn("docker", args, {
+  const invocation = buildOpenClawInvocation({
+    executionMode: process.env.OPENCLAW_EXEC_MODE ?? "docker",
+    executable: process.env.OPENCLAW_BIN ?? "openclaw",
+    container,
+    siteAuth,
+    agentArgs
+  })
+  const child = spawn(invocation.command, invocation.args, {
     stdio: ["ignore", "pipe", "pipe"]
   })
   let stdout = ""

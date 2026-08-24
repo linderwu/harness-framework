@@ -25,6 +25,11 @@ const dockerCommand = resolveCommandOverride(
   process.env.OPENCLAW_DOCKER_COMMAND,
   "docker"
 )
+const openclawExecutionMode = process.env.OPENCLAW_EXEC_MODE ?? "docker"
+const openclawCommand = resolveCommandOverride(
+  process.env.OPENCLAW_BIN,
+  "openclaw"
+)
 const runtimeSkillTarCommand = resolveCommandOverride(
   process.env.OPENCLAW_RUNTIME_SKILL_TAR_COMMAND,
   "tar"
@@ -336,13 +341,41 @@ const server = http.createServer(async (request, response) => {
   }
 })
 
-server.listen(port, host, () => {
-  console.log(`OpenClaw bridge listening at http://${host}:${port}`)
-  console.log(`OpenClaw container: ${container}`)
-  if (!token) {
-    console.log("OPENCLAW_BRIDGE_TOKEN is not set; bridge is loopback-only.")
+if (process.env.OPENCLAW_BRIDGE_DISABLE_LISTEN !== "1") {
+  server.listen(port, host, () => {
+    console.log(`OpenClaw bridge listening at http://${host}:${port}`)
+    console.log(`OpenClaw execution mode: ${openclawExecutionMode}`)
+    if (!token) {
+      console.log("OPENCLAW_BRIDGE_TOKEN is not set; bridge is loopback-only.")
+    }
+  })
+}
+
+export function buildOpenClawInvocation({
+  executionMode,
+  executable,
+  dockerCommand,
+  container,
+  agentArgs
+}) {
+  if (executionMode === "host") {
+    return {
+      command: executable.command,
+      args: [...executable.args, ...agentArgs]
+    }
   }
-})
+
+  return {
+    command: dockerCommand.command,
+    args: [
+      ...dockerCommand.args,
+      "exec",
+      container,
+      "openclaw",
+      ...agentArgs
+    ]
+  }
+}
 
 async function runOpenClawAgent({
   id,
@@ -367,10 +400,7 @@ async function runOpenClawAgent({
     message: `Starting ${mainAgent} through OpenClaw bridge.`
   })
   await startLuckyStoreRun(id)
-  const args = [
-    "exec",
-    container,
-    "openclaw",
+  const agentArgs = [
     "agent",
     "--agent",
     mainAgent,
@@ -384,7 +414,14 @@ async function runOpenClawAgent({
     "--timeout",
     String(Number(process.env.OPENCLAW_AGENT_TIMEOUT_SECONDS ?? 600))
   ]
-  const child = spawn(dockerCommand.command, [...dockerCommand.args, ...args], {
+  const invocation = buildOpenClawInvocation({
+    executionMode: openclawExecutionMode,
+    executable: openclawCommand,
+    dockerCommand,
+    container,
+    agentArgs
+  })
+  const child = spawn(invocation.command, invocation.args, {
     stdio: ["ignore", "pipe", "pipe"]
   })
   let stdout = ""
@@ -551,30 +588,32 @@ async function installRuntimeSkillBundle(bundle, activeRun) {
       { signal: activeRun?.signal }
     )
     throwIfRunCancelled(activeRun)
-    await runProcess(
-      runtimeSkillDockerCommand.command,
-      [
-        ...runtimeSkillDockerCommand.args,
-        "exec",
-        container,
-        "mkdir",
-        "-p",
-        containerInstallPath
-      ],
-      { signal: activeRun?.signal }
-    )
-    throwIfRunCancelled(activeRun)
-    await runProcess(
-      runtimeSkillDockerCommand.command,
-      [
-        ...runtimeSkillDockerCommand.args,
-        "cp",
-        `${installPath}/.`,
-        `${container}:${containerInstallPath}`
-      ],
-      { signal: activeRun?.signal }
-    )
-    throwIfRunCancelled(activeRun)
+    if (openclawExecutionMode === "docker") {
+      await runProcess(
+        runtimeSkillDockerCommand.command,
+        [
+          ...runtimeSkillDockerCommand.args,
+          "exec",
+          container,
+          "mkdir",
+          "-p",
+          containerInstallPath
+        ],
+        { signal: activeRun?.signal }
+      )
+      throwIfRunCancelled(activeRun)
+      await runProcess(
+        runtimeSkillDockerCommand.command,
+        [
+          ...runtimeSkillDockerCommand.args,
+          "cp",
+          `${installPath}/.`,
+          `${container}:${containerInstallPath}`
+        ],
+        { signal: activeRun?.signal }
+      )
+      throwIfRunCancelled(activeRun)
+    }
 
     return {
       id: bundle.id,
@@ -583,7 +622,8 @@ async function installRuntimeSkillBundle(bundle, activeRun) {
       downloadSource: "github-release",
       cacheStatus,
       verified: true,
-      installedPath: containerInstallPath
+      installedPath:
+        openclawExecutionMode === "host" ? installPath : containerInstallPath
     }
   } catch (error) {
     if (isRunCancellationError(error) || activeRun?.cancelled) {

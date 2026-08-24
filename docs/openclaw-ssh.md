@@ -78,6 +78,47 @@ Expected result after deployment:
 }
 ```
 
+## Remote OpenClaw Stack (native migrated host)
+
+The migrated host uses a native OpenClaw installation rather than the old
+Docker profile. Use the integrated PowerShell entry point from the
+`repos/jormungand` checkout:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\start-openclaw-stack.ps1 -Action start
+```
+
+`start` 是日常的一鍵啟動指令；若首次部署或 bridge 程式更新，再先執行
+`-Action install` 同步 service 與程式檔。
+
+`start` 也會建立本機 Harness 專用 SSH tunnel：
+`127.0.0.1:4188` → `192.168.50.1:127.0.0.1:4188`，並驗證
+`HARNESS_CONNECTION=connected`。若只要檢查遠端、不建立 tunnel，可加
+`-SkipHarnessConnection`。
+
+The script defaults to `amr@192.168.50.1` and manages these user services:
+
+- `openclaw-gateway.service`
+- `jormungandr-openclaw-bridge.service`
+
+It also supports:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\start-openclaw-stack.ps1 -Action status
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\start-openclaw-stack.ps1 -Action restart
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\start-openclaw-stack.ps1 -Action stop
+```
+
+Set `OPENCLAW_SSH_PASSWORD` or `OPENCLAW_SSH_PASSWORD_FILE`; the script never
+stores the SSH password in source. `OPENCLAW_GATEWAY_TOKEN` is used for local
+bridge health when `OPENCLAW_BRIDGE_TOKEN` is empty. Local service health and
+public tunnel health are reported separately; a public Cloudflare `530` does
+not hide a healthy remote service.
+
+When `/etc/cloudflared/token` exists, the same `start` action also enables and
+starts `cloudflared.service`. Its systemd drop-in forces HTTP/2, IPv4, and
+Cloudflare DNS (`1.1.1.1`) to avoid the remote router's broken SRV response.
+
 ## Remote Bridge Start Script
 
 Use this from the local Windows repo to start or check the OpenClaw bridge on
