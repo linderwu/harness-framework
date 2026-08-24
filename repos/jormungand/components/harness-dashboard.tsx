@@ -81,16 +81,6 @@ import {
   stageLabels
 } from "@/lib/workflow"
 
-const codexModelOptions = [
-  "ChatGPT OAuth",
-  "gpt-5",
-  "gpt-5-mini",
-  "gpt-4.1",
-  "gpt-4o",
-  "gpt-4o-mini",
-  "o3-mini",
-  "o1-mini"
-]
 const codexReasoningIntensityOptions: Array<{
   value: CodexReasoningIntensity
   label: string
@@ -147,6 +137,18 @@ interface BridgeHealth {
 interface AgentHealthResponse {
   checkedAt: string
   bridges: BridgeHealth[]
+}
+
+interface CodexModelOption {
+  id: string
+  displayName: string
+  description?: string
+  isDefault: boolean
+}
+
+interface CodexModelsResponse {
+  models: CodexModelOption[]
+  defaultModelId?: string
 }
 
 const sampleRequirement =
@@ -2093,6 +2095,7 @@ function BridgeStatusPanel({
   }) => void
 }) {
   const agentQuotaPollIntervalMs = 5 * 60 * 1000
+  const codexModelPollIntervalMs = 5 * 60 * 1000
   const [health, setHealth] = useState<Partial<Record<BridgeId, BridgeHealth>>>(
     {}
   )
@@ -2103,6 +2106,9 @@ function BridgeStatusPanel({
   const [failureCount, setFailureCount] = useState(0)
   const [lastSuccessAt, setLastSuccessAt] = useState<string | undefined>()
   const [now, setNow] = useState(() => Date.now())
+  const [codexModels, setCodexModels] = useState<CodexModelOption[]>([])
+  const [codexDefaultModelId, setCodexDefaultModelId] = useState<string>()
+  const [isCodexModelsLoading, setIsCodexModelsLoading] = useState(true)
 
   async function refreshBridgeHealth() {
     setIsChecking(true)
@@ -2146,9 +2152,28 @@ function BridgeStatusPanel({
     }
   }
 
+  async function refreshCodexModels() {
+    try {
+      const response = await fetch("/api/codex-models", { cache: "no-store" })
+      const data = (await response.json().catch(() => ({}))) as Partial<CodexModelsResponse>
+      if (!response.ok || !Array.isArray(data.models)) {
+        throw new Error("Codex model catalog request failed")
+      }
+
+      setCodexModels(data.models)
+      setCodexDefaultModelId(data.defaultModelId)
+    } catch {
+      setCodexModels([])
+      setCodexDefaultModelId(undefined)
+    } finally {
+      setIsCodexModelsLoading(false)
+    }
+  }
+
   useLayoutEffect(() => {
     const initialCheckId = window.setTimeout(refreshBridgeHealth, 0)
     const initialQuotaCheckId = window.setTimeout(refreshCodexQuota, 0)
+    const initialModelCheckId = window.setTimeout(refreshCodexModels, 0)
     const intervalId = window.setInterval(
       refreshBridgeHealth,
       bridgeHealthPollIntervalMs
@@ -2157,16 +2182,22 @@ function BridgeStatusPanel({
       refreshCodexQuota,
       agentQuotaPollIntervalMs
     )
+    const modelIntervalId = window.setInterval(
+      refreshCodexModels,
+      codexModelPollIntervalMs
+    )
     const clockId = window.setInterval(() => setNow(Date.now()), 1000)
 
     return () => {
       window.clearTimeout(initialCheckId)
       window.clearTimeout(initialQuotaCheckId)
+      window.clearTimeout(initialModelCheckId)
       window.clearInterval(intervalId)
       window.clearInterval(quotaIntervalId)
+      window.clearInterval(modelIntervalId)
       window.clearInterval(clockId)
     }
-  }, [agentQuotaPollIntervalMs])
+  }, [agentQuotaPollIntervalMs, codexModelPollIntervalMs])
 
   const isStale =
     lastSuccessAt &&
@@ -2191,6 +2222,7 @@ function BridgeStatusPanel({
           onClick={() => {
             void refreshBridgeHealth()
             void refreshCodexQuota()
+            void refreshCodexModels()
           }}
           title="Refresh bridge health"
           type="button"
@@ -2206,6 +2238,9 @@ function BridgeStatusPanel({
           {visibleBridges.map((bridge) => (
             <BridgeStatusCard
               onCodexProfileChange={onCodexProfileChange}
+              codexDefaultModelId={codexDefaultModelId}
+              codexModels={codexModels}
+              isCodexModelsLoading={isCodexModelsLoading}
               agents={getBridgeAgents(bridge.id)}
               failureCount={failureCount}
               health={bridge}
@@ -2226,6 +2261,8 @@ function BridgeStatusPanel({
 
 function BridgeStatusCard({
   agents,
+  codexDefaultModelId,
+  codexModels,
   failureCount,
   health,
   quotas,
@@ -2234,9 +2271,12 @@ function BridgeStatusCard({
   lastSuccessAt,
   now,
   run,
-  onCodexProfileChange
+  onCodexProfileChange,
+  isCodexModelsLoading
 }: {
   agents: AgentKind[]
+  codexDefaultModelId?: string
+  codexModels: CodexModelOption[]
   failureCount: number
   health: BridgeHealth
   quotas: Partial<Record<AgentKind, AgentQuota>>
@@ -2245,6 +2285,7 @@ function BridgeStatusCard({
   lastSuccessAt?: string
   now: number
   run?: WorkflowRun
+  isCodexModelsLoading: boolean
   onCodexProfileChange?: (input: {
     runId: string
     selectedModelId: string
@@ -2287,6 +2328,9 @@ function BridgeStatusCard({
               agent={agent}
               key={agent}
               quota={displayQuota}
+              codexDefaultModelId={codexDefaultModelId}
+              codexModels={codexModels}
+              isCodexModelsLoading={isCodexModelsLoading}
               run={run}
               onCodexProfileChange={onCodexProfileChange}
             />
@@ -2301,10 +2345,16 @@ function AgentBridgeRow({
   agent,
   quota,
   run,
-  onCodexProfileChange
+  onCodexProfileChange,
+  codexDefaultModelId,
+  codexModels,
+  isCodexModelsLoading
 }: {
   agent: AgentKind
   quota?: AgentQuota
+  codexDefaultModelId?: string
+  codexModels: CodexModelOption[]
+  isCodexModelsLoading: boolean
   run?: WorkflowRun
   onCodexProfileChange?: (input: {
     runId: string
@@ -2318,17 +2368,17 @@ function AgentBridgeRow({
   const profile = agentProfiles.find((candidate) => candidate.id === agent)
   const status = latestAgentRun?.status ?? "idle"
   const statusLabel = status === "failed" ? "FAIL" : status.toUpperCase()
-  const selectedModelId = run?.selectedModelId ?? "ChatGPT OAuth"
+  const selectedModelId =
+    codexModels.find((model) => model.id === run?.selectedModelId)?.id ??
+    codexModels.find((model) => model.id === codexDefaultModelId)?.id ??
+    codexModels.find((model) => model.isDefault)?.id ??
+    codexModels[0]?.id ??
+    ""
   const selectedReasoningIntensity = run?.selectedReasoningIntensity ?? "auto"
 
   if (!profile) {
     return null
   }
-
-  const modelOptions = new Set([
-    ...codexModelOptions,
-    ...(run?.selectedModelId ? [run.selectedModelId] : [])
-  ])
 
   function applyProfile(nextModelId: string, nextReasoningIntensity: CodexReasoningIntensity) {
     if (!run?.id || !onCodexProfileChange) {
@@ -2354,18 +2404,26 @@ function AgentBridgeRow({
             <span>模型</span>
             <select
               aria-label="Codex model"
+              aria-busy={isCodexModelsLoading}
               className="plainSelect bridgeAgentSmallSelect"
+              disabled={isCodexModelsLoading || codexModels.length === 0}
               value={selectedModelId}
               onChange={(event) => {
                 const nextModelId = event.target.value
                 applyProfile(nextModelId, selectedReasoningIntensity)
               }}
             >
-              {Array.from(modelOptions).map((optionModelId) => (
-                <option key={optionModelId} value={optionModelId}>
-                  {optionModelId}
+              {codexModels.length === 0 ? (
+                <option value="">
+                  {isCodexModelsLoading ? "載入模型中…" : "沒有可用模型"}
                 </option>
-              ))}
+              ) : (
+                codexModels.map((model) => (
+                  <option key={model.id} title={model.description} value={model.id}>
+                    {model.displayName}
+                  </option>
+                ))
+              )}
             </select>
           </label>
           <label>

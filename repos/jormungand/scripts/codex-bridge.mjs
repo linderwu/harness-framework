@@ -7,6 +7,11 @@ import { createHash, randomUUID } from "node:crypto"
 import { normalizePermissionMode } from "./agent-permissions.mjs"
 import { loadBridgeConfig } from "./bridge-config.mjs"
 import { createCodexAppServerSession } from "./codex-app-server-session.mjs"
+import {
+  buildCodexExecModelArgs,
+  defaultCodexModelId,
+  normalizeCodexModels
+} from "./codex-models.mjs"
 
 loadBridgeConfig()
 
@@ -96,11 +101,19 @@ const codexQuotaTimeoutMs = Number(
   process.env.CODEX_BRIDGE_QUOTA_TIMEOUT_MS ?? 20_000
 )
 const codexQuotaDebug = process.env.CODEX_BRIDGE_QUOTA_DEBUG === "1"
+const codexModelsCacheTtlMs = Number(
+  process.env.CODEX_BRIDGE_MODELS_CACHE_TTL_MS ?? 300_000
+)
 let cachedCodexQuota
 let cachedCodexQuotaExpiresAt = 0
 let cachedCodexQuotaError
 let cachedCodexQuotaErrorExpiresAt = 0
 let inFlightCodexQuotaPromise
+let cachedCodexModels
+let cachedCodexModelsExpiresAt = 0
+let cachedCodexModelsError
+let cachedCodexModelsErrorExpiresAt = 0
+let inFlightCodexModelsPromise
 
 const maintenanceTimer = setInterval(() => {
   pruneMavisRoutes()
@@ -161,6 +174,11 @@ const server = http.createServer(async (request, response) => {
         protocolVersion,
         capabilities: bridgeCapabilities()
       })
+      return
+    }
+
+    if (request.method === "GET" && requestUrl.pathname === "/models") {
+      sendJson(response, 200, await readCodexModels())
       return
     }
 
@@ -511,7 +529,9 @@ const server = http.createServer(async (request, response) => {
       idempotencyKey,
       payload.workflowRunId,
       workspace.path,
-      normalizedPermissionMode
+      normalizedPermissionMode,
+      payload.selectedModelId,
+      payload.selectedReasoningIntensity
     ).finally(async () => {
       if (idempotencyKey) {
         activeIdempotencyKeys.delete(idempotencyKey)
@@ -770,7 +790,9 @@ async function runCodex(
   idempotencyKey,
   workflowRunId,
   workspacePath,
-  permissionModeInput = permissionMode
+  permissionModeInput = permissionMode,
+  selectedModelId,
+  selectedReasoningIntensity
 ) {
   const outputFile = path.join(os.tmpdir(), `codex-bridge-${id}.txt`)
   const sandbox = process.env.CODEX_BRIDGE_SANDBOX ?? "workspace-write"
@@ -797,6 +819,12 @@ async function runCodex(
   } else {
     args.splice(args.length - 2, 0, "--sandbox", sandbox)
   }
+
+  args.splice(
+    args.length - 1,
+    0,
+    ...buildCodexExecModelArgs(selectedModelId, selectedReasoningIntensity)
+  )
 
   const child = spawnCodex(args, {
     cwd: workspacePath,
@@ -2205,6 +2233,151 @@ async function terminateProcessTree(child) {
   })()
 
   return child[childTerminationPromiseSymbol]
+}
+
+async function readCodexModels() {
+  const now = Date.now()
+
+  if (cachedCodexModels && now < cachedCodexModelsExpiresAt) {
+    return cachedCodexModels
+  }
+
+  if (cachedCodexModelsError && now < cachedCodexModelsErrorExpiresAt) {
+    throw cachedCodexModelsError
+  }
+
+  if (inFlightCodexModelsPromise) {
+    return inFlightCodexModelsPromise
+  }
+
+  const freshReadPromise = readFreshCodexModels()
+    .then((models) => {
+      cachedCodexModels = models
+      cachedCodexModelsExpiresAt = Date.now() + codexModelsCacheTtlMs
+      cachedCodexModelsError = undefined
+      cachedCodexModelsErrorExpiresAt = 0
+      return models
+    })
+    .catch((error) => {
+      cachedCodexModelsError = error
+      cachedCodexModelsErrorExpiresAt = Date.now() + codexQuotaFailureTtlMs
+      throw error
+    })
+    .finally(() => {
+      if (inFlightCodexModelsPromise === freshReadPromise) {
+        inFlightCodexModelsPromise = undefined
+      }
+    })
+
+  inFlightCodexModelsPromise = freshReadPromise
+  return freshReadPromise
+}
+
+async function readFreshCodexModels() {
+  const result = await requestCodexAppServer("model/list", {})
+  const models = normalizeCodexModels(result)
+
+  if (models.length === 0) {
+    throw new Error("Codex did not return any available models")
+  }
+
+  return {
+    models,
+    defaultModelId: defaultCodexModelId(models)
+  }
+}
+
+async function requestCodexAppServer(method, params) {
+  const child = spawnCodex(["app-server", "--stdio"], {
+    cwd: repoRoot,
+    stdio: ["pipe", "pipe", "pipe"]
+  })
+  const pendingRequests = new Map()
+  let buffer = ""
+  let nextId = 1
+  let requestError
+  const overallTimeout = setTimeout(() => {
+    rejectPendingQuotaRequests(
+      pendingRequests,
+      new Error(`Codex app-server ${method} request timed out.`)
+    )
+  }, codexQuotaTimeoutMs)
+  overallTimeout.unref?.()
+
+  child.stdout.on("data", (chunk) => {
+    buffer += chunk.toString()
+    const lines = buffer.split(/\r?\n/)
+    buffer = lines.pop() ?? ""
+    for (const line of lines) {
+      if (!line.trim()) continue
+      try {
+        const message = JSON.parse(line)
+        if (message.id === undefined) continue
+        const pending = pendingRequests.get(message.id)
+        if (!pending) continue
+        pendingRequests.delete(message.id)
+        if (message.error) {
+          pending.reject(new Error(message.error.message ?? pending.method))
+        } else {
+          pending.resolve(message.result)
+        }
+      } catch {
+        // Ignore non-JSON startup output from the CLI.
+      }
+    }
+  })
+  child.on("error", (error) => {
+    rejectPendingQuotaRequests(pendingRequests, error)
+  })
+  child.on("close", (code, signal) => {
+    rejectPendingQuotaRequests(
+      pendingRequests,
+      new Error(
+        `Codex app-server exited with status ${code ?? signal ?? 0}.`
+      )
+    )
+  })
+
+  const request = (requestMethod, requestParams) => {
+    const id = nextId++
+    child.stdin.write(
+      `${JSON.stringify({ method: requestMethod, id, params: requestParams })}\n`
+    )
+    return new Promise((resolve, reject) => {
+      pendingRequests.set(id, {
+        method: requestMethod,
+        resolve,
+        reject
+      })
+    })
+  }
+
+  try {
+    await request("initialize", {
+      clientInfo: {
+        name: "jormungandr-bridge",
+        title: "Jormungandr",
+        version: "0.1.0"
+      },
+      capabilities: { experimentalApi: true }
+    })
+    child.stdin.write(`${JSON.stringify({ method: "initialized", params: {} })}\n`)
+    return await request(method, params)
+  } catch (error) {
+    requestError = error
+    throw error
+  } finally {
+    clearTimeout(overallTimeout)
+    rejectPendingQuotaRequests(
+      pendingRequests,
+      requestError ?? new Error("Codex app-server request completed during cleanup.")
+    )
+    try {
+      await terminateProcessTree(child)
+    } catch (cleanupError) {
+      if (!requestError) throw cleanupError
+    }
+  }
 }
 
 async function readCodexQuota() {
