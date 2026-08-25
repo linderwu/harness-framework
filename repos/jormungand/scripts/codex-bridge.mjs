@@ -750,12 +750,18 @@ function sendAgentRunEvents(response, idempotencyKey, requestUrl) {
 
 function appendAgentRunEvent(runId, type, payload = {}) {
   const sequence = (agentRunJournalSequences.get(runId) ?? 0) + 1
+  const boundedPayload = { ...payload }
+  for (const key of ["message", "text", "delta"]) {
+    if (typeof boundedPayload[key] === "string") {
+      boundedPayload[key] = tail(boundedPayload[key], maxCodexProcessOutputBytes)
+    }
+  }
   const event = {
     id: `${runId}:${sequence}`,
     sequence,
     type,
     createdAt: new Date().toISOString(),
-    ...payload
+    ...boundedPayload
   }
   const events = agentRunJournals.get(runId) ?? []
   events.push(event)
