@@ -1,7 +1,10 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 
-import { createOpenClawA2AEnvelope } from "../lib/a2a-protocol"
+import {
+  createOpenClawA2AEnvelope,
+  extractA2AResponseText
+} from "../lib/a2a-protocol"
 import { buildSharedConversationHistory } from "../lib/conversation-history"
 import { ConversationHistorySync } from "../lib/conversation-history-sync"
 import { routeOpenClawUnboundConversation } from "../lib/hive-services"
@@ -80,6 +83,25 @@ function createEnvelopeInput() {
     conversationHistory
   } as const
 }
+
+test("A2A extraction keeps only finalAssistantVisibleText and removes think blocks", () => {
+  const raw = JSON.stringify({
+    result: {
+      message: {
+        parts: [{
+          kind: "data",
+          data: {
+            finalAssistantVisibleText: "<think>private</think>Hi! How can I help?",
+            finalAssistantRawText: "private payload",
+            executionTrace: { tool: "memory_search" }
+          }
+        }]
+      }
+    }
+  })
+
+  assert.equal(extractA2AResponseText(raw), "Hi! How can I help?")
+})
 
 function makeEntry(input: {
   id: string

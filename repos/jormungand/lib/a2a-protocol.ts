@@ -198,6 +198,7 @@ function createTaskPayload(input: OpenClawA2AEnvelopeInput) {
 export function extractA2AResponseText(raw: string) {
   try {
     const data = JSON.parse(raw) as BridgeLikeResponse
+    const finalAssistantVisibleText = findFinalAssistantVisibleText(data)
     const jsonRpcError = getString(asRecord(data.error)?.message)
     const result = asRecord(data.result)
     const directMessage = collectMessageText(result)
@@ -210,6 +211,7 @@ export function extractA2AResponseText(raw: string) {
     const legacyPayloadText = collectLegacyPayloadText(result?.payloads)
 
     return (
+      finalAssistantVisibleText ||
       directMessage ||
       wrappedMessage ||
       taskStatusMessage ||
@@ -225,6 +227,34 @@ export function extractA2AResponseText(raw: string) {
   } catch {
     return raw
   }
+}
+
+function findFinalAssistantVisibleText(value: unknown, depth = 0): string {
+  if (depth > 8 || !value || typeof value !== "object") {
+    return ""
+  }
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = findFinalAssistantVisibleText(item, depth + 1)
+      if (found) return found
+    }
+    return ""
+  }
+
+  const record = value as Record<string, unknown>
+  const visible = getString(record.finalAssistantVisibleText)
+  if (visible) {
+    const withoutThink = visible.replace(/<think>[\s\S]*?<\/think>/gi, "")
+    return withoutThink.trim() ? withoutThink : ""
+  }
+
+  for (const child of Object.values(record)) {
+    const found = findFinalAssistantVisibleText(child, depth + 1)
+    if (found) return found
+  }
+
+  return ""
 }
 
 export function parseA2AMessageRequest(
