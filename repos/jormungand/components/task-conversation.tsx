@@ -71,8 +71,8 @@ export function buildConversationLivePath(conversationId: string) {
   return `/api/conversation/live?conversationId=${encodeURIComponent(conversationId)}`
 }
 
-export function shouldOpenAgentLiveStream(agentId: AgentKind) {
-  return agentId !== "codex"
+export function shouldOpenAgentLiveStream(agentId: AgentKind, isBound = false) {
+  return agentId !== "codex" || isBound
 }
 
 export function isAgentLiveTerminal(event: AgentLiveEvent) {
@@ -219,7 +219,7 @@ export function getConversationActivityViewModel(input: {
 
   return {
     hasAgentLiveActivity,
-    showsCodexSession: input.hasCodexSession && !hasAgentLiveActivity,
+    showsCodexSession: input.hasCodexSession,
     showsCodexControls: shouldShowCodexControls({
       hasCodexSession: input.hasCodexSession,
       isTurnRunning: input.isTurnRunning,
@@ -525,7 +525,7 @@ export function TaskConversation(props: {
     setError(undefined)
     setStatusMessage(undefined)
     try {
-      if (shouldOpenAgentLiveStream(targetAgent)) {
+      if (shouldOpenAgentLiveStream(targetAgent, !isUnbound)) {
         closeAgentLiveSource()
         agentLiveSubmissionLifecycleRef.current = startAgentLiveSubmissionLifecycle()
         if (typeof window !== "undefined" && typeof EventSource === "function") {
@@ -1011,7 +1011,7 @@ export function TaskConversation(props: {
       ? agentLivePanelState.agentId ?? targetAgent
       : "codex"
   )
-  const agentLiveActivityPanel = isUnbound && activityViewModel.hasAgentLiveActivity ? (
+  const agentLiveActivityPanel = activityViewModel.hasAgentLiveActivity ? (
     <section className="panel runsPanel codexActivityPanel agentLiveActivityPanel" aria-label="Agent activity">
       <div className="codexActivity">
         <div className="codexActivityHeader">

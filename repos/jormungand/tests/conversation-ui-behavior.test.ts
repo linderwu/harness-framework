@@ -819,7 +819,7 @@ test("codex controls remain available while an OpenClaw preview is active for th
   }), {
     hasAgentLiveActivity: true,
     showsCodexControls: true,
-    showsCodexSession: false
+    showsCodexSession: true
   })
   assert.equal(shouldShowCodexControls!({
     hasCodexSession: true,
@@ -980,7 +980,7 @@ test("openclaw live helpers encode the SSE path and bound preview activity", asy
     | ((conversationId: string) => string)
     | undefined
   const shouldOpenAgentLiveStream = Reflect.get(taskConversationModule, "shouldOpenAgentLiveStream") as
-    | ((agentId: AgentKind) => boolean)
+    | ((agentId: AgentKind, isBound?: boolean) => boolean)
     | undefined
   const reduceAgentLivePreview = Reflect.get(taskConversationModule, "reduceAgentLivePreview") as
     | ((input: AgentLivePreview, event: AgentLiveEvent) => AgentLivePreview)
@@ -991,6 +991,7 @@ test("openclaw live helpers encode the SSE path and bound preview activity", asy
   assert.equal(typeof reduceAgentLivePreview, "function")
   assert.equal(buildConversationLivePath!("conversation:alpha/beta"), "/api/conversation/live?conversationId=conversation%3Aalpha%2Fbeta")
   assert.equal(shouldOpenAgentLiveStream!("codex"), false)
+  assert.equal(shouldOpenAgentLiveStream!("codex", true), true)
   assert.equal(shouldOpenAgentLiveStream!("openclaw.rowlet"), true)
 
   let preview: AgentLivePreview = { events: [] }

@@ -135,9 +135,10 @@ test("activity panel renders live agent preview details without changing codex c
 })
 
 test("bridge-backed live activity is not gated to unbound conversations and does not hide native Codex sessions", () => {
-  assert.doesNotMatch(taskConversation, /const hasCodexSession = isUnbound && !!session/)
+  assert.match(taskConversation, /const hasCodexSession = isUnbound && !!session/)
   assert.doesNotMatch(taskConversation, /const agentLiveActivityPanel = isUnbound && activityViewModel\.hasAgentLiveActivity/)
-  assert.doesNotMatch(taskConversation, /showsCodexSession: input\.hasCodexSession && !hasAgentLiveActivity/)
+  assert.match(taskConversation, /showsCodexSession: input\.hasCodexSession/)
+  assert.match(taskConversation, /shouldOpenAgentLiveStream\(targetAgent, !isUnbound\)/)
 })
 
 test("both live sessions share the dashboard-owned lower-left mount in Codex-first order", () => {
