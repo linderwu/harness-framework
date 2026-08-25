@@ -332,6 +332,7 @@ const activeIdempotencyKeys = new Map()
 const completedRuns = new Map()
 /** @type {Map<string, string>} idempotencyKey -> runId (completed) */
 const completedIdempotencyKeys = new Map()
+const journalSequences = new Map()
 
 const maintenanceTimer = setInterval(() => {
   pruneCompletedRuns()
@@ -873,9 +874,12 @@ async function runLuckyAgent({
     const choice = response?.choices?.[0]
     const message = choice?.message ?? {}
     const finishReason = choice?.finish_reason ?? "unknown"
+    const assistantContent = typeof message.content === "string" ? message.content : ""
+    const reasoningText = extractAssistantReasoning(message, assistantContent)
+    const visibleContent = stripThinkBlocks(assistantContent)
     const assistantRecord = {
       role: "assistant",
-      content: message.content ?? "",
+      content: assistantContent,
       tool_calls: Array.isArray(message.tool_calls) ? message.tool_calls : undefined
     }
     messages.push(assistantRecord)
@@ -890,6 +894,21 @@ async function runLuckyAgent({
         }))
       }
     })
+    if (reasoningText) {
+      appendJournal(runId, {
+        type: "reasoning",
+        text: reasoningText,
+        data: { text: reasoningText }
+      })
+    }
+    if (visibleContent) {
+      appendJournal(runId, {
+        type: "assistant_delta",
+        text: visibleContent,
+        delta: visibleContent,
+        data: { text: visibleContent, delta: visibleContent }
+      })
+    }
     iterations.push({
       index: i,
       finishReason,
@@ -899,7 +918,7 @@ async function runLuckyAgent({
 
     // No tool calls: M3 is done
     if (!assistantRecord.tool_calls || assistantRecord.tool_calls.length === 0) {
-      finalContent = assistantRecord.content ?? ""
+      finalContent = visibleContent
       return {
         status: "completed",
         output: finalContent,
@@ -948,6 +967,22 @@ async function runLuckyAgent({
     statusMessage: `Lucky hit the tool iteration cap of ${toolIterationCap}.`,
     iterations
   }
+}
+
+function extractAssistantReasoning(message, content) {
+  const explicit = [message.reasoning, message.thinking, message.reasoning_content]
+    .filter((value) => typeof value === "string" && value.trim())
+    .map((value) => value.trim())
+  const inline = [...content.matchAll(/<think>([\s\S]*?)<\/think>/gi)]
+    .map((match) => match[1].trim())
+    .filter(Boolean)
+  return [...explicit, ...inline].join("\n") || undefined
+}
+
+function stripThinkBlocks(value) {
+  if (typeof value !== "string") return ""
+  const visible = value.replace(/<think>[\s\S]*?<\/think>/gi, "")
+  return visible.trim() ? visible : ""
 }
 
 function summarizeForJournal(value) {
@@ -1020,7 +1055,10 @@ function validateProtocol(payload) {
 function appendJournal(runId, event) {
   const list = journalsByRunId.get(runId) ?? []
   while (list.length >= maxJournalEvents) list.shift()
-  event.cursor = list.length
+  const sequence = (journalSequences.get(runId) ?? 0) + 1
+  journalSequences.set(runId, sequence)
+  event.sequence = sequence
+  event.cursor = sequence - 1
   event.at = event.at ?? new Date().toISOString()
   list.push(event)
   journalsByRunId.set(runId, list)
@@ -1031,13 +1069,15 @@ function readJournal(runId, after) {
   const list = journalsByRunId.get(runId) ?? []
   const start = Number.isFinite(after) && after >= 0 ? after : 0
   return {
-    events: list.slice(start),
-    cursor: list.length
+    events: list.filter((event) => event.sequence > start),
+    cursor: journalSequences.get(runId) ?? 0,
+    nextCursor: journalSequences.get(runId) ?? 0
   }
 }
 
 function clearJournal(runId) {
   journalsByRunId.delete(runId)
+  journalSequences.delete(runId)
 }
 
 // ---------- run lifecycle --------------------------------------------------

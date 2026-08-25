@@ -585,7 +585,11 @@ function normalizeBridgeLiveRecord(
   }
 ) {
   const value = asRecord(input)
-  const originalSequence = readNonNegativeInteger(value.sequence)
+  const nested = asRecordOrUndefined(value.data) ?? {}
+  const cursor = readNonNegativeInteger(value.cursor)
+  const originalSequence =
+    readNonNegativeInteger(value.sequence) ??
+    (cursor === undefined ? undefined : cursor + 1)
   const type = readOptionalString(value.type)
 
   if (originalSequence === undefined || !type) {
@@ -604,10 +608,15 @@ function normalizeBridgeLiveRecord(
         conversationId: context.conversationId,
         agentId: context.agentId,
         type,
-        message: textReader(value.message),
-        text: textReader(value.text),
-        delta: typeof value.delta === "string" ? value.delta : undefined,
-        details: value.details,
+        message: textReader(value.message) ?? textReader(nested.message),
+        text: textReader(value.text) ?? textReader(nested.text),
+        delta:
+          typeof value.delta === "string"
+            ? value.delta
+            : typeof nested.delta === "string"
+              ? nested.delta
+              : undefined,
+        details: value.details ?? nested.details,
         createdAt: readOptionalString(value.createdAt),
         metadata: context.metadata
       })
@@ -615,6 +624,12 @@ function normalizeBridgeLiveRecord(
   } catch {
     return undefined
   }
+}
+
+function asRecordOrUndefined(value: unknown) {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined
 }
 
 function asRecord(value: unknown) {
