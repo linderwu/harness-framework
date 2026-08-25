@@ -138,7 +138,11 @@ async function startLuckyBridge(
   return { child, baseUrl }
 }
 
-async function submitLuckyRun(baseUrl: string, idempotencyKey: string) {
+async function submitLuckyRun(
+  baseUrl: string,
+  idempotencyKey: string,
+  requirement = "Verify Lucky output routing."
+) {
   const response = await fetch(`${baseUrl}/agent-runs`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -148,7 +152,7 @@ async function submitLuckyRun(baseUrl: string, idempotencyKey: string) {
       workflowRunId: "workflow:lucky-live",
       projectName: "Lucky live bridge",
       repository: "owner/repo",
-      requirement: "Verify Lucky output routing.",
+      requirement,
       stage: "implementation",
       artifactType: "log",
       title: "Lucky output routing",
@@ -208,6 +212,19 @@ test("Lucky bridge strips closed think blocks from the final response body", { c
   const completedRun = await readCompletedRun(baseUrl, idempotencyKey)
 
   assert.equal(completedRun.output, "visible")
+})
+
+test("Lucky bridge keeps detailed greeting output in live events", { concurrency: false }, async (t) => {
+  const backendUrl = await createLuckyBackend(t)
+  const { baseUrl } = await startLuckyBridge(t, backendUrl)
+  const idempotencyKey = "lucky-greeting-routing"
+
+  await submitLuckyRun(baseUrl, idempotencyKey, "hi")
+  const completedRun = await readCompletedRun(baseUrl, idempotencyKey)
+  const journal = await readJournal(baseUrl, idempotencyKey)
+
+  assert.equal(completedRun.output, "Hi! How can I help?")
+  assert.ok(journal.events?.some((event) => event.type === "assistant_delta" && event.delta === "visible"))
 })
 
 test("Lucky bridge journal emits reasoning and assistant delta records for think-wrapped output", { concurrency: false }, async (t) => {

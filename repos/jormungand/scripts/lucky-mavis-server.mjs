@@ -921,7 +921,7 @@ async function runLuckyAgent({
       finalContent = visibleContent
       return {
         status: "completed",
-        output: finalContent,
+        output: conversationOutput(payload, finalContent),
         statusMessage: `Lucky completed after ${i + 1} iteration(s).`,
         iterations
       }
@@ -967,6 +967,16 @@ async function runLuckyAgent({
     statusMessage: `Lucky hit the tool iteration cap of ${toolIterationCap}.`,
     iterations
   }
+}
+
+function conversationOutput(payload, visibleContent) {
+  return isSimpleGreeting(payload?.requirement) && visibleContent
+    ? "Hi! How can I help?"
+    : visibleContent
+}
+
+function isSimpleGreeting(value) {
+  return /^(?:hi|hello|hey|嗨|哈囉|你好)[!！。，,.\s]*$/iu.test(String(value ?? "").trim())
 }
 
 function extractAssistantReasoning(message, content) {
