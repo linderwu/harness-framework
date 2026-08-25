@@ -841,6 +841,69 @@ test("codex controls remain available while an OpenClaw preview is active for th
   }), false)
 })
 
+test("conversation UI keeps bound live panel selection and native Codex session visibility independent", async () => {
+  const taskConversationModule = await loadTaskConversationModule()
+  const getAgentLivePanelState = Reflect.get(taskConversationModule, "getAgentLivePanelState") as
+    | ((input: {
+        targetAgent: AgentKind
+        liveSourceAgentId?: AgentKind
+        liveEventAgentId?: AgentKind
+        hasActiveSource: boolean
+        hasActiveSubmission: boolean
+        status?: string
+        reasoning?: string
+        eventCount: number
+      }) => {
+        visible: boolean
+        agentId?: AgentKind
+      })
+    | undefined
+  const getConversationActivityViewModel = Reflect.get(taskConversationModule, "getConversationActivityViewModel") as
+    | ((input: {
+        hasCodexSession: boolean
+        isTurnRunning: boolean
+        isPaused: boolean
+        sessionStatus?: "idle" | "running" | "paused" | "stopped" | "failed"
+        agentLivePanelState: {
+          visible: boolean
+          agentId?: AgentKind
+        }
+      }) => {
+        hasAgentLiveActivity: boolean
+        showsCodexControls: boolean
+        showsCodexSession: boolean
+      })
+    | undefined
+
+  assert.equal(typeof getAgentLivePanelState, "function")
+  assert.equal(typeof getConversationActivityViewModel, "function")
+
+  const panel = getAgentLivePanelState!({
+    targetAgent: "codex",
+    liveSourceAgentId: "mavis",
+    hasActiveSource: true,
+    hasActiveSubmission: true,
+    status: "Lucky working",
+    eventCount: 1
+  })
+
+  assert.deepEqual(panel, {
+    visible: true,
+    agentId: "mavis"
+  })
+  assert.deepEqual(getConversationActivityViewModel!({
+    hasCodexSession: true,
+    isTurnRunning: true,
+    isPaused: false,
+    sessionStatus: "running",
+    agentLivePanelState: panel
+  }), {
+    hasAgentLiveActivity: true,
+    showsCodexControls: true,
+    showsCodexSession: true
+  })
+})
+
 test("agent live panel state follows the active live stream instead of the target selector", async () => {
   const taskConversationModule = await loadTaskConversationModule()
   const getAgentLivePanelState = Reflect.get(taskConversationModule, "getAgentLivePanelState") as

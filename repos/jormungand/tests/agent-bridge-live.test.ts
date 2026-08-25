@@ -88,6 +88,27 @@ function createOpenClawRun() {
   })
 }
 
+function createBridgeRun(agent: AgentKind) {
+  return createWorkflowRun({
+    projectId: `project-${agent}-live`,
+    projectName: `${agent} live relay`,
+    repository: "owner/repo",
+    requirement: `Relay live bridge events for ${agent}.`,
+    selectedAgent: agent,
+    designApprovalActor: "independent_agent",
+    verificationApprovalActor: "verification_subagent"
+  })
+}
+
+function createLiveSkill(agent: AgentKind) {
+  return {
+    ...liveSkill,
+    name: `${agent} bridge live relay`,
+    purpose: `Exercise ${agent} bridge live relaying.`,
+    allowedActors: [agent]
+  } satisfies WorkflowEventSkill
+}
+
 function installLiveHooks(t: TestContext) {
   const bus = createAgentLiveBus()
   __setAgentBridgeTestHooks({
@@ -894,6 +915,155 @@ test("marks an OpenClaw A2A command timeout as unknown", { concurrency: false },
 
   assert.equal(result.status, "failed")
   assert.equal(result.deliveryState, "unknown")
+})
+
+test("agent bridge live consumes nested Lucky journal records for a bound mavis conversation", { concurrency: false }, async (t) => {
+  restoreEnv(t, "CODEX_BRIDGE_URL")
+  process.env.CODEX_BRIDGE_URL = "http://codex.test"
+
+  const bus = installLiveHooks(t)
+  const postResponse = createDeferred<Response>()
+  const eventRequests: string[] = []
+
+  __setAgentBridgeTestHooks({
+    fetch: async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url === "http://codex.test/agent-runs") {
+        const payload = JSON.parse(String(init?.body ?? "{}")) as { conversationId?: string }
+        assert.equal(payload.conversationId, "conversation:bound-mavis")
+        return postResponse.promise
+      }
+
+      eventRequests.push(url)
+      return jsonResponse({
+        status: "completed",
+        nextCursor: 2,
+        events: [
+          {
+            cursor: 0,
+            type: "assistant",
+            data: {
+              content: "<think>private reasoning</think>visible answer"
+            }
+          },
+          {
+            cursor: 1,
+            type: "completed",
+            data: {
+              statusMessage: "Lucky completed"
+            }
+          }
+        ]
+      })
+    }
+  })
+
+  const invokePromise = invokeConfiguredAgent({
+    run: createBridgeRun("mavis"),
+    executor: "mavis",
+    stage: "implementation",
+    artifactType: "log",
+    title: "Relay mavis live bridge events",
+    fallbackBody: "fallback",
+    skill: createLiveSkill("mavis"),
+    conversationId: "conversation:bound-mavis"
+  })
+
+  try {
+    await waitFor(() => eventRequests.length > 0, 200)
+    await waitFor(() => {
+      const snapshot = bus.getSnapshot("conversation:bound-mavis")
+      return snapshot.events.map((event) => event.type).join(",") === "started,reasoning,assistant_delta,completed"
+    }, 200)
+  } finally {
+    postResponse.resolve(
+      jsonResponse({
+        id: "codex-device-mavis-run",
+        status: "completed",
+        output: "visible answer",
+        statusMessage: "Lucky completed."
+      })
+    )
+    await invokePromise
+  }
+
+  const snapshot = bus.getSnapshot("conversation:bound-mavis")
+  assert.deepEqual(snapshot.events.map((event) => event.type), [
+    "started",
+    "reasoning",
+    "assistant_delta",
+    "completed"
+  ])
+  assert.equal(snapshot.events.find((event) => event.type === "reasoning")?.text, "private reasoning")
+  assert.equal(snapshot.events.find((event) => event.type === "assistant_delta")?.delta, "visible answer")
+})
+
+test("agent bridge live publishes bound Codex relay events when a conversation id is supplied", { concurrency: false }, async (t) => {
+  restoreEnv(t, "CODEX_BRIDGE_URL")
+  process.env.CODEX_BRIDGE_URL = "http://codex.test"
+
+  const bus = installLiveHooks(t)
+  const postResponse = createDeferred<Response>()
+  const eventRequests: string[] = []
+
+  __setAgentBridgeTestHooks({
+    fetch: async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url === "http://codex.test/agent-runs") {
+        const payload = JSON.parse(String(init?.body ?? "{}")) as { conversationId?: string }
+        assert.equal(payload.conversationId, "workflow:bound-codex")
+        return postResponse.promise
+      }
+
+      eventRequests.push(url)
+      return jsonResponse({
+        status: "completed",
+        nextCursor: 3,
+        events: [
+          { id: "codex-started", sequence: 1, type: "started", message: "Codex started" },
+          { id: "codex-visible", sequence: 2, type: "assistant_delta", delta: "observable output" },
+          { id: "codex-completed", sequence: 3, type: "completed", message: "Codex completed" }
+        ]
+      })
+    }
+  })
+
+  const invokePromise = invokeConfiguredAgent({
+    run: createBridgeRun("codex"),
+    executor: "codex",
+    stage: "implementation",
+    artifactType: "log",
+    title: "Relay bound codex bridge events",
+    fallbackBody: "fallback",
+    skill: createLiveSkill("codex"),
+    conversationId: "workflow:bound-codex"
+  })
+
+  try {
+    await waitFor(() => eventRequests.length > 0, 200)
+    await waitFor(() => {
+      const snapshot = bus.getSnapshot("workflow:bound-codex")
+      return snapshot.events.map((event) => event.type).join(",") === "started,assistant_delta,completed"
+    }, 200)
+  } finally {
+    postResponse.resolve(
+      jsonResponse({
+        id: "codex-bound-run",
+        status: "completed",
+        output: "observable output",
+        statusMessage: "Codex completed."
+      })
+    )
+    await invokePromise
+  }
+
+  const snapshot = bus.getSnapshot("workflow:bound-codex")
+  assert.deepEqual(snapshot.events.map((event) => event.type), [
+    "started",
+    "assistant_delta",
+    "completed"
+  ])
+  assert.equal(snapshot.events.find((event) => event.type === "assistant_delta")?.delta, "observable output")
 })
 
 function quoteCommandArg(value: string) {
