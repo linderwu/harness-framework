@@ -33,9 +33,14 @@ export function buildCodexExecModelArgs(modelId, reasoningIntensity) {
   const args = []
   const normalizedModelId = String(modelId ?? "").trim()
   const normalizedReasoningIntensity = String(reasoningIntensity ?? "").trim()
+  const provider = providerForCodexModel(normalizedModelId)
 
   if (normalizedModelId && normalizedModelId !== "ChatGPT OAuth") {
     args.push("--model", normalizedModelId)
+  }
+
+  if (provider) {
+    args.push("-c", `model_provider="${provider}"`)
   }
 
   if (["low", "medium", "high"].includes(normalizedReasoningIntensity)) {
@@ -43,4 +48,15 @@ export function buildCodexExecModelArgs(modelId, reasoningIntensity) {
   }
 
   return args
+}
+
+function providerForCodexModel(modelId) {
+  const normalizedModelId = String(modelId ?? "").trim().toLowerCase()
+
+  if (normalizedModelId === "minimax-m3") return "minimax"
+  if (/^(?:gpt-|o[134](?:-|$)|codex-)/.test(normalizedModelId)) {
+    return "openai"
+  }
+
+  return undefined
 }

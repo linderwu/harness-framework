@@ -65,6 +65,22 @@ test("model catalog keeps visible live models and chooses the server default", a
     "--model",
     "gpt-5.6-sol",
     "-c",
+    'model_provider="openai"',
+    "-c",
+    'model_reasoning_effort="high"'
+  ])
+  assert.deepEqual(buildCodexExecModelArgs("MiniMax-M3", "high"), [
+    "--model",
+    "MiniMax-M3",
+    "-c",
+    'model_provider="minimax"',
+    "-c",
+    'model_reasoning_effort="high"'
+  ])
+  assert.deepEqual(buildCodexExecModelArgs("custom-model", "high"), [
+    "--model",
+    "custom-model",
+    "-c",
     'model_reasoning_effort="high"'
   ])
   assert.deepEqual(buildCodexExecModelArgs("ChatGPT OAuth", "auto"), [])
