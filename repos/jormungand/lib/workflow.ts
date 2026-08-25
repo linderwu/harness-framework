@@ -85,6 +85,7 @@ export interface AgentArtifactResult {
   artifacts?: Array<{ type: string; title: string; body: string }>
   capabilities?: string[]
   runtimeSkillBundleResults?: RuntimeSkillBundleResult[]
+  responseDetails?: Record<string, unknown>
 }
 
 export interface AgentInvocationInput {

@@ -27,7 +27,9 @@ test("Codex conversation exposes live controls and converges final text", () => 
 })
 
 test("browser conversation renders Codex activity and polls while pending", () => {
-  assert.match(component, /aria-label=\{showsCodexSession \? "Codex activity" : "Agent activity"\}/)
+  assert.match(component, /aria-label="Codex activity panel"/)
+  assert.match(component, /Live Agent session/)
+  assert.match(component, /createPortal\(codexActivityPanel, props\.liveActivityMount\)/)
   assert.match(component, />Pause<|>Continue<|>Stop</)
   assert.match(component, /isUnbound \? 1_200 : 3_000/)
   assert.match(component, /liveAssistantText/)

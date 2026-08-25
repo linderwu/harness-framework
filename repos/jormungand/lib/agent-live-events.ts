@@ -2,6 +2,7 @@ import { agentProfiles } from "./agents"
 import type { AgentKind } from "./types"
 
 export const MAX_AGENT_LIVE_TEXT = 8_000
+export const MAX_AGENT_LIVE_DETAILS_CHARS = 64_000
 export const MAX_AGENT_LIVE_EVENTS = 64
 
 export type AgentLiveEventType =
@@ -24,6 +25,7 @@ export interface AgentLiveEvent {
   delta?: string
   createdAt: string
   metadata?: { runId?: string; source?: string; phase?: string }
+  details?: Record<string, unknown>
 }
 
 const agentKindSet = new Set<AgentKind>(agentProfiles.map((agent) => agent.id))
@@ -43,6 +45,7 @@ export function normalizeAgentLiveEvent(input: unknown): AgentLiveEvent {
   const agentId = readAgentKind(value.agentId)
   const type = readEventType(value.type)
   const metadata = normalizeMetadata(value.metadata)
+  const details = normalizeAgentLiveDetails(value.details)
   const normalizeEventText = type === "assistant_delta"
     ? normalizeBoundedDelta
     : normalizeBoundedText
@@ -57,7 +60,35 @@ export function normalizeAgentLiveEvent(input: unknown): AgentLiveEvent {
     text: normalizeEventText(value.text),
     delta: normalizeBoundedDelta(value.delta),
     createdAt: readOptionalString(value.createdAt) ?? new Date().toISOString(),
-    metadata
+    metadata,
+    details
+  }
+}
+
+export function normalizeAgentLiveDetails(
+  value: unknown
+): Record<string, unknown> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined
+  }
+
+  const details = { ...(value as Record<string, unknown>) }
+  delete details.finalAssistantVisibleText
+
+  let serialized: string
+  try {
+    serialized = JSON.stringify(details)
+  } catch {
+    return undefined
+  }
+
+  if (serialized.length <= MAX_AGENT_LIVE_DETAILS_CHARS) {
+    return details
+  }
+
+  return {
+    truncated: true,
+    preview: serialized.slice(0, MAX_AGENT_LIVE_DETAILS_CHARS)
   }
 }
 

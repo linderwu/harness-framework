@@ -53,7 +53,8 @@ const liveEventsPathTemplate = "/agent-runs/by-idempotency/:key/events/"
 const liveEventsPathPattern = createPathMatchPattern(liveEventsPathTemplate)
 const maxRunLiveEvents = 64
 const maxAgentLiveText = 8_000
-const maxParserBufferText = maxAgentLiveText
+const maxAgentLiveDetailsChars = 64_000
+const maxParserBufferText = Math.max(maxAgentLiveText, maxAgentLiveDetailsChars)
 const noFinalTextFallback = "OpenClaw completed without a final text response."
 const completedRunTtlMs = parseCompletedRunTtlMs(
   process.env.OPENCLAW_BRIDGE_COMPLETED_RUN_TTL_MS
@@ -428,6 +429,7 @@ async function runOpenClawAgent({
   let stderr = ""
   const structuredRecords = []
   const assistantFragments = []
+  let responseDetails
   const timeoutMs = Number(process.env.OPENCLAW_BRIDGE_TIMEOUT_MS ?? 900000)
   const stopChild = () => child.kill("SIGTERM")
   const timer = setTimeout(stopChild, timeoutMs)
@@ -471,6 +473,7 @@ async function runOpenClawAgent({
   } finally {
     clearTimeout(timer)
     stdoutParser.flush()
+    responseDetails = extractOpenClawResponseDetails(stdout, structuredRecords)
     journal.status =
       startupError || exitCode !== 0 ? "failed" : "completed"
     appendRunEvent(journal, journal.status, {
@@ -479,7 +482,8 @@ async function runOpenClawAgent({
           ? formatStartupFailureMessage(mainAgent, startupError)
           : exitCode === 0
             ? `${mainAgent} completed through OpenClaw bridge.`
-            : `${mainAgent} exited with status ${exitCode}.`
+            : `${mainAgent} exited with status ${exitCode}.`,
+      details: responseDetails
     })
     clearActiveRun(activeRun)
     await endLuckyStoreRun(id)
@@ -490,6 +494,7 @@ async function runOpenClawAgent({
     output:
       extractOpenClawText(stdout, structuredRecords, assistantFragments) ??
       tail(stdout, 8000),
+    responseDetails,
     stderr: tail(stderr, 8000),
     statusMessage:
       exitCode === 0
@@ -907,6 +912,15 @@ function resolveModel(mainAgent) {
 }
 
 function extractOpenClawText(raw, structuredRecords = [], assistantFragments = []) {
+  const finalAssistantVisibleText = extractFinalAssistantVisibleText(
+    raw,
+    structuredRecords
+  )
+
+  if (finalAssistantVisibleText) {
+    return finalAssistantVisibleText
+  }
+
   const directStructuredText = extractStructuredTextValue(raw)
 
   if (directStructuredText) {
@@ -940,6 +954,33 @@ function extractOpenClawText(raw, structuredRecords = [], assistantFragments = [
   }
 
   return raw
+}
+
+function extractFinalAssistantVisibleText(raw, structuredRecords = []) {
+  const record = findFinalAssistantEnvelope(raw, structuredRecords)
+  return normalizeBoundedStructuredText(record?.finalAssistantVisibleText)
+}
+
+function extractOpenClawResponseDetails(raw, structuredRecords = []) {
+  const record = findFinalAssistantEnvelope(raw, structuredRecords)
+
+  if (!record) {
+    return undefined
+  }
+
+  const details = { ...record }
+  delete details.finalAssistantVisibleText
+  return normalizeBoundedResponseDetails(details)
+}
+
+function findFinalAssistantEnvelope(raw, structuredRecords = []) {
+  const parsed = parseStructuredValue(raw)
+  const parsedRecords = Array.isArray(parsed) ? parsed : parsed ? [parsed] : []
+  const candidates = [...structuredRecords, ...parsedRecords].reverse()
+
+  return candidates.find((record) => {
+    return normalizeBoundedStructuredText(record?.finalAssistantVisibleText)
+  })
 }
 
 async function readJson(request) {
@@ -1025,6 +1066,7 @@ function normalizeRunEvent(type, sequence, payload) {
   const message = normalizeBoundedText(payload.message)
   const text = normalizeBoundedText(payload.text)
   const delta = normalizeBoundedDelta(payload.delta)
+  const details = normalizeBoundedResponseDetails(payload.details)
 
   if (message) {
     event.message = message
@@ -1034,6 +1076,9 @@ function normalizeRunEvent(type, sequence, payload) {
   }
   if (delta) {
     event.delta = delta
+  }
+  if (details) {
+    event.details = details
   }
 
   return event
@@ -1274,6 +1319,15 @@ function extractStructuredTextValue(value) {
   const structuredValues = Array.isArray(parsed) ? parsed : [parsed]
 
   for (let index = structuredValues.length - 1; index >= 0; index -= 1) {
+    const finalAssistantVisibleText = normalizeBoundedStructuredText(
+      structuredValues[index]?.finalAssistantVisibleText
+    )
+    if (finalAssistantVisibleText) {
+      return finalAssistantVisibleText
+    }
+  }
+
+  for (let index = structuredValues.length - 1; index >= 0; index -= 1) {
     const finalPayloadText = extractStructuredPayloadText(structuredValues[index])
     if (finalPayloadText) {
       return finalPayloadText
@@ -1309,6 +1363,31 @@ function isStructuredTextCarrier(value) {
   }
 
   return true
+}
+
+function normalizeBoundedResponseDetails(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined
+  }
+
+  const details = { ...value }
+  delete details.finalAssistantVisibleText
+
+  let serialized
+  try {
+    serialized = JSON.stringify(details)
+  } catch {
+    return undefined
+  }
+
+  if (!serialized || serialized.length <= maxAgentLiveDetailsChars) {
+    return details
+  }
+
+  return {
+    truncated: true,
+    preview: serialized.slice(0, maxAgentLiveDetailsChars)
+  }
 }
 
 function normalizeBoundedText(value) {

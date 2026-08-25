@@ -212,6 +212,16 @@ async function createFakeDocker(t: TestContext) {
       "  }))",
       "}",
       "",
+      "async function runFinalAssistantEnvelope() {",
+      "  writeLine({",
+      '    finalAssistantVisibleText: "Visible assistant answer",',
+      '    finalAssistantRawText: "Raw assistant answer",',
+      '    finalPromptText: `Internal prompt envelope ${"x".repeat(10_000)}`,',
+      '    executionTrace: { winnerModel: "MiniMax-M2.7" },',
+      '    toolSummary: { calls: 2, tools: ["memory_search"] }',
+      "  })",
+      "}",
+      "",
       "async function runAssistantFragmentsNoFinalPayload() {",
       '  writeLine({ reasoning_content: "private reasoning" })',
       '  writeLine({ request: { prompt: "do not leak this request" }, toolArgs: { command: "do not leak this tool" } })',
@@ -260,6 +270,11 @@ async function createFakeDocker(t: TestContext) {
       "",
       '  if (mode === "structured-no-final-payload") {',
       "    await runStructuredNoFinalPayload()",
+      "    return",
+      "  }",
+      "",
+      '  if (mode === "final-assistant-envelope") {',
+      "    await runFinalAssistantEnvelope()",
       "    return",
       "  }",
       "",
@@ -589,6 +604,39 @@ test("OpenClaw bridge does not leak raw structured JSON when no final payload te
   assert.equal(completedRun.output.includes("do not leak this tool"), false)
   assert.equal(completedRun.output.includes("still private"), false)
   assert.match(completedRun.output, /without a final text/i)
+})
+
+test("OpenClaw bridge keeps finalAssistantVisibleText as output and routes the rest to response details", { concurrency: false }, async (t) => {
+  const { commandDir, fixturePath } = await createFakeDocker(t)
+  const commandPath = `${commandDir};${process.env.Path ?? process.env.PATH ?? ""}`
+  const { baseUrl } = await startBridge(t, {
+    PATH: commandPath,
+    Path: commandPath,
+    FAKE_DOCKER_MODE: "final-assistant-envelope",
+    OPENCLAW_DOCKER_COMMAND: JSON.stringify([process.execPath, fixturePath])
+  })
+
+  const runResponse = await postRun(baseUrl, {
+    protocolVersion: "harness-agent-bridge/v0.3",
+    idempotencyKey: "final-assistant-envelope",
+    workflowRunId: "workflow-final-assistant-envelope",
+    executor: "openclaw.rowlet",
+    title: "Final assistant envelope",
+    requirement: "Keep only the visible final text in the conversation."
+  })
+
+  assert.equal(runResponse.status, 200)
+  const completedRun = await runResponse.json()
+  assert.equal(completedRun.output, "Visible assistant answer")
+  assert.equal(completedRun.responseDetails.finalAssistantVisibleText, undefined)
+  assert.equal(
+    completedRun.responseDetails.finalAssistantRawText,
+    "Raw assistant answer"
+  )
+  assert.match(
+    completedRun.responseDetails.finalPromptText,
+    /^Internal prompt envelope x+$/
+  )
 })
 
 test("OpenClaw bridge falls back to sanitized assistant fragments when structured records omit a final payload", { concurrency: false }, async (t) => {

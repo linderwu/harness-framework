@@ -178,7 +178,8 @@ export function getAgentLivePanelState(input: {
   const agentId = input.liveEventAgentId
     ?? input.liveSourceAgentId
     ?? (shouldOpenAgentLiveStream(input.targetAgent) ? input.targetAgent : undefined)
-  const visible = !!agentId && (input.hasActiveSource || input.hasActiveSubmission)
+  const hasPreview = input.eventCount > 0 || !!input.status || !!input.reasoning
+  const visible = !!agentId && (input.hasActiveSource || input.hasActiveSubmission || hasPreview)
 
   return {
     visible,
@@ -235,7 +236,7 @@ export function TaskConversation(props: {
   onEntriesChanged: (entries: ConversationEntry[]) => void
   onBound?: (binding: ConversationBinding) => void
   onNewConversation?: () => void
-  codexActivityMount?: HTMLElement | null
+  liveActivityMount?: HTMLElement | null
 }) {
   const runId = props.run?.id
   const isUnbound = !runId
@@ -549,7 +550,7 @@ export function TaskConversation(props: {
                 const lifecycleResult = advanceAgentLiveSubmissionLifecycle(agentLiveSubmissionLifecycleRef.current, event)
                 agentLiveSubmissionLifecycleRef.current = lifecycleResult.lifecycle
                 if (lifecycleResult.shouldCloseSource) {
-                  closeAgentLiveSource()
+                  closeAgentLiveSource({ preservePreview: isAgentLiveTerminal(event) })
                 }
               } catch {
                 // Ignore malformed or non-agent-live frames so final POST still succeeds.
@@ -610,7 +611,7 @@ export function TaskConversation(props: {
       const lifecycleResult = settleAgentLiveSubmissionLifecycle(agentLiveSubmissionLifecycleRef.current)
       agentLiveSubmissionLifecycleRef.current = lifecycleResult.lifecycle
       if (lifecycleResult.shouldCloseSource) {
-        closeAgentLiveSource()
+        closeAgentLiveSource({ preservePreview: true })
       }
       setConversationId(result.conversationId ?? activeConversationId)
       setEntries((current) => result.entries ?? mergeResult(current, optimistic.id, result.userEntry!, result.responseEntry))
@@ -968,10 +969,10 @@ export function TaskConversation(props: {
       ) : null}
     </section>
   ) : null
-  const renderedCodexActivity = props.codexActivityMount === undefined
+  const renderedCodexActivity = props.liveActivityMount === undefined
     ? codexActivityPanel
-    : props.codexActivityMount && codexActivityPanel
-      ? createPortal(codexActivityPanel, props.codexActivityMount)
+    : props.liveActivityMount && codexActivityPanel
+      ? createPortal(codexActivityPanel, props.liveActivityMount)
       : null
   const hasCodexSession = isUnbound && !!session
   const agentLiveAssistantText = collectAgentLiveAssistantText(agentLiveEvents)
@@ -982,6 +983,12 @@ export function TaskConversation(props: {
       type: event.type,
       message: readAgentLiveMessage(event) ?? "Agent activity"
     }))
+  const agentLiveResponseDetails = [...agentLiveEvents]
+    .reverse()
+    .find((event) => event.details)?.details
+  const agentLiveResponseDetailsText = agentLiveResponseDetails
+    ? JSON.stringify(agentLiveResponseDetails, null, 2)
+    : undefined
   const agentLivePanelState = getAgentLivePanelState({
     targetAgent,
     liveSourceAgentId: activeAgentLiveSourceAgentId,
@@ -999,12 +1006,47 @@ export function TaskConversation(props: {
     sessionStatus: session?.status,
     agentLivePanelState
   })
-  const showsCodexSession = activityViewModel.showsCodexSession
   const selectedAgentLabel = getAgentLabel(
     activityViewModel.hasAgentLiveActivity
       ? agentLivePanelState.agentId ?? targetAgent
       : "codex"
   )
+  const agentLiveActivityPanel = isUnbound && activityViewModel.hasAgentLiveActivity ? (
+    <section className="panel runsPanel codexActivityPanel agentLiveActivityPanel" aria-label="Agent activity">
+      <div className="codexActivity">
+        <div className="codexActivityHeader">
+          <div>
+            <p className="eyebrow">Live Agent session</p>
+            <strong>{agentLiveStatus ?? "Working"}</strong>
+            <p>{selectedAgentLabel}</p>
+          </div>
+        </div>
+        {agentLiveVisibleEvents.length ? (
+          <ol className="codexActivityEvents" aria-live="polite">
+            {agentLiveVisibleEvents.map((event) => <li key={event.id}><span>{formatActivityType(event.type)}</span><p>{event.message}</p></li>)}
+          </ol>
+        ) : null}
+        {agentLiveAssistantText ? <pre className="codexLiveResponse" aria-live="polite">{agentLiveAssistantText}</pre> : null}
+        {agentLiveReasoning ? (
+          <details>
+            <summary>Reasoning preview</summary>
+            <pre className="codexLiveResponse" aria-live="polite">{agentLiveReasoning}</pre>
+          </details>
+        ) : null}
+        {agentLiveResponseDetailsText ? (
+          <details className="agentLiveResponseDetails" open>
+            <summary>OpenClaw response</summary>
+            <pre className="codexLiveResponse" aria-live="polite">{agentLiveResponseDetailsText}</pre>
+          </details>
+        ) : null}
+      </div>
+    </section>
+  ) : null
+  const renderedAgentLiveActivity = props.liveActivityMount === undefined
+    ? agentLiveActivityPanel
+    : props.liveActivityMount && agentLiveActivityPanel
+      ? createPortal(agentLiveActivityPanel, props.liveActivityMount)
+      : null
   const isConversationActionPending = isLoadingConversation || isStartingConversation || !!activeManagerAction
   const areManagerControlsDisabled = isConversationManagerLocked({
     isLoadingConversation,
@@ -1187,40 +1229,7 @@ export function TaskConversation(props: {
       ) : null}
       {statusMessage ? <p role="status">{statusMessage}</p> : null}
       {renderedCodexActivity}
-      {isUnbound && activityViewModel.hasAgentLiveActivity ? (
-        <section className="codexActivity" aria-label={showsCodexSession ? "Codex activity" : "Agent activity"}>
-          <div className="codexActivityHeader">
-            <div>
-              <p className="eyebrow">{showsCodexSession ? "Live Codex session" : "Live Agent session"}</p>
-              <strong>{showsCodexSession ? formatSessionStatus(session) : agentLiveStatus ?? "Working"}</strong>
-              <p>{selectedAgentLabel}</p>
-            </div>
-            <div className="codexActivityActions">
-              {activityViewModel.showsCodexControls && isTurnRunning ? <button className="compactPanelButton" disabled={isControlling} onClick={() => void control("interrupt")} type="button">Pause</button> : null}
-              {activityViewModel.showsCodexControls && isPaused ? <button className="compactPanelButton" disabled={isControlling} onClick={() => void control("resume")} type="button">Continue</button> : null}
-              {activityViewModel.showsCodexControls && session && session.status !== "stopped" && session.status !== "failed" && (isTurnRunning || isPaused) ? <button className="compactPanelButton danger" disabled={isControlling} onClick={() => void control("stop")} type="button">Stop</button> : null}
-            </div>
-          </div>
-          {showsCodexSession && visibleActivityEvents.length ? (
-            <ol className="codexActivityEvents" aria-live="polite">
-              {visibleActivityEvents.map((event) => <li key={event.id}><span>{formatActivityType(event.type)}</span><p>{event.message ?? event.text ?? "Codex activity"}</p></li>)}
-            </ol>
-          ) : null}
-          {!showsCodexSession && agentLiveVisibleEvents.length ? (
-            <ol className="codexActivityEvents" aria-live="polite">
-              {agentLiveVisibleEvents.map((event) => <li key={event.id}><span>{formatActivityType(event.type)}</span><p>{event.message}</p></li>)}
-            </ol>
-          ) : null}
-          {showsCodexSession && liveAssistantText ? <pre className="codexLiveResponse" aria-live="polite">{liveAssistantText}</pre> : null}
-          {!showsCodexSession && agentLiveAssistantText ? <pre className="codexLiveResponse" aria-live="polite">{agentLiveAssistantText}</pre> : null}
-          {!showsCodexSession && agentLiveReasoning ? (
-            <details>
-              <summary>Reasoning preview</summary>
-              <pre className="codexLiveResponse" aria-live="polite">{agentLiveReasoning}</pre>
-            </details>
-          ) : null}
-        </section>
-      ) : null}
+      {renderedAgentLiveActivity}
       <ol className="conversationEntries">
         {entries.length ? entries.map((entry) => (
           <li className={`conversationEntry ${entry.role} ${entry.importance}`} key={entry.id}>

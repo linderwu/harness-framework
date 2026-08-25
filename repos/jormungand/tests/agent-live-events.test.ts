@@ -66,6 +66,36 @@ test("bounds event text and rejects invalid identity", () => {
   assert.equal(event.message?.length, MAX_AGENT_LIVE_TEXT)
 })
 
+test("keeps bounded OpenClaw response details without returning the final visible text", () => {
+  const event = normalizeAgentLiveEvent({
+    conversationId: "conversation-1",
+    agentId: "openclaw.rowlet",
+    type: "completed",
+    details: {
+      finalAssistantVisibleText: "must stay in the conversation",
+      finalAssistantRawText: "raw answer",
+      executionTrace: { winnerModel: "MiniMax-M2.7" }
+    }
+  })
+  const details = (event as typeof event & {
+    details?: Record<string, unknown>
+  }).details
+
+  assert.equal(details?.finalAssistantVisibleText, undefined)
+  assert.equal(details?.finalAssistantRawText, "raw answer")
+
+  const boundedEvent = normalizeAgentLiveEvent({
+    conversationId: "conversation-1",
+    agentId: "openclaw.rowlet",
+    type: "completed",
+    details: { oversized: "x".repeat(70_000) }
+  })
+  const boundedDetails = (boundedEvent as typeof boundedEvent & {
+    details?: Record<string, unknown>
+  }).details
+  assert.equal(boundedDetails?.truncated, true)
+})
+
 test("preserves non-empty assistant delta whitespace across message text and delta while still bounding it", () => {
   const leadingSpace = normalizeAgentLiveEvent({
     conversationId: "conversation-1",

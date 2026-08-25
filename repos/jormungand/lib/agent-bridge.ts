@@ -54,6 +54,7 @@ interface BridgeResponse {
   artifacts?: Array<{ type: string; title: string; body: string }>
   capabilities?: string[]
   runtimeSkillBundleResults?: RuntimeSkillBundleResult[]
+  responseDetails?: Record<string, unknown>
 }
 
 interface BridgeLiveEventsResponse {
@@ -354,6 +355,7 @@ function bridgeResponseToAgentResult(
     artifacts: data.artifacts,
     capabilities: data.capabilities,
     runtimeSkillBundleResults: data.runtimeSkillBundleResults,
+    responseDetails: data.responseDetails,
     body: output
   }
 }
@@ -424,6 +426,7 @@ function createOpenClawLiveRelay(
     text?: string
     delta?: string
     createdAt?: string
+    details?: unknown
   }) {
     try {
       const event = normalizeAgentLiveEvent({
@@ -565,7 +568,8 @@ function createOpenClawLiveRelay(
       publishEvent({
         sequence: lastPublishedSequence + 1,
         type: result.status === "failed" ? "failed" : "completed",
-        message: result.statusMessage
+        message: result.statusMessage,
+        details: result.responseDetails
       })
     }
   }
@@ -603,6 +607,7 @@ function normalizeBridgeLiveRecord(
         message: textReader(value.message),
         text: textReader(value.text),
         delta: typeof value.delta === "string" ? value.delta : undefined,
+        details: value.details,
         createdAt: readOptionalString(value.createdAt),
         metadata: context.metadata
       })

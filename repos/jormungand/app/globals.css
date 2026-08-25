@@ -1757,8 +1757,10 @@ small,
 .taskNavigation > .composePanel { order: -1; }
 .taskNavigation > .projectSelector { order: 0; }
 .taskNavigation .codexActivityPanel { order: 1; }
-.taskNavigation .codexActivityMount {
-  display: block;
+.taskNavigation .liveActivityMount {
+  align-content: end;
+  display: grid;
+  gap: 14px;
   margin-top: auto;
   min-width: 0;
   order: 1;

@@ -191,6 +191,62 @@ test("publishes started reasoning and completed before the final OpenClaw POST r
   assert.equal(result.body, "Final answer")
 })
 
+test("publishes OpenClaw response details only on the terminal live event", { concurrency: false }, async (t) => {
+  restoreEnv(t, "OPENCLAW_BRIDGE_URL")
+  process.env.OPENCLAW_BRIDGE_URL = "http://openclaw.test"
+
+  const bus = installLiveHooks(t)
+  __setAgentBridgeTestHooks({
+    fetch: async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url === "http://openclaw.test/agent-runs") {
+        return jsonResponse({
+          id: "bridge-run-details",
+          status: "completed",
+          output: "Visible assistant answer",
+          responseDetails: {
+            finalAssistantRawText: "Raw assistant answer",
+            finalPromptText: "Internal prompt envelope",
+            finalAssistantVisibleText: "must not reach live details"
+          },
+          statusMessage: "OpenClaw completed."
+        })
+      }
+
+      return jsonResponse({
+        status: "running",
+        nextCursor: 1,
+        events: [
+          { id: "bridge-started", sequence: 1, type: "started", message: "Bridge started" }
+        ]
+      })
+    }
+  })
+
+  const result = await invokeConfiguredAgent({
+    run: createOpenClawRun(),
+    executor: "openclaw.rowlet",
+    stage: "implementation",
+    artifactType: "log",
+    title: "Relay response details",
+    fallbackBody: "fallback",
+    skill: liveSkill,
+    conversationId: "conversation:live-details"
+  })
+
+  assert.equal(result.body, "Visible assistant answer")
+  const terminalEvent = bus
+    .getSnapshot("conversation:live-details")
+    .events.find((event) => event.type === "completed")
+  const details = (terminalEvent as typeof terminalEvent & {
+    details?: Record<string, unknown>
+  })?.details
+
+  assert.equal(details?.finalAssistantVisibleText, undefined)
+  assert.equal(details?.finalAssistantRawText, "Raw assistant answer")
+  assert.equal(details?.finalPromptText, "Internal prompt envelope")
+})
+
 test("uses an explicit invocation idempotency key across synthetic runs", { concurrency: false }, async (t) => {
   restoreEnv(t, "OPENCLAW_BRIDGE_URL")
   process.env.OPENCLAW_BRIDGE_URL = "http://openclaw.test"

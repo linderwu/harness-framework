@@ -129,9 +129,26 @@ test("activity panel renders live agent preview details without changing codex c
   assert.match(taskConversation, /const activityViewModel = getConversationActivityViewModel\(\{/)
   assert.match(taskConversation, /agentLivePanelState/)
   assert.match(taskConversation, /selectedAgentLabel/)
-  assert.match(taskConversation, /\{activityViewModel\.showsCodexControls && isTurnRunning \? <button className="compactPanelButton"[\s\S]*>Pause<\/button> : null\}/)
-  assert.match(taskConversation, /\{activityViewModel\.showsCodexControls && isPaused \? <button className="compactPanelButton"[\s\S]*>Continue<\/button> : null\}/)
-  assert.match(taskConversation, /\{activityViewModel\.showsCodexControls && session && session\.status !== "stopped" && session\.status !== "failed" && \(isTurnRunning \|\| isPaused\) \? <button className="compactPanelButton danger"[\s\S]*>Stop<\/button> : null\}/)
+  assert.match(taskConversation, /\{isTurnRunning \? <button className="compactPanelButton"[\s\S]*>Pause<\/button> : null\}/)
+  assert.match(taskConversation, /\{isPaused \? <button className="compactPanelButton"[\s\S]*>Continue<\/button> : null\}/)
+  assert.match(taskConversation, /\{session\.status !== "stopped" && session\.status !== "failed" && \(isTurnRunning \|\| isPaused\) \? <button className="compactPanelButton danger"[\s\S]*>Stop<\/button> : null\}/)
+})
+
+test("both live sessions share the dashboard-owned lower-left mount in Codex-first order", () => {
+  assert.match(taskConversation, /liveActivityMount/)
+  assert.match(dashboard, /liveActivityMount=/)
+  const codexPortalIndex = taskConversation.indexOf(
+    "createPortal(codexActivityPanel, props.liveActivityMount)"
+  )
+  const agentPortalIndex = taskConversation.indexOf(
+    "createPortal(agentLiveActivityPanel, props.liveActivityMount)"
+  )
+
+  assert.notEqual(codexPortalIndex, -1)
+  assert.notEqual(agentPortalIndex, -1)
+  assert.ok(codexPortalIndex < agentPortalIndex)
+  assert.match(taskConversation, /agentLiveResponseDetails/)
+  assert.match(globalsCss, /.taskNavigation \.liveActivityMount \{[\s\S]*display: grid/)
 })
 
 test("rename action opens a visible native dialog for the title input", () => {

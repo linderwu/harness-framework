@@ -882,7 +882,7 @@ test("agent live panel state follows the active live stream instead of the targe
     reasoning: "Thinking through the final answer",
     eventCount: 2
   }), {
-    visible: false,
+    visible: true,
     agentId: "openclaw.gengar"
   })
 
