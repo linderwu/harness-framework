@@ -5,10 +5,12 @@
 # Usage:
 #   powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\start-pokemon-center-server.ps1
 #   powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\start-pokemon-center-server.ps1 -SkipPublicVerification
+#   powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\start-pokemon-center-server.ps1 -Restart
 
 [CmdletBinding()]
 param(
-  [switch]$SkipPublicVerification
+  [switch]$SkipPublicVerification,
+  [switch]$Restart
 )
 
 $ErrorActionPreference = "Stop"
@@ -123,9 +125,69 @@ function Start-ManagedService(
   return Wait-Health $name $healthUri $token
 }
 
+function Get-ManagedProcessIds([string]$nodeScript) {
+  $normalizedScript = [IO.Path]::GetFullPath($nodeScript)
+  return @(
+    Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" |
+      Where-Object {
+        $_.CommandLine -and $_.CommandLine.Contains($normalizedScript)
+      } |
+      Select-Object -ExpandProperty ProcessId
+  )
+}
+
+function Stop-ManagedService(
+  [string]$name,
+  [string]$nodeScript,
+  [int]$port
+) {
+  $processIds = @(Get-ManagedProcessIds $nodeScript | Sort-Object -Unique)
+  $listeners = @(
+    Get-NetTCPConnection -State Listen -LocalPort $port -ErrorAction SilentlyContinue |
+      Select-Object -ExpandProperty OwningProcess
+  )
+  $unrecognizedListeners = @($listeners | Where-Object { $_ -notin $processIds -and $_ -ne 0 })
+
+  if ($unrecognizedListeners.Count -gt 0) {
+    throw "$name port $port is occupied by unrecognized PID(s): $($unrecognizedListeners -join ', ')"
+  }
+
+  if ($processIds.Count -eq 0) {
+    Write-Host ("{0}: not running" -f $name)
+    return
+  }
+
+  foreach ($processId in $processIds) {
+    Write-Host ("Stopping {0} PID {1}..." -f $name, $processId)
+    Stop-Process -Id $processId -Force -ErrorAction Stop
+  }
+
+  $deadline = [DateTime]::UtcNow.AddSeconds(15)
+  do {
+    $remainingProcesses = @(Get-ManagedProcessIds $nodeScript)
+    $remainingListeners = @(
+      Get-NetTCPConnection -State Listen -LocalPort $port -ErrorAction SilentlyContinue
+    )
+    if ($remainingProcesses.Count -eq 0 -and $remainingListeners.Count -eq 0) {
+      Write-Host ("{0}: stopped" -f $name)
+      return
+    }
+    Start-Sleep -Milliseconds 250
+  } while ([DateTime]::UtcNow -lt $deadline)
+
+  throw "$name did not stop cleanly on port $port"
+}
+
 Write-Host "=== Pokemon Center Server ==="
 Write-Host ("Repo: {0}" -f $projectRoot.Path)
 Write-Host ""
+
+if ($Restart) {
+  Write-Host "Restart requested."
+  Stop-ManagedService "Codex Bridge" $codexNodeScript 4177
+  Stop-ManagedService "Lucky / MiniMax" $luckyNodeScript 4198
+  Write-Host ""
+}
 
 # Lucky must be ready before Codex starts accepting mavis forwarding traffic.
 $luckyHealth = Start-ManagedService `
