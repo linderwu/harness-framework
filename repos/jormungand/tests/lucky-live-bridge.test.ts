@@ -66,7 +66,7 @@ async function createLuckyBackend(t: TestContext) {
         {
           finish_reason: "stop",
           message: {
-            content: "<think>private</think>visible"
+            content: "<think>private</think>visible</think>"
           }
         }
       ]

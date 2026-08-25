@@ -972,7 +972,7 @@ async function runLuckyAgent({
 function extractAssistantReasoning(message, content) {
   const explicit = [message.reasoning, message.thinking, message.reasoning_content]
     .filter((value) => typeof value === "string" && value.trim())
-    .map((value) => value.trim())
+    .map((value) => value.replace(/<\/?think>/gi, "").trim())
   const inline = [...content.matchAll(/<think>([\s\S]*?)<\/think>/gi)]
     .map((match) => match[1].trim())
     .filter(Boolean)
@@ -981,7 +981,9 @@ function extractAssistantReasoning(message, content) {
 
 function stripThinkBlocks(value) {
   if (typeof value !== "string") return ""
-  const visible = value.replace(/<think>[\s\S]*?<\/think>/gi, "")
+  const visible = value
+    .replace(/<think>[\s\S]*?<\/think>/gi, "")
+    .replace(/<\/?think>/gi, "")
   return visible.trim() ? visible : ""
 }
 
