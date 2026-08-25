@@ -103,6 +103,14 @@ test("A2A extraction keeps only finalAssistantVisibleText and removes think bloc
   assert.equal(extractA2AResponseText(raw), "Hi! How can I help?")
 })
 
+test("A2A extraction finds finalAssistantVisibleText inside serialized output", () => {
+  const raw = JSON.stringify({
+    output: 'provider trace: {"finalAssistantVisibleText":"hi! 🌿🦉","finalAssistantRawText":"private"}'
+  })
+
+  assert.equal(extractA2AResponseText(raw), "hi! 🌿🦉")
+})
+
 function makeEntry(input: {
   id: string
   role: ConversationEntry["role"]

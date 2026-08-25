@@ -225,12 +225,42 @@ export function extractA2AResponseText(raw: string) {
       raw
     )
   } catch {
-    return raw
+    return findFinalAssistantVisibleText(raw) || raw
   }
 }
 
 function findFinalAssistantVisibleText(value: unknown, depth = 0): string {
-  if (depth > 8 || !value || typeof value !== "object") {
+  if (depth > 8 || !value) {
+    return ""
+  }
+
+  if (typeof value === "string") {
+    const trimmed = value.trim()
+    if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+      try {
+        const parsed = JSON.parse(trimmed) as unknown
+        const found = findFinalAssistantVisibleText(parsed, depth + 1)
+        if (found) return found
+      } catch {
+        // Continue with the targeted serialized-field fallback below.
+      }
+    }
+
+    const match = value.match(
+      /finalAssistantVisibleText\\?["']?\s*:\s*\\?["']((?:\\.|[^"\\])*)\\?["']/
+    )
+    if (!match) return ""
+
+    let visible = match[1]
+    try {
+      visible = JSON.parse(`"${match[1]}"`) as string
+    } catch {
+      visible = visible.replaceAll('\\"', '"')
+    }
+    return stripThinkMarkers(visible)
+  }
+
+  if (typeof value !== "object") {
     return ""
   }
 
@@ -245,8 +275,7 @@ function findFinalAssistantVisibleText(value: unknown, depth = 0): string {
   const record = value as Record<string, unknown>
   const visible = getString(record.finalAssistantVisibleText)
   if (visible) {
-    const withoutThink = visible.replace(/<think>[\s\S]*?<\/think>/gi, "")
-    return withoutThink.trim() ? withoutThink : ""
+    return stripThinkMarkers(visible)
   }
 
   for (const child of Object.values(record)) {
@@ -255,6 +284,13 @@ function findFinalAssistantVisibleText(value: unknown, depth = 0): string {
   }
 
   return ""
+}
+
+function stripThinkMarkers(value: string) {
+  return value
+    .replace(/<think>[\s\S]*?<\/think>/gi, "")
+    .replace(/<\/?think>/gi, "")
+    .trim()
 }
 
 export function parseA2AMessageRequest(
