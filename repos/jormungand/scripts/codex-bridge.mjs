@@ -1,13 +1,14 @@
 import http from "node:http"
 import os from "node:os"
 import path from "node:path"
-import { promises as fs } from "node:fs"
+import { promises as fs, readFileSync } from "node:fs"
 import { spawn } from "node:child_process"
 import { createHash, randomUUID } from "node:crypto"
 import { normalizePermissionMode } from "./agent-permissions.mjs"
 import { loadBridgeConfig } from "./bridge-config.mjs"
 import { createCodexAppServerSession } from "./codex-app-server-session.mjs"
 import {
+  buildCodexAppServerArgs,
   buildCodexExecModelArgs,
   defaultCodexModelId,
   normalizeCodexModels
@@ -221,7 +222,8 @@ const server = http.createServer(async (request, response) => {
         payload,
         {
           threadId: typeof payload.threadId === "string" ? payload.threadId : undefined,
-          name: typeof payload.name === "string" ? payload.name.trim() : undefined
+          name: typeof payload.name === "string" ? payload.name.trim() : undefined,
+          modelId: normalizeCodexModelId(payload.selectedModelId)
         }
       )
       sendJson(response, created ? 201 : 200, codexSessionSnapshot(session))
@@ -1620,7 +1622,7 @@ async function createCodexSession(
   const id = randomUUID()
   const session = {
     id,
-    child: spawnCodex(["app-server", "--stdio"], {
+    child: spawnCodex(buildConfiguredCodexAppServerArgs(options.modelId), {
       cwd: workspacePath,
       stdio: ["pipe", "pipe", "pipe"]
     }),
@@ -1629,6 +1631,7 @@ async function createCodexSession(
     sessionKey: options.sessionKey,
     threadId: options.threadId,
     name: options.name,
+    modelId: options.modelId,
     appServerSession: undefined,
     currentTurnId: undefined,
     status: "starting",
@@ -1983,6 +1986,7 @@ function codexSessionSnapshot(session) {
     id: session.id,
     threadId: session.threadId,
     name: session.name,
+    modelId: session.modelId,
     status: session.status,
     turnStatus: session.turnStatus,
     currentTurnId: session.currentTurnId,
@@ -2036,7 +2040,8 @@ async function getOrCreateCodexSession(
 
   const creationPromise = createCodexSession(workspacePath, sessionPermissionMode, {
     ...options,
-    sessionKey
+    sessionKey,
+    modelId: normalizeCodexModelId(payload.selectedModelId)
   })
 
   if (!sessionKey) {
@@ -2056,6 +2061,11 @@ async function getOrCreateCodexSession(
   }
 }
 
+function normalizeCodexModelId(value) {
+  const modelId = String(value ?? "").trim()
+  return modelId || undefined
+}
+
 function deriveCodexSessionKey(workspacePath, payload = {}) {
   const explicitSessionKey =
     typeof payload.sessionKey === "string" && payload.sessionKey.trim()
@@ -2070,7 +2080,8 @@ function deriveCodexSessionKey(workspacePath, payload = {}) {
 
   return JSON.stringify({
     workspacePath,
-    sessionKey: explicitSessionKey
+    sessionKey: explicitSessionKey,
+    modelId: normalizeCodexModelId(payload.selectedModelId)
   })
 }
 
@@ -2370,7 +2381,7 @@ async function readFreshCodexModels() {
 }
 
 async function requestCodexAppServer(method, params) {
-  const child = spawnCodex(["app-server", "--stdio"], {
+  const child = spawnCodex(buildConfiguredCodexAppServerArgs(), {
     cwd: repoRoot,
     stdio: ["pipe", "pipe", "pipe"]
   })
@@ -2504,7 +2515,7 @@ async function readCodexQuota() {
 }
 
 async function readFreshCodexQuota() {
-  const child = spawnCodex(["app-server", "--stdio"], {
+  const child = spawnCodex(buildConfiguredCodexAppServerArgs(), {
     cwd: repoRoot,
     stdio: ["pipe", "pipe", "pipe"]
   })
@@ -2644,6 +2655,22 @@ function isMissingNativeThreadError(error) {
 
 function isLoopbackHost(value) {
   return ["127.0.0.1", "::1", "localhost"].includes(value)
+}
+
+function readConfiguredCodexModel() {
+  const codexHome = process.env.CODEX_HOME?.trim() || path.join(os.homedir(), ".codex")
+  const configPath = path.join(codexHome, "config.toml")
+
+  try {
+    const config = readFileSync(configPath, "utf8")
+    return config.match(/^\s*model\s*=\s*"([^"]+)"/m)?.[1]?.trim()
+  } catch {
+    return undefined
+  }
+}
+
+function buildConfiguredCodexAppServerArgs(modelId) {
+  return buildCodexAppServerArgs(modelId ?? readConfiguredCodexModel())
 }
 
 function spawnCodex(args, options) {

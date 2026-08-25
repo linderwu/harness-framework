@@ -60,3 +60,15 @@ function providerForCodexModel(modelId) {
 
   return undefined
 }
+export function buildCodexAppServerArgs(modelId) {
+  const normalizedModelId = String(modelId ?? "").trim()
+  const provider = providerForCodexModel(modelId)
+  return [
+    "app-server",
+    "--stdio",
+    ...(normalizedModelId && normalizedModelId !== "ChatGPT OAuth"
+      ? ["-c", `model=${normalizedModelId}`]
+      : []),
+    ...(provider ? ["-c", `model_provider=${provider}`] : [])
+  ]
+}
