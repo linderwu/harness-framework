@@ -85,7 +85,7 @@ test("openclaw live stream state stays ephemeral and uses the conversation SSE b
   assert.match(taskConversation, /const \[agentLiveReasoning, setAgentLiveReasoning\] = useState<string \| undefined>\(\)/)
   assert.match(taskConversation, /const \[agentLiveStatus, setAgentLiveStatus\] = useState<string \| undefined>\(\)/)
   assert.match(taskConversation, /const \[activeEventSource, setActiveEventSource\] = useState<EventSource \| undefined>\(\)/)
-  assert.match(taskConversation, /if \(shouldOpenAgentLiveStream\(targetAgent\)\)/)
+  assert.match(taskConversation, /if \(shouldOpenAgentLiveStream\(targetAgent, !isUnbound\)\)/)
   assert.match(taskConversation, /new EventSource\(buildConversationLivePath\(activeConversationId\)\)/)
   assert.match(taskConversation, /source\.addEventListener\("agent-live", handleAgentLiveEvent\)/)
   assert.match(taskConversation, /source\.addEventListener\("error", handleAgentLiveError\)/)

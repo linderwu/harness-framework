@@ -805,7 +805,7 @@ test("queued bound Codex routing still uses the workflow manager conversation sk
   assert.equal(capturedInputs.length, 1)
   assert.equal(capturedInputs[0]?.executor, "codex")
   assert.equal(capturedInputs[0]?.skill.id, "hive_manager.operator_message")
-  assert.equal(capturedInputs[0]?.conversationId, undefined)
+  assert.equal(capturedInputs[0]?.conversationId, persistedRun.id)
 })
 
 test("unbound direct redispatch preserves the persisted entry idempotency key", async (t) => {
