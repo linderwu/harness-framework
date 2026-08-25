@@ -224,7 +224,7 @@ test("publishes OpenClaw response details only on the terminal live event", { co
         return jsonResponse({
           id: "bridge-run-details",
           status: "completed",
-          output: "Visible assistant answer",
+          output: String.raw`provider trace: \"finalAssistantVisibleText\": \"Visible assistant answer\", \"finalAssistantRawText\": \"private\"`,
           responseDetails: {
             finalAssistantRawText: "Raw assistant answer",
             finalPromptText: "Internal prompt envelope",

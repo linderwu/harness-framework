@@ -338,12 +338,17 @@ function bridgeResponseToAgentResult(
   source: AgentArtifactResult["source"],
   idempotencyKey: string
 ): AgentArtifactResult {
-  const output =
+  const rawOutput =
     typeof data.output === "string" && data.output !== ""
       ? data.output
       : data.error ||
         data.stderr ||
         "Codex bridge completed without a final message."
+  const extractedOutput = extractA2AResponseText(rawOutput)
+  const output =
+    source === "openclaw-bridge" && extractedOutput !== rawOutput
+      ? extractedOutput
+      : rawOutput
 
   return {
     status: data.status === "failed" ? "failed" : "completed",
