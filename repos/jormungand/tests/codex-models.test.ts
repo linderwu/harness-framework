@@ -65,7 +65,7 @@ test("model catalog keeps visible live models and chooses the server default", a
     "--model",
     "gpt-5.6-sol",
     "-c",
-    'model_provider="openai"',
+    "model_provider=openai",
     "-c",
     'model_reasoning_effort="high"'
   ])
@@ -73,7 +73,7 @@ test("model catalog keeps visible live models and chooses the server default", a
     "--model",
     "MiniMax-M3",
     "-c",
-    'model_provider="minimax"',
+    "model_provider=minimax",
     "-c",
     'model_reasoning_effort="high"'
   ])

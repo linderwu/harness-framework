@@ -40,7 +40,7 @@ export function buildCodexExecModelArgs(modelId, reasoningIntensity) {
   }
 
   if (provider) {
-    args.push("-c", `model_provider="${provider}"`)
+    args.push("-c", `model_provider=${provider}`)
   }
 
   if (["low", "medium", "high"].includes(normalizedReasoningIntensity)) {
