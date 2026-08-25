@@ -97,7 +97,11 @@ async function startLuckyBridge(
     cwd: process.cwd(),
     env: {
       ...process.env,
+      HARNESS_BRIDGE_TOKEN: "",
+      CODEX_BRIDGE_TOKEN: "",
       LUCKY_BRIDGE_TOKEN: "",
+      MINIMAX_BRIDGE_TOKEN: "",
+      MINIMAX_GATEWAY_TOKEN: "",
       LUCKY_BACKEND_URL: backendUrl,
       LUCKY_BRIDGE_HOST: "127.0.0.1",
       LUCKY_BRIDGE_PORT: String(port),
