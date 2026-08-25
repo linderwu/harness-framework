@@ -111,6 +111,14 @@ test("A2A extraction finds finalAssistantVisibleText inside serialized output", 
   assert.equal(extractA2AResponseText(raw), "hi! 🌿🦉")
 })
 
+test("A2A extraction handles escaped serialized output", () => {
+  const raw = JSON.stringify({
+    output: String.raw`provider trace: \"finalAssistantVisibleText\": \"hi! 🌿🦉\", \"finalAssistantRawText\": \"private\"`
+  })
+
+  assert.equal(extractA2AResponseText(raw), "hi! 🌿🦉")
+})
+
 function makeEntry(input: {
   id: string
   role: ConversationEntry["role"]

@@ -247,7 +247,7 @@ function findFinalAssistantVisibleText(value: unknown, depth = 0): string {
     }
 
     const match = value.match(
-      /finalAssistantVisibleText\\?["']?\s*:\s*\\?["']((?:\\.|[^"\\])*)\\?["']/
+      /finalAssistantVisibleText\\?["']?\s*:\s*\\?["']([^"\r\n]*?)\\?["']/
     )
     if (!match) return ""
 
