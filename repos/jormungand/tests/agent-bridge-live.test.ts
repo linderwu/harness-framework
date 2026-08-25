@@ -937,17 +937,25 @@ test("agent bridge live consumes nested Lucky journal records for a bound mavis 
       eventRequests.push(url)
       return jsonResponse({
         status: "completed",
-        nextCursor: 2,
+        nextCursor: 4,
         events: [
           {
             cursor: 0,
-            type: "assistant",
-            data: {
-              content: "<think>private reasoning</think>visible answer"
-            }
+            type: "started",
+            data: { message: "Lucky started" }
           },
           {
             cursor: 1,
+            type: "reasoning",
+            data: { text: "private reasoning" }
+          },
+          {
+            cursor: 2,
+            type: "assistant_delta",
+            data: { delta: "visible answer" }
+          },
+          {
+            cursor: 3,
             type: "completed",
             data: {
               statusMessage: "Lucky completed"

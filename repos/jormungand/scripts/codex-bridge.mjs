@@ -41,6 +41,8 @@ const activeWorkflowRuns = new Map()
 const activeIdempotencyKeys = new Map()
 const completedAgentRuns = new Map()
 const completedIdempotencyKeys = new Map()
+const agentRunJournals = new Map()
+const agentRunJournalSequences = new Map()
 const codexSessions = new Map()
 const codexSessionKeys = new Map()
 const inFlightCodexSessionCreations = new Map()
@@ -78,6 +80,9 @@ const maxCodexProcessOutputBytes = Number(
 )
 const maxCodexSessionBufferBytes = Number(
   process.env.CODEX_BRIDGE_MAX_SESSION_BUFFER_BYTES ?? 1024 * 1024
+)
+const maxCodexAgentRunEvents = Number(
+  process.env.CODEX_BRIDGE_MAX_AGENT_RUN_EVENTS ?? 64
 )
 const defaultMaxCodexSessions = 8
 const configuredMaxCodexSessions = Number(
@@ -352,6 +357,11 @@ const server = http.createServer(async (request, response) => {
         } catch (error) {
           sendForwardingError(response, error)
         }
+        return
+      }
+
+      if (slashIndex !== -1 && rawTail.slice(slashIndex) === "/events") {
+        sendAgentRunEvents(response, idempotencyKey, requestUrl)
         return
       }
 
@@ -714,6 +724,47 @@ function sendCompletedAgentRun(response, agentRunId) {
   sendJson(response, 200, completedRun)
 }
 
+function sendAgentRunEvents(response, idempotencyKey, requestUrl) {
+  const activeRunId = activeIdempotencyKeys.get(idempotencyKey)
+  const completedRunId = completedIdempotencyKeys.get(idempotencyKey)
+  const runId = activeRunId ?? completedRunId
+
+  if (!runId) {
+    sendJson(response, 404, { error: "agent run not found", idempotencyKey })
+    return
+  }
+
+  const after = Number(requestUrl.searchParams.get("after") ?? 0)
+  const cursor = Number.isFinite(after) && after >= 0 ? after : 0
+  const events = (agentRunJournals.get(runId) ?? []).filter(
+    (event) => event.sequence > cursor
+  )
+  const nextCursor = agentRunJournalSequences.get(runId) ?? cursor
+
+  sendJson(response, 200, {
+    status: activeRunId ? "running" : "completed",
+    events,
+    nextCursor
+  })
+}
+
+function appendAgentRunEvent(runId, type, payload = {}) {
+  const sequence = (agentRunJournalSequences.get(runId) ?? 0) + 1
+  const event = {
+    id: `${runId}:${sequence}`,
+    sequence,
+    type,
+    createdAt: new Date().toISOString(),
+    ...payload
+  }
+  const events = agentRunJournals.get(runId) ?? []
+  events.push(event)
+  while (events.length > maxCodexAgentRunEvents) events.shift()
+  agentRunJournals.set(runId, events)
+  agentRunJournalSequences.set(runId, sequence)
+  return event
+}
+
 function rememberCompletedAgentRun(result) {
   pruneCompletedAgentRuns()
   completedAgentRuns.set(result.id, result)
@@ -732,6 +783,8 @@ function pruneCompletedAgentRuns(now = Date.now()) {
     }
 
     completedAgentRuns.delete(id)
+    agentRunJournals.delete(id)
+    agentRunJournalSequences.delete(id)
     if (result.idempotencyKey) {
       completedIdempotencyKeys.delete(result.idempotencyKey)
     }
@@ -741,6 +794,8 @@ function pruneCompletedAgentRuns(now = Date.now()) {
     const oldestId = completedAgentRuns.keys().next().value
     const oldest = completedAgentRuns.get(oldestId)
     completedAgentRuns.delete(oldestId)
+    agentRunJournals.delete(oldestId)
+    agentRunJournalSequences.delete(oldestId)
     if (oldest?.idempotencyKey) {
       completedIdempotencyKeys.delete(oldest.idempotencyKey)
     }
@@ -849,13 +904,22 @@ async function runCodex(
     startedAt: new Date().toISOString(),
     workflowRunId
   })
+  appendAgentRunEvent(id, "started", {
+    message: "Codex process started."
+  })
 
   if (workflowRunId) {
     activeWorkflowRuns.set(workflowRunId, id)
   }
 
   child.stdout.on("data", (chunk) => {
-    stdout = appendBoundedText(stdout, chunk, maxCodexOutputBytes)
+    const text = chunk.toString()
+    stdout = appendBoundedText(stdout, text, maxCodexOutputBytes)
+    appendAgentRunEvent(id, "assistant_delta", {
+      delta: text,
+      text,
+      message: text
+    })
   })
   child.stderr.on("data", (chunk) => {
     stderr = appendBoundedText(stderr, chunk, maxCodexOutputBytes)
@@ -889,6 +953,9 @@ async function runCodex(
   }
 
   if (childError) {
+    appendAgentRunEvent(id, "failed", {
+      message: formatError(childError)
+    })
     throw childError
   }
 
@@ -900,6 +967,15 @@ async function runCodex(
   await fs.unlink(outputFile).catch(() => {})
   const finalOutput = output.trim() || tail(stdout, 8000).trim()
   const completed = exitCode === 0 && Boolean(finalOutput)
+  appendAgentRunEvent(id, completed ? "completed" : "failed", {
+    message:
+      completed
+        ? "Codex completed."
+        : exitCode === 0
+          ? "Codex produced no final message."
+          : `Codex exited with status ${exitCode}.`,
+    text: finalOutput || undefined
+  })
 
   return {
     status: completed ? "completed" : "failed",

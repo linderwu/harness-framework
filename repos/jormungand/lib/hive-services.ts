@@ -145,7 +145,14 @@ export function createHiveServices(options: HiveServicesOptions = {}) {
         }))
       })
     },
-    invokeAgent: async ({ run, targetAgent, content, contextPack, managerRouting }) => {
+    invokeAgent: async ({
+      run,
+      targetAgent,
+      content,
+      contextPack,
+      managerRouting,
+      conversationId
+    }) => {
       const result = await invokeAgent({
         run,
         executor: targetAgent,
@@ -168,7 +175,8 @@ export function createHiveServices(options: HiveServicesOptions = {}) {
           gates: ["Jormungand retains authority over workflow state."],
           knowledgeSources: ["conversation context pack"],
           verificationRules: ["Return evidence for completion claims."]
-        }
+        },
+        conversationId
       })
       return { status: result.status, body: result.body }
     },

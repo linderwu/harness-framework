@@ -83,7 +83,7 @@ interface AgentBridgeRuntime {
   getLastLiveSequence: (conversationId: string) => number
 }
 
-interface OpenClawLiveRelay {
+interface AgentLiveRelay {
   publishStarted(): void
   startPolling(): void
   publishFinal(result: AgentArtifactResult): void
@@ -156,7 +156,7 @@ export async function invokeConfiguredAgent(
   }
 
   const runtime = getAgentBridgeRuntime()
-  const liveRelay = createOpenClawLiveRelay(
+  const liveRelay = createAgentLiveRelay(
     input,
     bridgeUrl,
     source,
@@ -387,17 +387,18 @@ function getAgentBridgeRuntime(): AgentBridgeRuntime {
   }
 }
 
-function createOpenClawLiveRelay(
+function createAgentLiveRelay(
   input: AgentInvocationInput,
   bridgeUrl: string,
   source: AgentArtifactResult["source"],
   idempotencyKey: string,
   liveRunId: string,
   runtime: AgentBridgeRuntime
-): OpenClawLiveRelay | undefined {
+): AgentLiveRelay | undefined {
   const conversationId = input.conversationId?.trim()
+  const family = getAgentProfile(input.executor).family
 
-  if (!conversationId || getAgentProfile(input.executor).family !== "openclaw") {
+  if (!conversationId || !["codex", "openclaw", "minimax"].includes(family)) {
     return undefined
   }
 

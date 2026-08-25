@@ -63,6 +63,7 @@ interface ConversationDependencies {
     content: string
     contextPack?: ContextPack
     managerRouting: boolean
+    conversationId?: string
   }) => Promise<{ status: "completed" | "failed"; body: string }>
   persistRawArtifact: (input: {
     run: WorkflowRun
@@ -299,7 +300,12 @@ export class ConversationService {
       })
       await this.dependencies.repository.updateConversation({ id: userEntry.id, status: "running", memoryIds: contextPack?.memoryIds ?? [] })
       const result = await this.dependencies.invokeAgent({
-        run, targetAgent: input.targetAgent, content, contextPack, managerRouting
+        run,
+        targetAgent: input.targetAgent,
+        content,
+        contextPack,
+        managerRouting,
+        conversationId: run.id
       })
       const artifactId = await this.dependencies.persistRawArtifact({ run, targetAgent: input.targetAgent, body: result.body })
       const responseInsert = await this.dependencies.repository.insertConversation({
@@ -437,7 +443,8 @@ export class ConversationService {
       targetAgent,
       content: userEntry.content,
       contextPack,
-      managerRouting
+      managerRouting,
+      conversationId: run.id
     })
     const artifactId = await this.dependencies.persistRawArtifact({
       run,
