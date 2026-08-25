@@ -886,7 +886,7 @@ async function runCodex(
   args.splice(
     args.length - 1,
     0,
-    ...buildCodexExecModelArgs(selectedModelId, selectedReasoningIntensity)
+    ...buildCodexExecModelArgs(selectedModelId ?? readConfiguredCodexModel(), selectedReasoningIntensity)
   )
 
   const child = spawnCodex(args, {
