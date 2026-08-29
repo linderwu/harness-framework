@@ -50,6 +50,7 @@ interface ConversationMetadata {
   conversationId: string
   title: string
   state: "active" | "archived"
+  selectedModelId?: string
 }
 
 function createRun(projectType: WorkflowRun["projectType"] = "hive_mission") {
@@ -454,6 +455,34 @@ describe("conversation route contracts", { concurrency: false }, () => {
     const renamed = await renameResponse.json() as ConversationSummary
     assert.equal(renameResponse.status, 200)
     assert.equal(renamed.title, "Renamed from route")
+
+    const modelResponse = await PATCH(
+      new Request(`http://localhost/api/conversations/${conversationId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ selectedModelId: "gpt-5.6-sol" })
+      }),
+      { params: Promise.resolve({ id: conversationId }) }
+    )
+    const selectedModel = await modelResponse.json() as ConversationMetadata
+    const persistedSelectedModel = services.repository.getConversationMetadata(conversationId)
+    assert.equal(modelResponse.status, 200)
+    assert.equal(selectedModel.selectedModelId, "gpt-5.6-sol")
+    assert.equal(persistedSelectedModel?.selectedModelId, "gpt-5.6-sol")
+
+    const clearModelResponse = await PATCH(
+      new Request(`http://localhost/api/conversations/${conversationId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ selectedModelId: null })
+      }),
+      { params: Promise.resolve({ id: conversationId }) }
+    )
+    const clearedModel = await clearModelResponse.json() as ConversationMetadata
+    const persistedClearedModel = services.repository.getConversationMetadata(conversationId)
+    assert.equal(clearModelResponse.status, 200)
+    assert.equal(clearedModel.selectedModelId, undefined)
+    assert.equal(persistedClearedModel?.selectedModelId, undefined)
 
     const archiveResponse = await PATCH(
       new Request(`http://localhost/api/conversations/${conversationId}`, {

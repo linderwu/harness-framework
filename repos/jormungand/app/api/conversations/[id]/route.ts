@@ -18,7 +18,7 @@ export async function PATCH(
   try {
     const { id } = await context.params
     const body = await request.json().catch(() => undefined) as
-      | { title?: unknown; state?: unknown }
+      | { title?: unknown; state?: unknown; selectedModelId?: unknown }
       | undefined
 
     if (!body || typeof body !== "object" || Array.isArray(body)) {
@@ -30,7 +30,8 @@ export async function PATCH(
       await service.updateConversation({
         conversationId: id,
         title: body.title,
-        state: body.state
+        state: body.state,
+        selectedModelId: body.selectedModelId
       })
     )
   } catch (error) {

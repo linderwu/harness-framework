@@ -41,14 +41,23 @@ export class ConversationManagementService {
     conversationId: string
     title?: unknown
     state?: unknown
-  }): Promise<ConversationSummary> {
+    selectedModelId?: unknown
+  }): Promise<ConversationSummary | ConversationMetadata> {
     const metadata = this.requireManagedConversation(input.conversationId)
     const hasTitle = input.title !== undefined
     const hasState = input.state !== undefined
+    const hasSelectedModelId = input.selectedModelId !== undefined
 
-    if (hasTitle === hasState) {
+    if (!hasSelectedModelId && hasTitle === hasState) {
       throw new ConversationManagementError(
         "Provide exactly one of title or state.",
+        400
+      )
+    }
+
+    if (hasSelectedModelId && (hasTitle || hasState)) {
+      throw new ConversationManagementError(
+        "Provide exactly one of title, state, or selectedModelId.",
         400
       )
     }
@@ -58,6 +67,13 @@ export class ConversationManagementService {
       await this.dependencies.renameNativeThread?.(metadata.conversationId, title)
       await this.dependencies.repository.renameConversation(metadata.conversationId, title)
       return this.requireConversationSummary(metadata.conversationId)
+    }
+
+    if (hasSelectedModelId) {
+      return this.dependencies.repository.updateConversationModel({
+        id: metadata.conversationId,
+        selectedModelId: parseSelectedModelId(input.selectedModelId)
+      })
     }
 
     const nextState = parseConversationState(input.state)
@@ -168,6 +184,29 @@ function parseConversationState(value: unknown): ConversationState {
   }
 
   return value
+}
+
+function parseSelectedModelId(value: unknown): string | null {
+  if (value === null) {
+    return null
+  }
+
+  if (typeof value !== "string") {
+    throw new ConversationManagementError(
+      "selectedModelId must be null or a string up to 120 characters.",
+      400
+    )
+  }
+
+  const normalized = value.trim()
+  if (normalized.length > 120) {
+    throw new ConversationManagementError(
+      "selectedModelId must be null or a string up to 120 characters.",
+      400
+    )
+  }
+
+  return normalized || null
 }
 
 function normalizeTitle(value: string) {
