@@ -277,6 +277,15 @@ function splitLines(value: string) {
   return value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
 }
 
+export function queueConversationModelUpdate(
+  queue: { current: Promise<void> },
+  update: () => Promise<void>
+) {
+  const next = queue.current.catch(() => undefined).then(update)
+  queue.current = next.catch(() => undefined)
+  return next
+}
+
 export function HarnessDashboard({
   initialState,
   initialHiveHealth
@@ -304,6 +313,7 @@ export function HarnessDashboard({
     selectedModelId?: string
     isHydrated: boolean
   }>({ isHydrated: false })
+  const unboundModelUpdateQueue = useRef(Promise.resolve())
 	  const [openComposeSection, setOpenComposeSection] = useState<
 	    "requirement" | "automation" | undefined
 	  >()
@@ -534,10 +544,13 @@ export function HarnessDashboard({
       selectedModelId: input.selectedModelId,
       isHydrated: true
     }))
-    void requestConversationModel(
-      fetch,
-      input.conversationId,
-      input.selectedModelId
+    void queueConversationModelUpdate(
+      unboundModelUpdateQueue,
+      () => requestConversationModel(
+        fetch,
+        input.conversationId,
+        input.selectedModelId
+      ).then(() => undefined)
     ).catch((error) => {
       setMutationError(error instanceof Error ? error.message : String(error))
     })

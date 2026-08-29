@@ -96,6 +96,12 @@ test("unbound model state invalidates before hydration and PATCH requires the hy
   assert.match(dashboard, /conversationId=\{unboundConversationState\.isHydrated \? unboundConversationState\.conversationId : undefined\}/)
 })
 
+test("unbound model PATCHes use a serial queue", () => {
+  assert.match(dashboard, /export function queueConversationModelUpdate/)
+  assert.match(dashboard, /const unboundModelUpdateQueue = useRef\(Promise\.resolve\(\)\)/)
+  assert.match(dashboard, /queueConversationModelUpdate\([\s\S]*unboundModelUpdateQueue/)
+})
+
 test("conversation header surfaces the managed title, access mode, dialog copy, and action labels", () => {
   assert.match(taskConversation, /metadata\?\.title/)
   assert.match(taskConversation, /permissionMode/)

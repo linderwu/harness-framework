@@ -17,24 +17,28 @@ type AgentLivePreview = {
 async function ensureCompiledAlias() {
   const tmpRoot = join(process.cwd(), ".tmp-tests")
   const scopedRoot = join(tmpRoot, "node_modules", "@")
-  const libLink = join(scopedRoot, "lib")
-  const expectedTarget = join(tmpRoot, "lib")
+  const links = [
+    { link: join(scopedRoot, "lib"), target: join(tmpRoot, "lib") },
+    { link: join(scopedRoot, "components"), target: join(tmpRoot, "components") }
+  ]
 
   await mkdir(scopedRoot, { recursive: true })
-  const existingLink = await lstat(libLink).catch(() => undefined)
-  const existingTarget = existingLink?.isSymbolicLink()
-    ? await realpath(libLink).catch(() => undefined)
-    : undefined
-  const expectedRealTarget = await realpath(expectedTarget).catch(() => undefined)
-  if (existingTarget && expectedRealTarget && existingTarget === expectedRealTarget) {
-    return
+  for (const { link, target } of links) {
+    const existingLink = await lstat(link).catch(() => undefined)
+    const existingTarget = existingLink?.isSymbolicLink()
+      ? await realpath(link).catch(() => undefined)
+      : undefined
+    const expectedRealTarget = await realpath(target).catch(() => undefined)
+    if (existingTarget && expectedRealTarget && existingTarget === expectedRealTarget) {
+      continue
+    }
+    if (existingLink) {
+      await rm(link, { recursive: true, force: true })
+    }
+    await symlink(target, link, "junction").catch(async (error) => {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error
+    })
   }
-  if (existingLink) {
-    await rm(libLink, { recursive: true, force: true })
-  }
-  await symlink(expectedTarget, libLink, "junction").catch(async (error) => {
-    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error
-  })
 }
 
 async function loadTaskConversation() {
@@ -46,6 +50,11 @@ async function loadTaskConversation() {
 async function loadTaskConversationModule() {
   await ensureCompiledAlias()
   return await import("../components/task-conversation") as typeof import("../components/task-conversation") & Record<string, unknown>
+}
+
+async function loadHarnessDashboardModule() {
+  await ensureCompiledAlias()
+  return await import("../components/harness-dashboard") as typeof import("../components/harness-dashboard") & Record<string, unknown>
 }
 
 function createRun() {
@@ -262,6 +271,71 @@ test("unbound message payload sends the selected model only to Codex", async () 
       targetAgent: "mavis"
     }
   )
+})
+
+test("unbound model PATCH writes serialize and continue after errors", async () => {
+  const harnessDashboardModule = await loadHarnessDashboardModule()
+  const queueConversationModelUpdate = Reflect.get(harnessDashboardModule, "queueConversationModelUpdate") as
+    | ((queue: { current: Promise<void> }, update: () => Promise<void>) => Promise<void>)
+    | undefined
+
+  assert.equal(typeof queueConversationModelUpdate, "function")
+
+  const waitForTurn = () => new Promise<void>((resolve) => setImmediate(resolve))
+  const writes: string[] = []
+  const requests: Array<{
+    model: string
+    resolve: () => void
+    reject: (error: Error) => void
+  }> = []
+  const queue = { current: Promise.resolve() }
+
+  function update(model: string) {
+    return queueConversationModelUpdate!(queue, () => new Promise<void>((resolve, reject) => {
+      requests.push({ model, resolve, reject })
+    }).then(() => {
+      writes.push(model)
+    }))
+  }
+
+  const first = update("gpt-5.6-sol")
+  const second = update("gpt-5.6-luna")
+  await waitForTurn()
+  assert.deepEqual(requests.map((request) => request.model), ["gpt-5.6-sol"])
+
+  requests[0]!.resolve()
+  await waitForTurn()
+  assert.deepEqual(requests.map((request) => request.model), ["gpt-5.6-sol", "gpt-5.6-luna"])
+  requests[1]!.resolve()
+  await Promise.all([first, second])
+  assert.deepEqual(writes, ["gpt-5.6-sol", "gpt-5.6-luna"])
+
+  const errorRequests: Array<{
+    model: string
+    resolve: () => void
+    reject: (error: Error) => void
+  }> = []
+  const errorWrites: string[] = []
+  const errorQueue = { current: Promise.resolve() }
+  const failed = queueConversationModelUpdate!(errorQueue, () => new Promise<void>((resolve, reject) => {
+    errorRequests.push({ model: "gpt-5.6-sol", resolve, reject })
+  }).then(() => {
+    errorWrites.push("gpt-5.6-sol")
+  }))
+  const continued = queueConversationModelUpdate!(errorQueue, () => new Promise<void>((resolve, reject) => {
+    errorRequests.push({ model: "gpt-5.6-luna", resolve, reject })
+  }).then(() => {
+    errorWrites.push("gpt-5.6-luna")
+  }))
+
+  await waitForTurn()
+  errorRequests[0]!.reject(new Error("first PATCH failed"))
+  await assert.rejects(failed, /first PATCH failed/)
+  await waitForTurn()
+  assert.deepEqual(errorRequests.map((request) => request.model), ["gpt-5.6-sol", "gpt-5.6-luna"])
+  errorRequests[1]!.resolve()
+  await continued
+  assert.deepEqual(errorWrites, ["gpt-5.6-luna"])
 })
 
 test("conversation deletion replacement flow confirms deletion, clears stale switch state, and stops on delete errors", async () => {
