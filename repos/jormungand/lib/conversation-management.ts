@@ -42,22 +42,13 @@ export class ConversationManagementService {
     title?: unknown
     state?: unknown
     selectedModelId?: unknown
-  }): Promise<ConversationSummary | ConversationMetadata> {
+  }): Promise<ConversationSummary> {
     const metadata = this.requireManagedConversation(input.conversationId)
     const hasTitle = input.title !== undefined
     const hasState = input.state !== undefined
     const hasSelectedModelId = input.selectedModelId !== undefined
 
-    if (!hasSelectedModelId && hasTitle === hasState) {
-      throw new ConversationManagementError(
-        hasTitle
-          ? "Provide exactly one of title or state."
-          : "Provide exactly one of title, state, or selectedModelId.",
-        400
-      )
-    }
-
-    if (hasSelectedModelId && (hasTitle || hasState)) {
+    if ([hasTitle, hasState, hasSelectedModelId].filter(Boolean).length !== 1) {
       throw new ConversationManagementError(
         "Provide exactly one of title, state, or selectedModelId.",
         400
@@ -72,10 +63,11 @@ export class ConversationManagementService {
     }
 
     if (hasSelectedModelId) {
-      return this.dependencies.repository.updateConversationModel({
+      await this.dependencies.repository.updateConversationModel({
         id: metadata.conversationId,
         selectedModelId: parseSelectedModelId(input.selectedModelId)
       })
+      return this.requireConversationSummary(metadata.conversationId)
     }
 
     const nextState = parseConversationState(input.state)

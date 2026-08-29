@@ -128,6 +128,7 @@ type ConversationSummaryRow = {
   conversationId: string
   title: string
   state: ConversationState
+  selected_model_id: string | null
   messageCount: number
   latestMessageAt: string | null
   latestMessage: string | null
@@ -1281,6 +1282,7 @@ export class HiveMemoryRepository {
           conversations.id AS conversationId,
           conversations.title AS title,
           conversations.state AS state,
+          conversations.selected_model_id AS selected_model_id,
           COALESCE(stats.messageCount, 0) AS messageCount,
           stats.latestMessageAt AS latestMessageAt,
           stats.latestMessage AS latestMessage
@@ -2321,7 +2323,7 @@ function conversationMetadataFromRow(row: ConversationMetadataRow): Conversation
 }
 
 function conversationSummaryFromRow(row: ConversationSummaryRow): ConversationSummary {
-  return {
+  const summary: ConversationSummary = {
     conversationId: row.conversationId,
     title: row.title,
     state: row.state,
@@ -2329,6 +2331,12 @@ function conversationSummaryFromRow(row: ConversationSummaryRow): ConversationSu
     latestMessageAt: row.latestMessageAt ?? undefined,
     latestMessage: row.latestMessage ?? undefined
   }
+
+  if (row.selected_model_id !== null) {
+    summary.selectedModelId = row.selected_model_id
+  }
+
+  return summary
 }
 
 function codexSyncItemFromRow(row: CodexSyncLedgerRow): CodexSyncItem {

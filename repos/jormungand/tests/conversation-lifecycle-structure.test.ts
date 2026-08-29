@@ -41,6 +41,7 @@ interface ConversationSummary {
   conversationId: string
   title: string
   state: "active" | "archived"
+  selectedModelId?: string
   messageCount: number
   latestMessage: string
   latestMessageAt: string
@@ -438,15 +439,6 @@ describe("conversation route contracts", { concurrency: false }, () => {
     const { getDefaultHiveServices } = await getRouteServices()
     const services = getDefaultHiveServices()
     const conversationId = "conversation:bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
-    const patchBody = (body: unknown) =>
-      PATCH(
-        new Request(`http://localhost/api/conversations/${conversationId}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(body)
-        }),
-        { params: Promise.resolve({ id: conversationId }) }
-      )
 
     await services.repository.createConversation({
       id: conversationId,
@@ -465,31 +457,88 @@ describe("conversation route contracts", { concurrency: false }, () => {
     assert.equal(renameResponse.status, 200)
     assert.equal(renamed.title, "Renamed from route")
 
-    const modelResponse = await PATCH(
+    const conflictingResponse = await PATCH(
       new Request(`http://localhost/api/conversations/${conversationId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ selectedModelId: "gpt-5.6-sol" })
+        body: JSON.stringify({ title: "Should not rename", state: "archived" })
       }),
       { params: Promise.resolve({ id: conversationId }) }
     )
-    const selectedModel = await modelResponse.json() as ConversationMetadata
+    const conflictingBody = await conflictingResponse.json() as { error?: string }
+    assert.equal(conflictingResponse.status, 400)
+    assert.equal(
+      conflictingBody.error,
+      "Provide exactly one of title, state, or selectedModelId."
+    )
+
+    const archiveResponse = await PATCH(
+      new Request(`http://localhost/api/conversations/${conversationId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ state: "archived" })
+      }),
+      { params: Promise.resolve({ id: conversationId }) }
+    )
+    const archived = await archiveResponse.json() as ConversationSummary
+    assert.equal(archiveResponse.status, 200)
+    assert.equal(archived.state, "archived")
+
+    const deleteWithoutConfirm = await DELETE(
+      new Request(`http://localhost/api/conversations/${conversationId}`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({})
+      }),
+      { params: Promise.resolve({ id: conversationId }) }
+    )
+    assert.equal(deleteWithoutConfirm.status, 400)
+  })
+
+  test("conversation detail route returns a stable summary for model updates and validates PATCH fields", async (t) => {
+    const { PATCH } = await importRouteWithIsolatedDataDir<{
+      PATCH: (
+        request: Request,
+        context: { params: Promise<{ id: string }> }
+      ) => Promise<Response>
+    }>(t, "../app/api/conversations/[id]/route")
+    const { getDefaultHiveServices } = await getRouteServices()
+    const services = getDefaultHiveServices()
+    const conversationId = "conversation:cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+    const patchBody = (body: unknown) =>
+      PATCH(
+        new Request(`http://localhost/api/conversations/${conversationId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body)
+        }),
+        { params: Promise.resolve({ id: conversationId }) }
+      )
+
+    await services.repository.createConversation({
+      id: conversationId,
+      title: "Model settings"
+    })
+
+    const modelResponse = await patchBody({ selectedModelId: "gpt-5.6-sol" })
+    const selectedModel = await modelResponse.json() as ConversationSummary
     const persistedSelectedModel = services.repository.getConversationMetadata(conversationId)
     assert.equal(modelResponse.status, 200)
+    assert.equal(selectedModel.conversationId, conversationId)
+    assert.equal(selectedModel.title, "Model settings")
+    assert.equal(selectedModel.state, "active")
+    assert.equal(selectedModel.messageCount, 0)
     assert.equal(selectedModel.selectedModelId, "gpt-5.6-sol")
     assert.equal(persistedSelectedModel?.selectedModelId, "gpt-5.6-sol")
 
-    const clearModelResponse = await PATCH(
-      new Request(`http://localhost/api/conversations/${conversationId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ selectedModelId: null })
-      }),
-      { params: Promise.resolve({ id: conversationId }) }
-    )
-    const clearedModel = await clearModelResponse.json() as ConversationMetadata
+    const clearModelResponse = await patchBody({ selectedModelId: null })
+    const clearedModel = await clearModelResponse.json() as ConversationSummary
     const persistedClearedModel = services.repository.getConversationMetadata(conversationId)
     assert.equal(clearModelResponse.status, 200)
+    assert.equal(clearedModel.conversationId, conversationId)
+    assert.equal(clearedModel.title, "Model settings")
+    assert.equal(clearedModel.state, "active")
+    assert.equal(clearedModel.messageCount, 0)
     assert.equal(clearedModel.selectedModelId, undefined)
     assert.equal(persistedClearedModel?.selectedModelId, undefined)
 
@@ -523,28 +572,6 @@ describe("conversation route contracts", { concurrency: false }, () => {
       emptyPatchBody.error,
       "Provide exactly one of title, state, or selectedModelId."
     )
-
-    const archiveResponse = await PATCH(
-      new Request(`http://localhost/api/conversations/${conversationId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ state: "archived" })
-      }),
-      { params: Promise.resolve({ id: conversationId }) }
-    )
-    const archived = await archiveResponse.json() as ConversationSummary
-    assert.equal(archiveResponse.status, 200)
-    assert.equal(archived.state, "archived")
-
-    const deleteWithoutConfirm = await DELETE(
-      new Request(`http://localhost/api/conversations/${conversationId}`, {
-        method: "DELETE",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({})
-      }),
-      { params: Promise.resolve({ id: conversationId }) }
-    )
-    assert.equal(deleteWithoutConfirm.status, 400)
   })
 })
 

@@ -245,6 +245,7 @@ export interface ConversationSummary {
   conversationId: string
   title: string
   state: ConversationState
+  selectedModelId?: string
   messageCount: number
   latestMessageAt?: string
   latestMessage?: string
