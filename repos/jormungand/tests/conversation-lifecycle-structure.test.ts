@@ -438,6 +438,15 @@ describe("conversation route contracts", { concurrency: false }, () => {
     const { getDefaultHiveServices } = await getRouteServices()
     const services = getDefaultHiveServices()
     const conversationId = "conversation:bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+    const patchBody = (body: unknown) =>
+      PATCH(
+        new Request(`http://localhost/api/conversations/${conversationId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body)
+        }),
+        { params: Promise.resolve({ id: conversationId }) }
+      )
 
     await services.repository.createConversation({
       id: conversationId,
@@ -483,6 +492,37 @@ describe("conversation route contracts", { concurrency: false }, () => {
     assert.equal(clearModelResponse.status, 200)
     assert.equal(clearedModel.selectedModelId, undefined)
     assert.equal(persistedClearedModel?.selectedModelId, undefined)
+
+    for (const selectedModelId of [123, "m".repeat(121)]) {
+      const invalidModelResponse = await patchBody({ selectedModelId })
+      const invalidModelBody = await invalidModelResponse.json() as { error?: string }
+      assert.equal(invalidModelResponse.status, 400)
+      assert.equal(
+        invalidModelBody.error,
+        "selectedModelId must be null or a string up to 120 characters."
+      )
+    }
+
+    for (const body of [
+      { selectedModelId: "gpt-5.6-sol", title: "Should not rename" },
+      { selectedModelId: "gpt-5.6-sol", state: "archived" }
+    ]) {
+      const exclusiveResponse = await patchBody(body)
+      const exclusiveBody = await exclusiveResponse.json() as { error?: string }
+      assert.equal(exclusiveResponse.status, 400)
+      assert.equal(
+        exclusiveBody.error,
+        "Provide exactly one of title, state, or selectedModelId."
+      )
+    }
+
+    const emptyPatchResponse = await patchBody({})
+    const emptyPatchBody = await emptyPatchResponse.json() as { error?: string }
+    assert.equal(emptyPatchResponse.status, 400)
+    assert.equal(
+      emptyPatchBody.error,
+      "Provide exactly one of title, state, or selectedModelId."
+    )
 
     const archiveResponse = await PATCH(
       new Request(`http://localhost/api/conversations/${conversationId}`, {

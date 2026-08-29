@@ -50,7 +50,9 @@ export class ConversationManagementService {
 
     if (!hasSelectedModelId && hasTitle === hasState) {
       throw new ConversationManagementError(
-        "Provide exactly one of title or state.",
+        hasTitle
+          ? "Provide exactly one of title or state."
+          : "Provide exactly one of title, state, or selectedModelId.",
         400
       )
     }
