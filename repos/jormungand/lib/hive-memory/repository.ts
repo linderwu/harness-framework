@@ -118,6 +118,7 @@ type ConversationMetadataRow = {
   id: string
   title: string
   state: ConversationState
+  selected_model_id: string | null
   created_at: string
   updated_at: string
   archived_at: string | null
@@ -1257,6 +1258,22 @@ export class HiveMemoryRepository {
     })
   }
 
+  async updateConversationModel(input: { id: string; selectedModelId?: string | null }): Promise<ConversationMetadata> {
+    await this.database.write((connection) => {
+      const updatedAt = new Date().toISOString()
+      const selectedModelId = input.selectedModelId?.trim() || null
+      const result = connection.prepare(`
+        UPDATE conversations
+        SET selected_model_id = ?, updated_at = ?
+        WHERE id = ?
+      `).run(selectedModelId, updatedAt, input.id)
+      if (result.changes === 0) {
+        throw new Error(`Conversation ${input.id} not found.`)
+      }
+    })
+    return this.requireConversationMetadata(input.id)
+  }
+
   listConversationSummaries(input: { includeArchived?: boolean } = {}): ConversationSummary[] {
     return this.database.read((connection) =>
       (connection.prepare(`
@@ -2296,6 +2313,7 @@ function conversationMetadataFromRow(row: ConversationMetadataRow): Conversation
     conversationId: row.id,
     title: row.title,
     state: row.state,
+    selectedModelId: row.selected_model_id ?? undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     archivedAt: row.archived_at ?? undefined

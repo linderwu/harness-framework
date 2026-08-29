@@ -235,6 +235,7 @@ export interface ConversationMetadata {
   conversationId: string
   title: string
   state: ConversationState
+  selectedModelId?: string
   createdAt: string
   updatedAt: string
   archivedAt?: string

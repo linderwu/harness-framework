@@ -16,6 +16,7 @@ interface ConversationMetadata {
   conversationId: string
   title: string
   state: ConversationState
+  selectedModelId?: string
   createdAt: string
   updatedAt: string
   archivedAt?: string
@@ -49,6 +50,7 @@ type ConversationManagementRepository = ReturnType<typeof createHiveMemoryReposi
   createConversation(input: { id: string; title: string }): Promise<ConversationMetadata>
   getConversationMetadata(id: string): ConversationMetadata | undefined
   listConversationSummaries(input?: { includeArchived?: boolean }): ConversationSummary[]
+  updateConversationModel(input: { id: string; selectedModelId?: string | null }): Promise<ConversationMetadata>
   renameConversation(id: string, title: string): Promise<ConversationMetadata>
   setConversationState(id: string, state: ConversationState): Promise<ConversationMetadata>
   isConversationRunning(id: string): boolean
@@ -183,6 +185,37 @@ test("conversation metadata can be created, listed, renamed, archived, and resto
   assert.equal(restored.state, "active")
   assert.equal(restored.archivedAt, undefined)
   assert.equal(repository.listConversationSummaries()[0]?.conversationId, conversationId)
+})
+
+test("conversation model selection persists, preserves metadata state, and clears on empty values", async (t) => {
+  const repository = await createRepositoryFixture(t)
+  const conversationId = "conversation:12121212-1212-4121-8121-121212121212"
+
+  await repository.createConversation({ id: conversationId, title: "Keep this title" })
+  const beforeUpdate = repository.getConversationMetadata(conversationId)
+  assert.ok(beforeUpdate)
+
+  const selected = await repository.updateConversationModel({
+    id: conversationId,
+    selectedModelId: "gpt-5.6-sol"
+  })
+  assert.equal(selected.selectedModelId, "gpt-5.6-sol")
+  assert.equal(selected.title, beforeUpdate.title)
+  assert.equal(selected.state, beforeUpdate.state)
+
+  const clearedByEmpty = await repository.updateConversationModel({
+    id: conversationId,
+    selectedModelId: ""
+  })
+  assert.equal(clearedByEmpty.selectedModelId, undefined)
+  assert.equal(clearedByEmpty.title, beforeUpdate.title)
+  assert.equal(clearedByEmpty.state, beforeUpdate.state)
+
+  const clearedByNull = await repository.updateConversationModel({
+    id: conversationId,
+    selectedModelId: null
+  })
+  assert.equal(clearedByNull.selectedModelId, undefined)
 })
 
 test("conversation running state follows Codex session status and turn status", async (t) => {
