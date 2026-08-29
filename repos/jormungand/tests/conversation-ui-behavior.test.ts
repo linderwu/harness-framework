@@ -191,6 +191,41 @@ test("conversation manager helpers use the list, new, rename, and archive routes
   assert.equal(restored.state, "active")
 })
 
+test("unbound Codex model persistence targets the current conversation", async () => {
+  const taskConversationModule = await loadTaskConversationModule()
+  const requestConversationModel = Reflect.get(taskConversationModule, "requestConversationModel") as
+    | ((fetchImpl: typeof fetch, conversationId: string, selectedModelId: string) => Promise<unknown>)
+    | undefined
+
+  assert.equal(typeof requestConversationModel, "function")
+
+  const calls: Array<{ input: RequestInfo | URL; init?: RequestInit }> = []
+  const fetchMock: typeof fetch = async (input, init) => {
+    calls.push({ input, init })
+    return jsonResponse({
+      conversationId: "conversation:current",
+      title: "Current conversation",
+      state: "active",
+      selectedModelId: "gpt-5.6-sol",
+      messageCount: 0
+    })
+  }
+
+  const result = await requestConversationModel!(
+    fetchMock,
+    "conversation:current",
+    "gpt-5.6-sol"
+  ) as Record<string, unknown>
+
+  assert.equal(String(calls[0]?.input), "/api/conversations/conversation:current")
+  assert.equal(calls[0]?.init?.method, "PATCH")
+  assert.deepEqual(
+    JSON.parse(String(calls[0]?.init?.body ?? "{}")),
+    { selectedModelId: "gpt-5.6-sol" }
+  )
+  assert.equal(result.selectedModelId, "gpt-5.6-sol")
+})
+
 test("conversation deletion replacement flow confirms deletion, clears stale switch state, and stops on delete errors", async () => {
   const taskConversationModule = await loadTaskConversationModule()
   const requestConversationDeletionAndReplacement = (taskConversationModule as Record<string, unknown>).requestConversationDeletionAndReplacement as

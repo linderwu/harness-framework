@@ -45,7 +45,7 @@ export async function GET(request?: Request) {
     allowedAgents: unboundConversation.allowedAgents,
     binding: unboundConversation.binding,
     permissionMode: getAgentPermissionMode(),
-    metadata
+    metadata: unboundConversation.metadata ?? metadata
   })
   return identity.shouldSetCookie
     ? setConversationCookie(response, identity.conversationId, request)

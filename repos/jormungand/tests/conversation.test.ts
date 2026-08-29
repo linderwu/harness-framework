@@ -9,10 +9,12 @@ import {
   parseUnboundManagerDecision,
   unboundConversationId
 } from "../lib/conversation"
+import type { AgentInvocationInput } from "../lib/agent-bridge"
 import { openHiveDatabase } from "../lib/hive-memory/database"
 import { createHiveMemoryRepository } from "../lib/hive-memory/repository"
 import type { WorkflowRun } from "../lib/types"
 import { createWorkflowRun } from "../lib/workflow"
+import { routeUnboundConversation } from "../lib/hive-services"
 
 function createRun(projectType: WorkflowRun["projectType"] = "hive_mission") {
   return createWorkflowRun({
@@ -178,6 +180,74 @@ test("unbound conversation exposes the OpenClaw roster and preserves its target"
   assert.equal(result.responseEntry?.agentId, "openclaw.gengar")
   assert.equal(result.responseEntry?.role, "agent")
   assert.equal(repository.listConversation(unboundConversationId).length, 2)
+})
+
+test("unbound conversation metadata and Codex dispatch preserve the selected model", async (t) => {
+  const { repository, service } = await fixture(t)
+  const conversationId = "conversation:model-persistence"
+  await repository.createConversation({ id: conversationId, title: "Model persistence" })
+  await repository.updateConversationModel({
+    id: conversationId,
+    selectedModelId: "gpt-5.6-sol"
+  })
+
+  const metadata = (await service.getUnboundConversation(conversationId) as {
+    metadata?: { selectedModelId?: string }
+  }).metadata
+  assert.equal(metadata?.selectedModelId, "gpt-5.6-sol")
+
+  const userEntry = (await repository.insertConversation({
+    workflowRunId: conversationId,
+    role: "user",
+    agentId: "codex",
+    content: "Use the saved model.",
+    importance: "normal",
+    status: "queued",
+    artifactIds: [],
+    memoryIds: [],
+    idempotencyKey: "model-persistence-message"
+  })).entry
+
+  let observedRun: WorkflowRun | undefined
+  const dispatchService = createConversationService({
+    repository,
+    getRun: async () => undefined,
+    buildContext: async () => undefined,
+    invokeAgent: async () => ({ status: "completed" as const, body: "unused" }),
+    persistRawArtifact: async () => "unused-artifact",
+    enqueueManagerWake: async () => undefined,
+    routeUnbound: async (input) => routeUnboundConversation({
+      ...input,
+      repository,
+      invokeAgent: async (agentInput: AgentInvocationInput) => {
+        observedRun = agentInput.run
+        return { status: "completed" as const, body: "Saved model used." }
+      }
+    })
+  })
+
+  await dispatchService.dispatchQueuedEntry({
+    conversationId,
+    targetAgent: "codex",
+    userEntry
+  })
+  assert.equal(observedRun?.selectedModelId, "gpt-5.6-sol")
+
+  observedRun = undefined
+  const luckyInput = {
+    repository,
+    conversationId: "conversation:lucky-model-isolation",
+    targetAgent: "mavis",
+    selectedModelId: "gpt-5.6-sol",
+    content: "Keep Lucky on its configured model.",
+    entries: [],
+    invokeAgent: async (agentInput: AgentInvocationInput) => {
+      observedRun = agentInput.run
+      return { status: "completed" as const, body: "Lucky response." }
+    }
+  } as Parameters<typeof routeUnboundConversation>[0] & { selectedModelId: string }
+  await routeUnboundConversation(luckyInput)
+  assert.equal((observedRun as WorkflowRun | undefined)?.selectedModelId, undefined)
 })
 
 test("manager binding parser keeps ambiguous messages unbound and rejects invented targets", () => {

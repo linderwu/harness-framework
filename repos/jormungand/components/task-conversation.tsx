@@ -21,7 +21,7 @@ import type { AgentKind, WorkflowRun } from "@/lib/types"
 
 type ConversationHeaderMetadata = Pick<
   ConversationMetadata,
-  "conversationId" | "title" | "state"
+  "conversationId" | "title" | "state" | "selectedModelId"
 >
 
 type ConversationPermissionMode = "full" | "restricted"
@@ -235,6 +235,10 @@ export function TaskConversation(props: {
   allowedAgents: AgentKind[]
   onEntriesChanged: (entries: ConversationEntry[]) => void
   onBound?: (binding: ConversationBinding) => void
+  onUnboundConversationStateChange?: (input: {
+    conversationId?: string
+    selectedModelId?: string
+  }) => void
   onNewConversation?: () => void
   liveActivityMount?: HTMLElement | null
 }) {
@@ -320,6 +324,17 @@ export function TaskConversation(props: {
     ?? metadata?.title
     ?? currentConversationSummary?.title
     ?? (isUnbound ? (isLoadingConversation ? "Loading conversation" : "New conversation") : "Conversation")
+
+  function reportUnboundConversationState(
+    nextConversationId: string | undefined,
+    nextMetadata: ConversationHeaderMetadata | undefined
+  ) {
+    if (!isUnbound) return
+    props.onUnboundConversationStateChange?.({
+      conversationId: nextConversationId,
+      selectedModelId: nextMetadata?.selectedModelId
+    })
+  }
 
   function resetAgentLivePreview() {
     agentLivePreviewRef.current = { events: [] }
@@ -435,6 +450,7 @@ export function TaskConversation(props: {
       setSession(data.session)
       setEvents(data.events ?? [])
       setMetadata(data.metadata)
+      reportUnboundConversationState(data.conversationId ?? runId, data.metadata)
       setPermissionMode(data.permissionMode)
       if (!isRenameFormOpenRef.current) {
         setRenameDraft(data.metadata?.title ?? "")
@@ -468,6 +484,7 @@ export function TaskConversation(props: {
         setSession(data.session)
         setEvents(data.events ?? [])
         setMetadata(data.metadata)
+        reportUnboundConversationState(data.conversationId ?? runId, data.metadata)
         setPermissionMode(data.permissionMode)
         onEntriesChanged(data.entries)
       }).catch((loadError) => {
@@ -694,6 +711,7 @@ export function TaskConversation(props: {
       setTargetAgent((current) => initialAllowedAgents.includes(current) ? current : initialAllowedAgents[0] ?? "codex")
       setContent("")
       setMetadata(result.metadata)
+      reportUnboundConversationState(result.conversationId, result.metadata)
       setSession(undefined)
       setEvents([])
       setIsConversationIdentityUnavailable(false)
@@ -726,6 +744,7 @@ export function TaskConversation(props: {
     setEvents(nextState.events)
     setIsLoadingConversation(nextState.isLoadingConversation)
     setMetadata(undefined)
+    reportUnboundConversationState(nextState.conversationId, undefined)
     setSession(nextState.session)
     setStatusMessage(nextState.statusMessage)
     setIsRenameFormOpen(false)
@@ -880,6 +899,7 @@ export function TaskConversation(props: {
       setEvents(deletedState.events)
       setIsLoadingConversation(deletedState.isLoadingConversation)
       setMetadata(deletedState.metadata)
+      reportUnboundConversationState(deletedState.conversationId, deletedState.metadata)
       setSession(deletedState.session)
       setStatusMessage(deletedState.statusMessage)
       setAllowedAgents(initialAllowedAgents)
@@ -895,6 +915,7 @@ export function TaskConversation(props: {
         }
         setConversationId(replacement.conversationId)
         setMetadata(replacement.metadata)
+        reportUnboundConversationState(replacement.conversationId, replacement.metadata)
         setIsConversationIdentityUnavailable(false)
         setIsReplacingDeletedConversation(false)
         setRenameDraft(replacement.metadata?.title ?? "")
@@ -908,6 +929,7 @@ export function TaskConversation(props: {
         setEvents(failureState.events)
         setIsLoadingConversation(failureState.isLoadingConversation)
         setMetadata(failureState.metadata)
+        reportUnboundConversationState(failureState.conversationId, failureState.metadata)
         setSession(failureState.session)
         setStatusMessage(failureState.statusMessage)
         setIsConversationIdentityUnavailable(failureState.isConversationIdentityUnavailable)
@@ -1389,6 +1411,19 @@ export function requestConversationState(
   )
 }
 
+export function requestConversationModel(
+  fetchImpl: typeof fetch,
+  conversationId: string,
+  selectedModelId: string
+) {
+  return requestManagedConversationUpdate(
+    fetchImpl,
+    conversationId,
+    { selectedModelId },
+    "Conversation model could not be updated"
+  )
+}
+
 export async function requestConversationDeletionAndReplacement(
   fetchImpl: typeof fetch,
   conversationId: string
@@ -1501,14 +1536,15 @@ function toConversationHeaderMetadata(summary: ConversationSummary): Conversatio
   return {
     conversationId: summary.conversationId,
     title: summary.title,
-    state: summary.state
+    state: summary.state,
+    selectedModelId: summary.selectedModelId
   }
 }
 
 function requestManagedConversationUpdate(
   fetchImpl: typeof fetch,
   conversationId: string,
-  body: { title?: string; state?: ConversationState },
+  body: { title?: string; state?: ConversationState; selectedModelId?: string },
   fallbackError: string
 ) {
   return requestJson<

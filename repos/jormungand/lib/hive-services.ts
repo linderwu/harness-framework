@@ -290,6 +290,7 @@ export async function routeUnboundConversation(input: {
   content: string
   entries: Array<Pick<ConversationEntry, "id" | "role" | "agentId" | "content">>
   idempotencyKey?: string
+  selectedModelId?: string
   invokeAgent: (
     input: AgentInvocationInput
   ) => Promise<Pick<AgentArtifactResult, "status" | "body" | "deliveryState">>
@@ -298,12 +299,17 @@ export async function routeUnboundConversation(input: {
     return routeDirectOpenClawConversation(input)
   }
 
+  const selectedModelId = input.targetAgent === "codex"
+    ? (input.selectedModelId
+      ?? input.repository.getConversationMetadata(input.conversationId)?.selectedModelId)?.trim() || undefined
+    : undefined
   const syntheticRun = createWorkflowRun({
     projectId: "",
     projectName: "Unbound conversation",
     repository: "",
     requirement: input.content,
     selectedAgent: input.targetAgent,
+    selectedModelId,
     designApprovalActor: "human",
     verificationApprovalActor: "human"
   })

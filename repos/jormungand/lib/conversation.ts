@@ -88,6 +88,7 @@ interface ConversationDependencies {
     entries: ConversationEntry[]
     targetAgent: AgentKind
     idempotencyKey: string
+    selectedModelId?: string
   }) => Promise<{
     status: "completed" | "failed"
     body: string
@@ -113,6 +114,7 @@ export class ConversationService {
       conversationId,
       entries: this.dependencies.repository.listConversation(conversationId),
       allowedAgents: listAllowedAgents("development", health),
+      metadata: this.dependencies.repository.getConversationMetadata(conversationId),
       binding: undefined
     }
   }
@@ -144,6 +146,10 @@ export class ConversationService {
     }
     if (!this.dependencies.routeUnbound) throw new ConversationError("Conversation manager is unavailable", 503)
 
+    const selectedModelId = targetAgent === "codex"
+      ? this.dependencies.repository.getConversationMetadata(conversationId)?.selectedModelId
+      : undefined
+
     const existing = this.dependencies.repository.getConversationByIdempotencyKey(storageIdempotencyKey)
     if (existing) return this.duplicateUnboundResult(existing, conversationId)
 
@@ -168,7 +174,8 @@ export class ConversationService {
         targetAgent,
         content,
         entries: this.dependencies.repository.listConversation(conversationId),
-        idempotencyKey: userEntry.idempotencyKey
+        idempotencyKey: userEntry.idempotencyKey,
+        selectedModelId
       })
       const responseInsert = await this.dependencies.repository.insertConversation({
         workflowRunId: conversationId,
@@ -418,7 +425,10 @@ export class ConversationService {
         targetAgent,
         content: userEntry.content,
         entries: entriesThroughCurrent,
-        idempotencyKey: userEntry.idempotencyKey
+        idempotencyKey: userEntry.idempotencyKey,
+        selectedModelId: targetAgent === "codex"
+          ? this.dependencies.repository.getConversationMetadata(conversationId)?.selectedModelId
+          : undefined
       })
       if (targetAgent === "codex" && decision.binding) {
         await this.dependencies.repository.moveConversation(conversationId, decision.binding.workflowRunId)

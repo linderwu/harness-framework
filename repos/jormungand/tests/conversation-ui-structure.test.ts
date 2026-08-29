@@ -59,6 +59,21 @@ test("conversation manager uses managed metadata, archived filtering, and explic
   assert.match(taskConversation, /body: JSON\.stringify\(\{ confirm: true \}\)/)
 })
 
+test("unbound Codex model state uses existing metadata and selector data flow", () => {
+  assert.match(taskConversation, /"conversationId" \| "title" \| "state" \| "selectedModelId"/)
+  assert.match(taskConversation, /setMetadata\(data\.metadata\)/)
+  assert.match(taskConversation, /onUnboundConversationStateChange/)
+  assert.match(taskConversation, /requestConversationModel/)
+  assert.match(dashboard, /unboundConversationState/)
+  assert.match(dashboard, /onUnboundCodexModelChange/)
+  assert.match(dashboard, /unboundSelectedModelId/)
+})
+
+test("unbound model persistence is limited to model selection changes", () => {
+  assert.match(dashboard, /applyProfile\(nextModelId, selectedReasoningIntensity, true\)/)
+  assert.match(dashboard, /applyProfile\(selectedModelId, nextReasoningIntensity\)/)
+})
+
 test("conversation header surfaces the managed title, access mode, dialog copy, and action labels", () => {
   assert.match(taskConversation, /metadata\?\.title/)
   assert.match(taskConversation, /permissionMode/)
