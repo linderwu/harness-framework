@@ -78,9 +78,22 @@ test("unbound model persistence is limited to model selection changes", () => {
 test("unbound submit carries the parent model state through the POST contract", () => {
   assert.match(taskConversation, /unboundSelectedModelId\?: string/)
   assert.match(taskConversation, /selectedModelId: isUnbound && targetAgent === "codex" \? props\.unboundSelectedModelId : undefined/)
-  assert.match(dashboard, /unboundSelectedModelId=\{unboundConversationState\?\.selectedModelId\}/)
+  assert.match(dashboard, /unboundSelectedModelId=\{unboundConversationState\.isHydrated \? unboundConversationState\.selectedModelId : undefined\}/)
   assert.match(conversationRoute, /selectedModelId\?: unknown/)
   assert.match(conversationRoute, /selectedModelId: body\.selectedModelId/)
+})
+
+test("unbound model state invalidates before hydration and PATCH requires the hydrated identity", () => {
+  assert.match(taskConversation, /isHydrated: boolean/)
+  assert.match(taskConversation, /function invalidateUnboundConversationState\(\)[\s\S]*isHydrated: false/)
+
+  const hydrationStart = taskConversation.indexOf("if (shouldSkipUnboundHydration({")
+  const hydrationBody = taskConversation.slice(hydrationStart, taskConversation.indexOf("\n  }, [activeConversationId", hydrationStart))
+  assert.ok(hydrationStart >= 0)
+  assert.ok(hydrationBody.indexOf("invalidateUnboundConversationState()") < hydrationBody.indexOf("setIsLoadingConversation(true)"))
+
+  assert.match(dashboard, /if \(!unboundConversationState\.isHydrated \|\| unboundConversationState\.conversationId !== input\.conversationId\)[\s\S]*return/)
+  assert.match(dashboard, /conversationId=\{unboundConversationState\.isHydrated \? unboundConversationState\.conversationId : undefined\}/)
 })
 
 test("conversation header surfaces the managed title, access mode, dialog copy, and action labels", () => {

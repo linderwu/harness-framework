@@ -239,6 +239,7 @@ export function TaskConversation(props: {
   onUnboundConversationStateChange?: (input: {
     conversationId?: string
     selectedModelId?: string
+    isHydrated: boolean
   }) => void
   onNewConversation?: () => void
   liveActivityMount?: HTMLElement | null
@@ -328,12 +329,23 @@ export function TaskConversation(props: {
 
   function reportUnboundConversationState(
     nextConversationId: string | undefined,
-    nextMetadata: ConversationHeaderMetadata | undefined
+    nextMetadata: ConversationHeaderMetadata | undefined,
+    isHydrated = nextConversationId !== undefined
   ) {
     if (!isUnbound) return
     props.onUnboundConversationStateChange?.({
       conversationId: nextConversationId,
-      selectedModelId: nextMetadata?.selectedModelId
+      selectedModelId: nextMetadata?.selectedModelId,
+      isHydrated
+    })
+  }
+
+  function invalidateUnboundConversationState() {
+    if (!isUnbound) return
+    props.onUnboundConversationStateChange?.({
+      conversationId: undefined,
+      selectedModelId: undefined,
+      isHydrated: false
     })
   }
 
@@ -437,6 +449,7 @@ export function TaskConversation(props: {
       isUnbound
     })) return
     let active = true
+    invalidateUnboundConversationState()
     // This effect owns the request lifecycle for active-conversation hydration.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setIsLoadingConversation(true)
@@ -751,7 +764,7 @@ export function TaskConversation(props: {
     setEvents(nextState.events)
     setIsLoadingConversation(nextState.isLoadingConversation)
     setMetadata(undefined)
-    reportUnboundConversationState(nextState.conversationId, undefined)
+    reportUnboundConversationState(nextState.conversationId, undefined, false)
     setSession(nextState.session)
     setStatusMessage(nextState.statusMessage)
     setIsRenameFormOpen(false)

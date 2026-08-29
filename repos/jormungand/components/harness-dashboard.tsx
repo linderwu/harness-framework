@@ -299,10 +299,11 @@ export function HarnessDashboard({
   const [mutationError, setMutationError] = useState<string | undefined>()
 	  const [conversationEntries, setConversationEntries] = useState<ConversationEntry[]>([])
 	  const [conversationVersion, setConversationVersion] = useState(0)
-	  const [unboundConversationState, setUnboundConversationState] = useState<{
-	    conversationId?: string
-	    selectedModelId?: string
-	  }>()
+  const [unboundConversationState, setUnboundConversationState] = useState<{
+    conversationId?: string
+    selectedModelId?: string
+    isHydrated: boolean
+  }>({ isHydrated: false })
 	  const [openComposeSection, setOpenComposeSection] = useState<
 	    "requirement" | "automation" | undefined
 	  >()
@@ -523,11 +524,16 @@ export function HarnessDashboard({
     conversationId: string
     selectedModelId: string
   }) {
-    setUnboundConversationState((current) =>
-      current?.conversationId === input.conversationId
-        ? { ...current, selectedModelId: input.selectedModelId }
-        : input
-    )
+    if (!unboundConversationState.isHydrated || unboundConversationState.conversationId !== input.conversationId) {
+      return
+    }
+
+    setUnboundConversationState((current) => ({
+      ...current,
+      conversationId: input.conversationId,
+      selectedModelId: input.selectedModelId,
+      isHydrated: true
+    }))
     void requestConversationModel(
       fetch,
       input.conversationId,
@@ -753,6 +759,7 @@ export function HarnessDashboard({
   }
 
   function handleNewConversation() {
+    setUnboundConversationState({ isHydrated: false })
     setConversationEntries([])
     setSelectedProjectId(undefined)
     setSelectedRunId(undefined)
@@ -1294,7 +1301,7 @@ export function HarnessDashboard({
             run={selectedRun}
             initialEntries={[]}
             allowedAgents={selectedRun ? agentProfiles.map((profile) => profile.id) : agentProfiles.map((profile) => profile.id)}
-            unboundSelectedModelId={unboundConversationState?.selectedModelId}
+            unboundSelectedModelId={unboundConversationState.isHydrated ? unboundConversationState.selectedModelId : undefined}
             onEntriesChanged={setConversationEntries}
             onUnboundConversationStateChange={setUnboundConversationState}
             onBound={(binding) => {
@@ -1353,9 +1360,9 @@ export function HarnessDashboard({
               <>
                 <p>No active task.</p>
                 <BridgeStatusPanel
-                  conversationId={unboundConversationState?.conversationId}
+                  conversationId={unboundConversationState.isHydrated ? unboundConversationState.conversationId : undefined}
                   onUnboundCodexModelChange={updateUnboundCodexModel}
-                  unboundSelectedModelId={unboundConversationState?.selectedModelId}
+                  unboundSelectedModelId={unboundConversationState.isHydrated ? unboundConversationState.selectedModelId : undefined}
                 />
               </>
             ) : null}

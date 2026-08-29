@@ -286,6 +286,14 @@ test("unbound Codex enqueue persists the selected model before queueing", async 
   assert.equal(modelAtEnqueue, "gpt-5.6-sol")
   assert.equal(repository.getConversationMetadata(conversationId)?.selectedModelId, "gpt-5.6-sol")
 
+  const duplicateModelMessage = {
+    ...selectedModelMessage,
+    selectedModelId: "gpt-5.6-luna"
+  } as Parameters<typeof service.enqueueUnboundMessage>[0] & { selectedModelId: string }
+  const duplicate = await service.enqueueUnboundMessage(duplicateModelMessage)
+  assert.equal(duplicate.duplicate, true)
+  assert.equal(repository.getConversationMetadata(conversationId)?.selectedModelId, "gpt-5.6-sol")
+
   const invalidModelMessage = {
     ...selectedModelMessage,
     idempotencyKey: "invalid-model-before-enqueue",
@@ -295,7 +303,7 @@ test("unbound Codex enqueue persists the selected model before queueing", async 
     () => service.enqueueUnboundMessage(invalidModelMessage),
     /selectedModelId/
   )
-  assert.equal(enqueueCalls, 1)
+  assert.equal(enqueueCalls, 2)
 })
 
 test("createHiveServices retains the queued unbound model through the Codex bridge boundary", async (t) => {

@@ -238,14 +238,23 @@ export class ConversationService {
       throw new ConversationError("Conversation queue is unavailable", 503)
     }
 
-    const selectedModelId = targetAgent === "codex"
-      ? parseUnboundSelectedModelId(input.selectedModelId)
-      : undefined
-    if (selectedModelId !== undefined) {
-      await this.dependencies.repository.updateConversationModel({
-        id: conversationId,
-        selectedModelId
-      })
+    const storageIdempotencyKey = toConversationScopedIdempotencyKey(
+      conversationId,
+      input.idempotencyKey
+    )
+    const existing = this.dependencies.repository.getConversationByIdempotencyKey(
+      storageIdempotencyKey
+    )
+    if (!existing) {
+      const selectedModelId = targetAgent === "codex"
+        ? parseUnboundSelectedModelId(input.selectedModelId)
+        : undefined
+      if (selectedModelId !== undefined) {
+        await this.dependencies.repository.updateConversationModel({
+          id: conversationId,
+          selectedModelId
+        })
+      }
     }
 
     const queued = await this.dependencies.enqueueConversation({
