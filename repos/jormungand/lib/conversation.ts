@@ -128,6 +128,7 @@ export class ConversationService {
     content: string
     targetAgent?: AgentKind
     idempotencyKey: string
+    selectedModelId?: unknown
   }) {
     const conversationId = input.conversationId ?? unboundConversationId
     const content = input.content.trim()
@@ -147,7 +148,7 @@ export class ConversationService {
     if (!this.dependencies.routeUnbound) throw new ConversationError("Conversation manager is unavailable", 503)
 
     const selectedModelId = targetAgent === "codex"
-      ? this.dependencies.repository.getConversationMetadata(conversationId)?.selectedModelId
+      ? parseUnboundSelectedModelId(input.selectedModelId)
       : undefined
 
     const existing = this.dependencies.repository.getConversationByIdempotencyKey(storageIdempotencyKey)
@@ -168,6 +169,12 @@ export class ConversationService {
     if (!userInsert.inserted) return this.duplicateUnboundResult(userEntry, conversationId)
 
     try {
+      if (selectedModelId !== undefined) {
+        await this.dependencies.repository.updateConversationModel({
+          id: conversationId,
+          selectedModelId
+        })
+      }
       await this.dependencies.repository.updateConversation({ id: userEntry.id, status: "running" })
       const decision = await this.dependencies.routeUnbound({
         conversationId,
@@ -175,7 +182,7 @@ export class ConversationService {
         content,
         entries: this.dependencies.repository.listConversation(conversationId),
         idempotencyKey: userEntry.idempotencyKey,
-        selectedModelId
+        selectedModelId: selectedModelId ?? undefined
       })
       const responseInsert = await this.dependencies.repository.insertConversation({
         workflowRunId: conversationId,
@@ -214,6 +221,7 @@ export class ConversationService {
     content: string
     targetAgent?: AgentKind
     idempotencyKey: string
+    selectedModelId?: unknown
   }) {
     const conversationId = input.conversationId ?? unboundConversationId
     const content = input.content.trim()
@@ -228,6 +236,16 @@ export class ConversationService {
     }
     if (!this.dependencies.enqueueConversation) {
       throw new ConversationError("Conversation queue is unavailable", 503)
+    }
+
+    const selectedModelId = targetAgent === "codex"
+      ? parseUnboundSelectedModelId(input.selectedModelId)
+      : undefined
+    if (selectedModelId !== undefined) {
+      await this.dependencies.repository.updateConversationModel({
+        id: conversationId,
+        selectedModelId
+      })
     }
 
     const queued = await this.dependencies.enqueueConversation({
@@ -541,6 +559,27 @@ export function parseUnboundManagerDecision(raw: string, runs: WorkflowRun[]) {
     body: decision.reply.trim(),
     binding: { projectId: run.projectId, workflowRunId: run.id, projectName: run.projectName }
   }
+}
+
+function parseUnboundSelectedModelId(value: unknown): string | null | undefined {
+  if (value === undefined) return undefined
+  if (value === null) return null
+  if (typeof value !== "string") {
+    throw new ConversationError(
+      "selectedModelId must be absent, empty, or a string up to 120 characters.",
+      400
+    )
+  }
+
+  const normalized = value.trim()
+  if (normalized.length > 120) {
+    throw new ConversationError(
+      "selectedModelId must be absent, empty, or a string up to 120 characters.",
+      400
+    )
+  }
+
+  return normalized || null
 }
 
 function compactResponse(body: string) {

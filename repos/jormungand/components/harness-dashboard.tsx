@@ -1294,6 +1294,7 @@ export function HarnessDashboard({
             run={selectedRun}
             initialEntries={[]}
             allowedAgents={selectedRun ? agentProfiles.map((profile) => profile.id) : agentProfiles.map((profile) => profile.id)}
+            unboundSelectedModelId={unboundConversationState?.selectedModelId}
             onEntriesChanged={setConversationEntries}
             onUnboundConversationStateChange={setUnboundConversationState}
             onBound={(binding) => {

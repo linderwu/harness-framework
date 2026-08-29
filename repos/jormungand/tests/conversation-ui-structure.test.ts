@@ -4,6 +4,7 @@ import { test } from "node:test"
 
 const taskConversation = readFileSync("components/task-conversation.tsx", "utf8")
 const dashboard = readFileSync("components/harness-dashboard.tsx", "utf8")
+const conversationRoute = readFileSync("app/api/conversation/route.ts", "utf8")
 const globalsCss = readFileSync("app/globals.css", "utf8")
 
 test("task conversation keeps an active conversation id and sends it with unbound requests", () => {
@@ -12,7 +13,7 @@ test("task conversation keeps an active conversation id and sends it with unboun
   assert.match(taskConversation, /setConversationId\(data\.conversationId/)
   assert.match(taskConversation, /const activeConversationId = isUnbound \? conversationId : runId/)
   assert.match(taskConversation, /workflowRunId: activeConversationId/)
-  assert.match(taskConversation, /body: JSON\.stringify\(\{ conversationId: activeConversationId, targetAgent, content: message, idempotencyKey \}\)/)
+  assert.match(taskConversation, /body: JSON\.stringify\(buildConversationMessagePayload\(\{/)
   assert.match(taskConversation, /body: JSON\.stringify\(\{ action, conversationId: activeConversationId \}\)/)
 })
 
@@ -72,6 +73,14 @@ test("unbound Codex model state uses existing metadata and selector data flow", 
 test("unbound model persistence is limited to model selection changes", () => {
   assert.match(dashboard, /applyProfile\(nextModelId, selectedReasoningIntensity, true\)/)
   assert.match(dashboard, /applyProfile\(selectedModelId, nextReasoningIntensity\)/)
+})
+
+test("unbound submit carries the parent model state through the POST contract", () => {
+  assert.match(taskConversation, /unboundSelectedModelId\?: string/)
+  assert.match(taskConversation, /selectedModelId: isUnbound && targetAgent === "codex" \? props\.unboundSelectedModelId : undefined/)
+  assert.match(dashboard, /unboundSelectedModelId=\{unboundConversationState\?\.selectedModelId\}/)
+  assert.match(conversationRoute, /selectedModelId\?: unknown/)
+  assert.match(conversationRoute, /selectedModelId: body\.selectedModelId/)
 })
 
 test("conversation header surfaces the managed title, access mode, dialog copy, and action labels", () => {

@@ -58,6 +58,7 @@ export async function POST(request: Request) {
     content?: string
     idempotencyKey?: string
     targetAgent?: string
+    selectedModelId?: unknown
   }
   if (!body.content?.trim() || !body.idempotencyKey?.trim()) {
     return NextResponse.json({ error: "content and idempotencyKey are required" }, { status: 400 })
@@ -78,7 +79,8 @@ export async function POST(request: Request) {
       conversationId: identity.conversationId,
       content: body.content,
       targetAgent: body.targetAgent as AgentKind | undefined,
-      idempotencyKey: body.idempotencyKey
+      idempotencyKey: body.idempotencyKey,
+      selectedModelId: body.selectedModelId
     })
     void services.conversationDispatcher.drain(identity.conversationId).catch(() => undefined)
     const response = NextResponse.json(result, {

@@ -193,7 +193,7 @@ export function createHiveServices(options: HiveServicesOptions = {}) {
       return artifact.id
     },
     enqueueManagerWake: (input) => scheduler.enqueue(input),
-    routeUnbound: async ({ conversationId, targetAgent, content, entries, idempotencyKey }) => {
+    routeUnbound: async ({ conversationId, targetAgent, content, entries, idempotencyKey, selectedModelId }) => {
       return routeUnboundConversation({
         repository,
         conversationId,
@@ -201,6 +201,7 @@ export function createHiveServices(options: HiveServicesOptions = {}) {
         content,
         entries,
         idempotencyKey,
+        selectedModelId,
         invokeAgent
       })
     }

@@ -235,6 +235,7 @@ export function TaskConversation(props: {
   allowedAgents: AgentKind[]
   onEntriesChanged: (entries: ConversationEntry[]) => void
   onBound?: (binding: ConversationBinding) => void
+  unboundSelectedModelId?: string
   onUnboundConversationStateChange?: (input: {
     conversationId?: string
     selectedModelId?: string
@@ -594,7 +595,13 @@ export function TaskConversation(props: {
       const response = await fetch(conversationPath, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ conversationId: activeConversationId, targetAgent, content: message, idempotencyKey })
+        body: JSON.stringify(buildConversationMessagePayload({
+          conversationId: activeConversationId,
+          targetAgent,
+          content: message,
+          idempotencyKey,
+          selectedModelId: isUnbound && targetAgent === "codex" ? props.unboundSelectedModelId : undefined
+        }))
       })
       const result = await response.json() as {
         conversationId?: string
@@ -1422,6 +1429,25 @@ export function requestConversationModel(
     { selectedModelId },
     "Conversation model could not be updated"
   )
+}
+
+export function buildConversationMessagePayload(input: {
+  conversationId: string
+  targetAgent: AgentKind
+  content: string
+  idempotencyKey: string
+  selectedModelId?: string
+}) {
+  const payload = {
+    conversationId: input.conversationId,
+    targetAgent: input.targetAgent,
+    content: input.content,
+    idempotencyKey: input.idempotencyKey
+  }
+
+  return input.targetAgent === "codex" && input.selectedModelId !== undefined
+    ? { ...payload, selectedModelId: input.selectedModelId }
+    : payload
 }
 
 export async function requestConversationDeletionAndReplacement(

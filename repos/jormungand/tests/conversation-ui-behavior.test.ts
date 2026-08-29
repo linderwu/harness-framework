@@ -226,6 +226,44 @@ test("unbound Codex model persistence targets the current conversation", async (
   assert.equal(result.selectedModelId, "gpt-5.6-sol")
 })
 
+test("unbound message payload sends the selected model only to Codex", async () => {
+  const taskConversationModule = await loadTaskConversationModule()
+  const buildConversationMessagePayload = Reflect.get(taskConversationModule, "buildConversationMessagePayload") as
+    | ((input: {
+      conversationId: string
+      targetAgent: AgentKind
+      content: string
+      idempotencyKey: string
+      selectedModelId?: string
+    }) => Record<string, unknown>)
+    | undefined
+
+  assert.equal(typeof buildConversationMessagePayload, "function")
+
+  const common = {
+    conversationId: "conversation:current",
+    content: "Use the selected model.",
+    idempotencyKey: "message-1",
+    selectedModelId: "gpt-5.6-sol"
+  }
+  assert.deepEqual(buildConversationMessagePayload!({ ...common, targetAgent: "codex" }), {
+    ...common,
+    targetAgent: "codex"
+  })
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(buildConversationMessagePayload!({
+      ...common,
+      targetAgent: "mavis"
+    }))),
+    {
+      conversationId: common.conversationId,
+      content: common.content,
+      idempotencyKey: common.idempotencyKey,
+      targetAgent: "mavis"
+    }
+  )
+})
+
 test("conversation deletion replacement flow confirms deletion, clears stale switch state, and stops on delete errors", async () => {
   const taskConversationModule = await loadTaskConversationModule()
   const requestConversationDeletionAndReplacement = (taskConversationModule as Record<string, unknown>).requestConversationDeletionAndReplacement as

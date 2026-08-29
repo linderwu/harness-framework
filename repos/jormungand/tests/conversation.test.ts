@@ -10,11 +10,12 @@ import {
   unboundConversationId
 } from "../lib/conversation"
 import type { AgentInvocationInput } from "../lib/agent-bridge"
+import { ConversationQueueService } from "../lib/conversation-dispatcher"
 import { openHiveDatabase } from "../lib/hive-memory/database"
 import { createHiveMemoryRepository } from "../lib/hive-memory/repository"
 import type { WorkflowRun } from "../lib/types"
 import { createWorkflowRun } from "../lib/workflow"
-import { routeUnboundConversation } from "../lib/hive-services"
+import { createHiveServices, routeUnboundConversation } from "../lib/hive-services"
 
 function createRun(projectType: WorkflowRun["projectType"] = "hive_mission") {
   return createWorkflowRun({
@@ -248,6 +249,94 @@ test("unbound conversation metadata and Codex dispatch preserve the selected mod
   } as Parameters<typeof routeUnboundConversation>[0] & { selectedModelId: string }
   await routeUnboundConversation(luckyInput)
   assert.equal((observedRun as WorkflowRun | undefined)?.selectedModelId, undefined)
+})
+
+test("unbound Codex enqueue persists the selected model before queueing", async (t) => {
+  const { repository } = await fixture(t)
+  const conversationId = "conversation:model-before-enqueue"
+  await repository.createConversation({ id: conversationId, title: "Before enqueue" })
+
+  const queue = new ConversationQueueService(repository)
+  let modelAtEnqueue: string | undefined
+  let enqueueCalls = 0
+  const service = createConversationService({
+    repository,
+    getRun: async () => undefined,
+    buildContext: async () => undefined,
+    invokeAgent: async () => ({ status: "completed" as const, body: "unused" }),
+    persistRawArtifact: async () => "unused-artifact",
+    enqueueManagerWake: async () => undefined,
+    enqueueConversation: async (input) => {
+      enqueueCalls += 1
+      modelAtEnqueue = repository.getConversationMetadata(conversationId)?.selectedModelId
+      return queue.enqueue(input)
+    },
+    routeUnbound: async () => ({ status: "completed" as const, body: "unused" })
+  })
+
+  const selectedModelMessage = {
+    conversationId,
+    targetAgent: "codex",
+    content: "Queue with the selected model.",
+    idempotencyKey: "model-before-enqueue",
+    selectedModelId: "gpt-5.6-sol"
+  } as Parameters<typeof service.enqueueUnboundMessage>[0] & { selectedModelId: string }
+
+  await service.enqueueUnboundMessage(selectedModelMessage)
+  assert.equal(modelAtEnqueue, "gpt-5.6-sol")
+  assert.equal(repository.getConversationMetadata(conversationId)?.selectedModelId, "gpt-5.6-sol")
+
+  const invalidModelMessage = {
+    ...selectedModelMessage,
+    idempotencyKey: "invalid-model-before-enqueue",
+    selectedModelId: "x".repeat(121)
+  } as Parameters<typeof service.enqueueUnboundMessage>[0] & { selectedModelId: string }
+  await assert.rejects(
+    () => service.enqueueUnboundMessage(invalidModelMessage),
+    /selectedModelId/
+  )
+  assert.equal(enqueueCalls, 1)
+})
+
+test("createHiveServices retains the queued unbound model through the Codex bridge boundary", async (t) => {
+  const dataDir = await mkdtemp(join(tmpdir(), "jormungand-unbound-model-service-"))
+  const database = openHiveDatabase({ dataDir })
+  const repository = createHiveMemoryRepository(database)
+  const conversationId = "conversation:real-service-model"
+  let observedRun: WorkflowRun | undefined
+  const services = createHiveServices({
+    database,
+    repository,
+    startCodexSyncWorker: false,
+    getRun: async () => undefined,
+    invokeAgent: async (input) => {
+      observedRun = input.run
+      return {
+        status: "completed",
+        source: "codex-bridge",
+        body: "Bridge received the selected model."
+      }
+    }
+  })
+  t.after(async () => {
+    services.codexSyncWorker.stop()
+    database.close()
+    await rm(dataDir, { recursive: true, force: true })
+  })
+
+  await repository.createConversation({ id: conversationId, title: "Real service model" })
+  const queued = await services.conversation.enqueueUnboundMessage({
+    conversationId,
+    targetAgent: "codex",
+    content: "Use the real service wiring.",
+    idempotencyKey: "real-service-model",
+    selectedModelId: "gpt-5.6-sol"
+  } as Parameters<typeof services.conversation.enqueueUnboundMessage>[0] & { selectedModelId: string })
+
+  assert.equal(queued.conversationId, conversationId)
+  assert.equal(repository.getConversationMetadata(conversationId)?.selectedModelId, "gpt-5.6-sol")
+  await services.conversationDispatcher.drain(conversationId)
+  assert.equal((observedRun as WorkflowRun | undefined)?.selectedModelId, "gpt-5.6-sol")
 })
 
 test("manager binding parser keeps ambiguous messages unbound and rejects invented targets", () => {
