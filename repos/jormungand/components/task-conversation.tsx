@@ -17,11 +17,11 @@ import type {
   ConversationState,
   ConversationSummary
 } from "@/lib/hive-memory/types"
-import type { AgentKind, WorkflowRun } from "@/lib/types"
+import type { AgentKind, CodexReasoningIntensity, WorkflowRun } from "@/lib/types"
 
 type ConversationHeaderMetadata = Pick<
   ConversationMetadata,
-  "conversationId" | "title" | "state" | "selectedModelId"
+  "conversationId" | "title" | "state" | "selectedModelId" | "selectedReasoningIntensity"
 >
 
 type ConversationPermissionMode = "full" | "restricted"
@@ -236,9 +236,11 @@ export function TaskConversation(props: {
   onEntriesChanged: (entries: ConversationEntry[]) => void
   onBound?: (binding: ConversationBinding) => void
   unboundSelectedModelId?: string
+  unboundSelectedReasoningIntensity?: CodexReasoningIntensity
   onUnboundConversationStateChange?: (input: {
     conversationId?: string
     selectedModelId?: string
+    selectedReasoningIntensity?: CodexReasoningIntensity
     isHydrated: boolean
   }) => void
   onNewConversation?: () => void
@@ -336,6 +338,7 @@ export function TaskConversation(props: {
     props.onUnboundConversationStateChange?.({
       conversationId: nextConversationId,
       selectedModelId: nextMetadata?.selectedModelId,
+      selectedReasoningIntensity: nextMetadata?.selectedReasoningIntensity,
       isHydrated
     })
   }
@@ -613,7 +616,8 @@ export function TaskConversation(props: {
           targetAgent,
           content: message,
           idempotencyKey,
-          selectedModelId: isUnbound && targetAgent === "codex" ? props.unboundSelectedModelId : undefined
+          selectedModelId: isUnbound && targetAgent === "codex" ? props.unboundSelectedModelId : undefined,
+          selectedReasoningIntensity: isUnbound && targetAgent === "codex" ? props.unboundSelectedReasoningIntensity : undefined
         }))
       })
       const result = await response.json() as {
@@ -1434,12 +1438,13 @@ export function requestConversationState(
 export function requestConversationModel(
   fetchImpl: typeof fetch,
   conversationId: string,
-  selectedModelId: string
+  selectedModelId: string,
+  selectedReasoningIntensity?: CodexReasoningIntensity
 ) {
   return requestManagedConversationUpdate(
     fetchImpl,
     conversationId,
-    { selectedModelId },
+    { selectedModelId, selectedReasoningIntensity },
     "Conversation model could not be updated"
   )
 }
@@ -1450,6 +1455,7 @@ export function buildConversationMessagePayload(input: {
   content: string
   idempotencyKey: string
   selectedModelId?: string
+  selectedReasoningIntensity?: CodexReasoningIntensity
 }) {
   const payload = {
     conversationId: input.conversationId,
@@ -1458,8 +1464,8 @@ export function buildConversationMessagePayload(input: {
     idempotencyKey: input.idempotencyKey
   }
 
-  return input.targetAgent === "codex" && input.selectedModelId !== undefined
-    ? { ...payload, selectedModelId: input.selectedModelId }
+  return input.targetAgent === "codex" && (input.selectedModelId !== undefined || input.selectedReasoningIntensity !== undefined)
+    ? { ...payload, selectedModelId: input.selectedModelId, selectedReasoningIntensity: input.selectedReasoningIntensity }
     : payload
 }
 
@@ -1576,14 +1582,15 @@ function toConversationHeaderMetadata(summary: ConversationSummary): Conversatio
     conversationId: summary.conversationId,
     title: summary.title,
     state: summary.state,
-    selectedModelId: summary.selectedModelId
+    selectedModelId: summary.selectedModelId,
+    selectedReasoningIntensity: summary.selectedReasoningIntensity
   }
 }
 
 function requestManagedConversationUpdate(
   fetchImpl: typeof fetch,
   conversationId: string,
-  body: { title?: string; state?: ConversationState; selectedModelId?: string },
+  body: { title?: string; state?: ConversationState; selectedModelId?: string; selectedReasoningIntensity?: CodexReasoningIntensity },
   fallbackError: string
 ) {
   return requestJson<

@@ -251,6 +251,28 @@ test("unbound conversation metadata and Codex dispatch preserve the selected mod
   assert.equal((observedRun as WorkflowRun | undefined)?.selectedModelId, undefined)
 })
 
+test("unbound Codex dispatch preserves the selected reasoning intensity", async () => {
+  const conversationId = "conversation:reasoning-persistence"
+
+  let observedRun: WorkflowRun | undefined
+  await routeUnboundConversation({
+    repository: { getConversationMetadata: () => undefined } as unknown as Parameters<typeof routeUnboundConversation>[0]["repository"],
+    conversationId,
+    targetAgent: "codex",
+    content: "Use the selected reasoning intensity.",
+    entries: [],
+    selectedModelId: "gpt-5.6-sol",
+    selectedReasoningIntensity: "high",
+    invokeAgent: async (input) => {
+      observedRun = input.run
+      return { status: "completed", body: "Reasoning intensity used." }
+    }
+  } as Parameters<typeof routeUnboundConversation>[0] & {
+    selectedReasoningIntensity: "high"
+  })
+
+  assert.equal(observedRun?.selectedReasoningIntensity, "high")
+})
 test("unbound Codex enqueue persists the selected model before queueing", async (t) => {
   const { repository } = await fixture(t)
   const conversationId = "conversation:model-before-enqueue"

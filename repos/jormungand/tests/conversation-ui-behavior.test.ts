@@ -253,7 +253,8 @@ test("unbound message payload sends the selected model only to Codex", async () 
     conversationId: "conversation:current",
     content: "Use the selected model.",
     idempotencyKey: "message-1",
-    selectedModelId: "gpt-5.6-sol"
+    selectedModelId: "gpt-5.6-sol",
+    selectedReasoningIntensity: "high"
   }
   assert.deepEqual(buildConversationMessagePayload!({ ...common, targetAgent: "codex" }), {
     ...common,

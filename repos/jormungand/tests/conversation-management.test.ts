@@ -17,6 +17,7 @@ interface ConversationMetadata {
   title: string
   state: ConversationState
   selectedModelId?: string
+  selectedReasoningIntensity?: "low" | "medium" | "high" | "auto"
   createdAt: string
   updatedAt: string
   archivedAt?: string
@@ -51,6 +52,7 @@ type ConversationManagementRepository = ReturnType<typeof createHiveMemoryReposi
   getConversationMetadata(id: string): ConversationMetadata | undefined
   listConversationSummaries(input?: { includeArchived?: boolean }): ConversationSummary[]
   updateConversationModel(input: { id: string; selectedModelId?: string | null }): Promise<ConversationMetadata>
+  updateConversationProfile(input: { id: string; selectedModelId?: string | null; selectedReasoningIntensity?: "low" | "medium" | "high" | "auto" | null }): Promise<ConversationMetadata>
   renameConversation(id: string, title: string): Promise<ConversationMetadata>
   setConversationState(id: string, state: ConversationState): Promise<ConversationMetadata>
   isConversationRunning(id: string): boolean
@@ -216,6 +218,13 @@ test("conversation model selection persists, preserves metadata state, and clear
     selectedModelId: null
   })
   assert.equal(clearedByNull.selectedModelId, undefined)
+
+  const profiled = await repository.updateConversationProfile({
+    id: conversationId,
+    selectedReasoningIntensity: "high"
+  })
+  assert.equal(profiled.selectedReasoningIntensity, "high")
+  assert.equal(profiled.selectedModelId, undefined)
 })
 
 test("conversation running state follows Codex session status and turn status", async (t) => {

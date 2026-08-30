@@ -21,7 +21,7 @@ import { createHiveMemoryRepository, type HiveMemoryRepository } from "./hive-me
 import { createManagerScheduler, type ManagerSchedulerDependencies } from "./manager-scheduler"
 import { deriveOpenClawSessionIdentity } from "./openclaw-session"
 import { getWorkflowRun, listProjects, listWorkflowRuns, upsertWorkflowRun } from "./store"
-import type { AgentKind, WorkflowEventSkill, WorkflowRun } from "./types"
+import type { AgentKind, CodexReasoningIntensity, WorkflowEventSkill, WorkflowRun } from "./types"
 import type { AgentArtifactResult } from "./workflow"
 import { createWorkflowRun } from "./workflow"
 
@@ -193,7 +193,7 @@ export function createHiveServices(options: HiveServicesOptions = {}) {
       return artifact.id
     },
     enqueueManagerWake: (input) => scheduler.enqueue(input),
-    routeUnbound: async ({ conversationId, targetAgent, content, entries, idempotencyKey, selectedModelId }) => {
+    routeUnbound: async ({ conversationId, targetAgent, content, entries, idempotencyKey, selectedModelId, selectedReasoningIntensity }) => {
       return routeUnboundConversation({
         repository,
         conversationId,
@@ -202,6 +202,7 @@ export function createHiveServices(options: HiveServicesOptions = {}) {
         entries,
         idempotencyKey,
         selectedModelId,
+        selectedReasoningIntensity,
         invokeAgent
       })
     }
@@ -292,6 +293,7 @@ export async function routeUnboundConversation(input: {
   entries: Array<Pick<ConversationEntry, "id" | "role" | "agentId" | "content">>
   idempotencyKey?: string
   selectedModelId?: string
+  selectedReasoningIntensity?: CodexReasoningIntensity
   invokeAgent: (
     input: AgentInvocationInput
   ) => Promise<Pick<AgentArtifactResult, "status" | "body" | "deliveryState">>
@@ -300,9 +302,14 @@ export async function routeUnboundConversation(input: {
     return routeDirectOpenClawConversation(input)
   }
 
+  const conversationMetadata = input.targetAgent === "codex"
+    ? input.repository.getConversationMetadata(input.conversationId)
+    : undefined
   const selectedModelId = input.targetAgent === "codex"
-    ? (input.selectedModelId
-      ?? input.repository.getConversationMetadata(input.conversationId)?.selectedModelId)?.trim() || undefined
+    ? (input.selectedModelId ?? conversationMetadata?.selectedModelId)?.trim() || undefined
+    : undefined
+  const selectedReasoningIntensity = input.targetAgent === "codex"
+    ? input.selectedReasoningIntensity ?? conversationMetadata?.selectedReasoningIntensity
     : undefined
   const syntheticRun = createWorkflowRun({
     projectId: "",
@@ -311,6 +318,7 @@ export async function routeUnboundConversation(input: {
     requirement: input.content,
     selectedAgent: input.targetAgent,
     selectedModelId,
+    selectedReasoningIntensity,
     designApprovalActor: "human",
     verificationApprovalActor: "human"
   })

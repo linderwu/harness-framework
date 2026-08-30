@@ -42,6 +42,7 @@ interface ConversationSummary {
   title: string
   state: "active" | "archived"
   selectedModelId?: string
+  selectedReasoningIntensity?: "low" | "medium" | "high" | "auto"
   messageCount: number
   latestMessage: string
   latestMessageAt: string
@@ -52,6 +53,7 @@ interface ConversationMetadata {
   title: string
   state: "active" | "archived"
   selectedModelId?: string
+  selectedReasoningIntensity?: "low" | "medium" | "high" | "auto"
 }
 
 function createRun(projectType: WorkflowRun["projectType"] = "hive_mission") {
@@ -469,7 +471,7 @@ describe("conversation route contracts", { concurrency: false }, () => {
     assert.equal(conflictingResponse.status, 400)
     assert.equal(
       conflictingBody.error,
-      "Provide exactly one of title, state, or selectedModelId."
+      "Provide exactly one of title, state, selectedModelId, or selectedReasoningIntensity."
     )
 
     const archiveResponse = await PATCH(
@@ -523,6 +525,18 @@ describe("conversation route contracts", { concurrency: false }, () => {
     const modelResponse = await patchBody({ selectedModelId: "gpt-5.6-sol" })
     const selectedModel = await modelResponse.json() as ConversationSummary
     const persistedSelectedModel = services.repository.getConversationMetadata(conversationId)
+
+    const profileResponse = await patchBody({
+      selectedModelId: "gpt-5.6-sol",
+      selectedReasoningIntensity: "high"
+    })
+    const selectedProfile = await profileResponse.json() as ConversationSummary
+    const persistedSelectedProfile = services.repository.getConversationMetadata(conversationId)
+    assert.equal(profileResponse.status, 200)
+    assert.equal(selectedProfile.selectedModelId, "gpt-5.6-sol")
+    assert.equal(selectedProfile.selectedReasoningIntensity, "high")
+    assert.equal(persistedSelectedProfile?.selectedReasoningIntensity, "high")
+
     assert.equal(modelResponse.status, 200)
     assert.equal(selectedModel.conversationId, conversationId)
     assert.equal(selectedModel.title, "Model settings")
@@ -541,6 +555,13 @@ describe("conversation route contracts", { concurrency: false }, () => {
     assert.equal(clearedModel.messageCount, 0)
     assert.equal(clearedModel.selectedModelId, undefined)
     assert.equal(persistedClearedModel?.selectedModelId, undefined)
+
+    for (const selectedReasoningIntensity of [123, "unsupported"]) {
+      const invalidReasoningResponse = await patchBody({ selectedReasoningIntensity })
+      const invalidReasoningBody = await invalidReasoningResponse.json() as { error?: string }
+      assert.equal(invalidReasoningResponse.status, 400)
+      assert.equal(invalidReasoningBody.error, "selectedReasoningIntensity must be null, auto, low, medium, or high.")
+    }
 
     for (const selectedModelId of [123, "m".repeat(121)]) {
       const invalidModelResponse = await patchBody({ selectedModelId })
@@ -561,7 +582,7 @@ describe("conversation route contracts", { concurrency: false }, () => {
       assert.equal(exclusiveResponse.status, 400)
       assert.equal(
         exclusiveBody.error,
-        "Provide exactly one of title, state, or selectedModelId."
+        "Provide exactly one of title, state, selectedModelId, or selectedReasoningIntensity."
       )
     }
 
@@ -570,7 +591,7 @@ describe("conversation route contracts", { concurrency: false }, () => {
     assert.equal(emptyPatchResponse.status, 400)
     assert.equal(
       emptyPatchBody.error,
-      "Provide exactly one of title, state, or selectedModelId."
+      "Provide exactly one of title, state, selectedModelId, or selectedReasoningIntensity."
     )
   })
 })

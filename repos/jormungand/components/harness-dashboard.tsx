@@ -311,6 +311,7 @@ export function HarnessDashboard({
   const [unboundConversationState, setUnboundConversationState] = useState<{
     conversationId?: string
     selectedModelId?: string
+    selectedReasoningIntensity?: CodexReasoningIntensity
     isHydrated: boolean
   }>({ isHydrated: false })
   const unboundModelUpdateQueue = useRef(Promise.resolve())
@@ -533,6 +534,7 @@ export function HarnessDashboard({
   function updateUnboundCodexModel(input: {
     conversationId: string
     selectedModelId: string
+    selectedReasoningIntensity: CodexReasoningIntensity
   }) {
     if (!unboundConversationState.isHydrated || unboundConversationState.conversationId !== input.conversationId) {
       return
@@ -542,6 +544,7 @@ export function HarnessDashboard({
       ...current,
       conversationId: input.conversationId,
       selectedModelId: input.selectedModelId,
+      selectedReasoningIntensity: input.selectedReasoningIntensity,
       isHydrated: true
     }))
     void queueConversationModelUpdate(
@@ -549,7 +552,8 @@ export function HarnessDashboard({
       () => requestConversationModel(
         fetch,
         input.conversationId,
-        input.selectedModelId
+        input.selectedModelId,
+        input.selectedReasoningIntensity
       ).then(() => undefined)
     ).catch((error) => {
       setMutationError(error instanceof Error ? error.message : String(error))
@@ -1315,6 +1319,7 @@ export function HarnessDashboard({
             initialEntries={[]}
             allowedAgents={selectedRun ? agentProfiles.map((profile) => profile.id) : agentProfiles.map((profile) => profile.id)}
             unboundSelectedModelId={unboundConversationState.isHydrated ? unboundConversationState.selectedModelId : undefined}
+            unboundSelectedReasoningIntensity={unboundConversationState.isHydrated ? unboundConversationState.selectedReasoningIntensity : undefined}
             onEntriesChanged={setConversationEntries}
             onUnboundConversationStateChange={setUnboundConversationState}
             onBound={(binding) => {
@@ -1376,6 +1381,7 @@ export function HarnessDashboard({
                   conversationId={unboundConversationState.isHydrated ? unboundConversationState.conversationId : undefined}
                   onUnboundCodexModelChange={updateUnboundCodexModel}
                   unboundSelectedModelId={unboundConversationState.isHydrated ? unboundConversationState.selectedModelId : undefined}
+                  unboundSelectedReasoningIntensity={unboundConversationState.isHydrated ? unboundConversationState.selectedReasoningIntensity : undefined}
                 />
               </>
             ) : null}
@@ -2138,7 +2144,8 @@ function BridgeStatusPanel({
   showHeading = true,
   onCodexProfileChange,
   onUnboundCodexModelChange,
-  unboundSelectedModelId
+  unboundSelectedModelId,
+  unboundSelectedReasoningIntensity
 }: {
   run?: WorkflowRun
   conversationId?: string
@@ -2151,8 +2158,10 @@ function BridgeStatusPanel({
   onUnboundCodexModelChange?: (input: {
     conversationId: string
     selectedModelId: string
+    selectedReasoningIntensity: CodexReasoningIntensity
   }) => void
   unboundSelectedModelId?: string
+  unboundSelectedReasoningIntensity?: CodexReasoningIntensity
 }) {
   const agentQuotaPollIntervalMs = 5 * 60 * 1000
   const codexModelPollIntervalMs = 5 * 60 * 1000
@@ -2314,6 +2323,7 @@ function BridgeStatusPanel({
               now={now}
               run={run}
               unboundSelectedModelId={unboundSelectedModelId}
+              unboundSelectedReasoningIntensity={unboundSelectedReasoningIntensity}
             />
           ))}
         </div>
@@ -2338,7 +2348,8 @@ function BridgeStatusCard({
   onCodexProfileChange,
   isCodexModelsLoading,
   onUnboundCodexModelChange,
-  unboundSelectedModelId
+  unboundSelectedModelId,
+  unboundSelectedReasoningIntensity
 }: {
   agents: AgentKind[]
   codexDefaultModelId?: string
@@ -2361,8 +2372,10 @@ function BridgeStatusCard({
   onUnboundCodexModelChange?: (input: {
     conversationId: string
     selectedModelId: string
+    selectedReasoningIntensity: CodexReasoningIntensity
   }) => void
   unboundSelectedModelId?: string
+  unboundSelectedReasoningIntensity?: CodexReasoningIntensity
 }) {
   const status = getBridgePanelStatus({
     failureCount,
@@ -2408,6 +2421,7 @@ function BridgeStatusCard({
               onCodexProfileChange={onCodexProfileChange}
               onUnboundCodexModelChange={onUnboundCodexModelChange}
               unboundSelectedModelId={unboundSelectedModelId}
+              unboundSelectedReasoningIntensity={unboundSelectedReasoningIntensity}
             />
           )
         })}
@@ -2426,7 +2440,8 @@ function AgentBridgeRow({
   codexModels,
   isCodexModelsLoading,
   onUnboundCodexModelChange,
-  unboundSelectedModelId
+  unboundSelectedModelId,
+  unboundSelectedReasoningIntensity
 }: {
   agent: AgentKind
   quota?: AgentQuota
@@ -2443,8 +2458,10 @@ function AgentBridgeRow({
   onUnboundCodexModelChange?: (input: {
     conversationId: string
     selectedModelId: string
+    selectedReasoningIntensity: CodexReasoningIntensity
   }) => void
   unboundSelectedModelId?: string
+  unboundSelectedReasoningIntensity?: CodexReasoningIntensity
 }) {
   const latestAgentRun = [...(run?.agentRuns ?? [])]
     .reverse()
@@ -2459,7 +2476,7 @@ function AgentBridgeRow({
     codexModels.find((model) => model.isDefault)?.id ??
     codexModels[0]?.id ??
     ""
-  const selectedReasoningIntensity = run?.selectedReasoningIntensity ?? "auto"
+  const selectedReasoningIntensity = run?.selectedReasoningIntensity ?? unboundSelectedReasoningIntensity ?? "auto"
 
   if (!profile) {
     return null
@@ -2489,7 +2506,8 @@ function AgentBridgeRow({
 
     onUnboundCodexModelChange({
       conversationId,
-      selectedModelId: nextModelId
+      selectedModelId: nextModelId,
+      selectedReasoningIntensity: nextReasoningIntensity
     })
   }
 
@@ -2536,7 +2554,7 @@ function AgentBridgeRow({
               onChange={(event) => {
                 const nextReasoningIntensity =
                   event.target.value as CodexReasoningIntensity
-                applyProfile(selectedModelId, nextReasoningIntensity)
+                applyProfile(selectedModelId, nextReasoningIntensity, true)
               }}
             >
               {codexReasoningIntensityOptions.map((option) => (

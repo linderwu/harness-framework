@@ -40,7 +40,7 @@ import type {
   CodexSyncItem,
   RecordCodexSyncItemInput
 } from "./types"
-import type { AgentKind, ManagerCheckpoint, ManagerProposal } from "../types"
+import type { AgentKind, CodexReasoningIntensity, ManagerCheckpoint, ManagerProposal } from "../types"
 import {
   canonicalizeJson,
   normalizeA2ATaskStatus,
@@ -119,6 +119,7 @@ type ConversationMetadataRow = {
   title: string
   state: ConversationState
   selected_model_id: string | null
+  selected_reasoning_intensity: string | null
   created_at: string
   updated_at: string
   archived_at: string | null
@@ -129,6 +130,7 @@ type ConversationSummaryRow = {
   title: string
   state: ConversationState
   selected_model_id: string | null
+  selected_reasoning_intensity: string | null
   messageCount: number
   latestMessageAt: string | null
   latestMessage: string | null
@@ -1260,14 +1262,36 @@ export class HiveMemoryRepository {
   }
 
   async updateConversationModel(input: { id: string; selectedModelId?: string | null }): Promise<ConversationMetadata> {
+    return this.updateConversationProfile(input)
+  }
+
+  async updateConversationProfile(input: {
+    id: string
+    selectedModelId?: string | null
+    selectedReasoningIntensity?: CodexReasoningIntensity | null
+  }): Promise<ConversationMetadata> {
+    const updates: string[] = []
+    const values: Array<string | null> = []
+
+    if (input.selectedModelId !== undefined) {
+      updates.push("selected_model_id = ?")
+      values.push(input.selectedModelId?.trim() || null)
+    }
+    if (input.selectedReasoningIntensity !== undefined) {
+      updates.push("selected_reasoning_intensity = ?")
+      values.push(input.selectedReasoningIntensity || null)
+    }
+    if (updates.length === 0) {
+      throw new Error("At least one conversation profile field is required.")
+    }
+
     await this.database.write((connection) => {
       const updatedAt = new Date().toISOString()
-      const selectedModelId = input.selectedModelId?.trim() || null
       const result = connection.prepare(`
         UPDATE conversations
-        SET selected_model_id = ?, updated_at = ?
+        SET ${updates.join(", ")}, updated_at = ?
         WHERE id = ?
-      `).run(selectedModelId, updatedAt, input.id)
+      `).run(...values, updatedAt, input.id)
       if (result.changes === 0) {
         throw new Error(`Conversation ${input.id} not found.`)
       }
@@ -1283,6 +1307,7 @@ export class HiveMemoryRepository {
           conversations.title AS title,
           conversations.state AS state,
           conversations.selected_model_id AS selected_model_id,
+          conversations.selected_reasoning_intensity AS selected_reasoning_intensity,
           COALESCE(stats.messageCount, 0) AS messageCount,
           stats.latestMessageAt AS latestMessageAt,
           stats.latestMessage AS latestMessage
@@ -2316,6 +2341,7 @@ function conversationMetadataFromRow(row: ConversationMetadataRow): Conversation
     title: row.title,
     state: row.state,
     selectedModelId: row.selected_model_id ?? undefined,
+    selectedReasoningIntensity: row.selected_reasoning_intensity as CodexReasoningIntensity | null ?? undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     archivedAt: row.archived_at ?? undefined
@@ -2334,6 +2360,10 @@ function conversationSummaryFromRow(row: ConversationSummaryRow): ConversationSu
 
   if (row.selected_model_id !== null) {
     summary.selectedModelId = row.selected_model_id
+  }
+
+  if (row.selected_reasoning_intensity !== null) {
+    summary.selectedReasoningIntensity = row.selected_reasoning_intensity as CodexReasoningIntensity
   }
 
   return summary

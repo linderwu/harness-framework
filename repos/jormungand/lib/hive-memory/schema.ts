@@ -1,7 +1,7 @@
 import type Database from "better-sqlite3"
 import { legacyConversationId } from "../conversation-identity"
 
-export const hiveSchemaVersion = 9
+export const hiveSchemaVersion = 10
 
 const migrationV1 = `
 CREATE TABLE schema_migrations (
@@ -318,6 +318,10 @@ const migrationV9 = `
 ALTER TABLE conversations ADD COLUMN selected_model_id TEXT;
 `
 
+const migrationV10 = `
+ALTER TABLE conversations ADD COLUMN selected_reasoning_intensity TEXT;
+`
+
 export function migrateHiveSchema(database: Database.Database) {
   const hasMigrationTable = database
     .prepare("SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'")
@@ -400,6 +404,14 @@ export function migrateHiveSchema(database: Database.Database) {
       database.exec(migrationV9)
       database.prepare("INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)")
         .run(9, new Date().toISOString())
+    })()
+  }
+
+  if (currentVersion < 10) {
+    database.transaction(() => {
+      database.exec(migrationV10)
+      database.prepare("INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)")
+        .run(10, new Date().toISOString())
     })()
   }
 }

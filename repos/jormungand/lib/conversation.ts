@@ -11,7 +11,7 @@ import type {
 import type { HiveMemoryRepository } from "./hive-memory/repository"
 import type { ConversationEntry } from "./hive-memory/types"
 import type { ManagerWakeReason } from "./manager-scheduler"
-import type { AgentKind, WorkflowRun } from "./types"
+import type { AgentKind, CodexReasoningIntensity, WorkflowRun } from "./types"
 
 export const unboundConversationId = legacyConversationId
 
@@ -89,6 +89,7 @@ interface ConversationDependencies {
     targetAgent: AgentKind
     idempotencyKey: string
     selectedModelId?: string
+    selectedReasoningIntensity?: CodexReasoningIntensity
   }) => Promise<{
     status: "completed" | "failed"
     body: string
@@ -129,6 +130,7 @@ export class ConversationService {
     targetAgent?: AgentKind
     idempotencyKey: string
     selectedModelId?: unknown
+    selectedReasoningIntensity?: unknown
   }) {
     const conversationId = input.conversationId ?? unboundConversationId
     const content = input.content.trim()
@@ -150,6 +152,9 @@ export class ConversationService {
     const selectedModelId = targetAgent === "codex"
       ? parseUnboundSelectedModelId(input.selectedModelId)
       : undefined
+    const selectedReasoningIntensity = targetAgent === "codex"
+      ? parseUnboundSelectedReasoningIntensity(input.selectedReasoningIntensity)
+      : undefined
 
     const existing = this.dependencies.repository.getConversationByIdempotencyKey(storageIdempotencyKey)
     if (existing) return this.duplicateUnboundResult(existing, conversationId)
@@ -169,10 +174,11 @@ export class ConversationService {
     if (!userInsert.inserted) return this.duplicateUnboundResult(userEntry, conversationId)
 
     try {
-      if (selectedModelId !== undefined) {
-        await this.dependencies.repository.updateConversationModel({
+      if (selectedModelId !== undefined || selectedReasoningIntensity !== undefined) {
+        await this.dependencies.repository.updateConversationProfile({
           id: conversationId,
-          selectedModelId
+          selectedModelId,
+          selectedReasoningIntensity
         })
       }
       await this.dependencies.repository.updateConversation({ id: userEntry.id, status: "running" })
@@ -182,7 +188,8 @@ export class ConversationService {
         content,
         entries: this.dependencies.repository.listConversation(conversationId),
         idempotencyKey: userEntry.idempotencyKey,
-        selectedModelId: selectedModelId ?? undefined
+        selectedModelId: this.dependencies.repository.getConversationMetadata(conversationId)?.selectedModelId,
+        selectedReasoningIntensity: this.dependencies.repository.getConversationMetadata(conversationId)?.selectedReasoningIntensity
       })
       const responseInsert = await this.dependencies.repository.insertConversation({
         workflowRunId: conversationId,
@@ -222,6 +229,7 @@ export class ConversationService {
     targetAgent?: AgentKind
     idempotencyKey: string
     selectedModelId?: unknown
+    selectedReasoningIntensity?: unknown
   }) {
     const conversationId = input.conversationId ?? unboundConversationId
     const content = input.content.trim()
@@ -249,10 +257,14 @@ export class ConversationService {
       const selectedModelId = targetAgent === "codex"
         ? parseUnboundSelectedModelId(input.selectedModelId)
         : undefined
-      if (selectedModelId !== undefined) {
-        await this.dependencies.repository.updateConversationModel({
+      const selectedReasoningIntensity = targetAgent === "codex"
+        ? parseUnboundSelectedReasoningIntensity(input.selectedReasoningIntensity)
+        : undefined
+      if (selectedModelId !== undefined || selectedReasoningIntensity !== undefined) {
+        await this.dependencies.repository.updateConversationProfile({
           id: conversationId,
-          selectedModelId
+          selectedModelId,
+          selectedReasoningIntensity
         })
       }
     }
@@ -455,6 +467,9 @@ export class ConversationService {
         idempotencyKey: userEntry.idempotencyKey,
         selectedModelId: targetAgent === "codex"
           ? this.dependencies.repository.getConversationMetadata(conversationId)?.selectedModelId
+          : undefined,
+        selectedReasoningIntensity: targetAgent === "codex"
+          ? this.dependencies.repository.getConversationMetadata(conversationId)?.selectedReasoningIntensity
           : undefined
       })
       if (targetAgent === "codex" && decision.binding) {
@@ -589,6 +604,20 @@ function parseUnboundSelectedModelId(value: unknown): string | null | undefined 
   }
 
   return normalized || null
+}
+
+function parseUnboundSelectedReasoningIntensity(value: unknown): CodexReasoningIntensity | null | undefined {
+  if (value === undefined) return undefined
+  if (value === null) return null
+
+  if (value !== "auto" && value !== "low" && value !== "medium" && value !== "high") {
+    throw new ConversationError(
+      "selectedReasoningIntensity must be absent, null, auto, low, medium, or high.",
+      400
+    )
+  }
+
+  return value
 }
 
 function compactResponse(body: string) {

@@ -1,4 +1,5 @@
 import { createConversationId } from "./conversation-identity"
+import type { CodexReasoningIntensity } from "./types"
 import { CodexConversationError } from "./codex-conversation"
 import type { HiveMemoryRepository } from "./hive-memory/repository"
 import type {
@@ -42,15 +43,18 @@ export class ConversationManagementService {
     title?: unknown
     state?: unknown
     selectedModelId?: unknown
+    selectedReasoningIntensity?: unknown
   }): Promise<ConversationSummary> {
     const metadata = this.requireManagedConversation(input.conversationId)
     const hasTitle = input.title !== undefined
     const hasState = input.state !== undefined
     const hasSelectedModelId = input.selectedModelId !== undefined
+    const hasSelectedReasoningIntensity = input.selectedReasoningIntensity !== undefined
+    const hasProfile = hasSelectedModelId || hasSelectedReasoningIntensity
 
-    if ([hasTitle, hasState, hasSelectedModelId].filter(Boolean).length !== 1) {
+    if ([hasTitle, hasState, hasProfile].filter(Boolean).length !== 1) {
       throw new ConversationManagementError(
-        "Provide exactly one of title, state, or selectedModelId.",
+        "Provide exactly one of title, state, selectedModelId, or selectedReasoningIntensity.",
         400
       )
     }
@@ -62,10 +66,15 @@ export class ConversationManagementService {
       return this.requireConversationSummary(metadata.conversationId)
     }
 
-    if (hasSelectedModelId) {
-      await this.dependencies.repository.updateConversationModel({
+    if (hasSelectedModelId || hasSelectedReasoningIntensity) {
+      await this.dependencies.repository.updateConversationProfile({
         id: metadata.conversationId,
-        selectedModelId: parseSelectedModelId(input.selectedModelId)
+        selectedModelId: hasSelectedModelId
+          ? parseSelectedModelId(input.selectedModelId)
+          : undefined,
+        selectedReasoningIntensity: hasSelectedReasoningIntensity
+          ? parseSelectedReasoningIntensity(input.selectedReasoningIntensity)
+          : undefined
       })
       return this.requireConversationSummary(metadata.conversationId)
     }
@@ -201,6 +210,19 @@ function parseSelectedModelId(value: unknown): string | null {
   }
 
   return normalized || null
+}
+
+function parseSelectedReasoningIntensity(value: unknown): CodexReasoningIntensity | null {
+  if (value === null) return null
+
+  if (value !== "auto" && value !== "low" && value !== "medium" && value !== "high") {
+    throw new ConversationManagementError(
+      "selectedReasoningIntensity must be null, auto, low, medium, or high.",
+      400
+    )
+  }
+
+  return value
 }
 
 function normalizeTitle(value: string) {

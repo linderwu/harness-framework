@@ -18,7 +18,7 @@ export async function PATCH(
   try {
     const { id } = await context.params
     const body = await request.json().catch(() => undefined) as
-      | { title?: unknown; state?: unknown; selectedModelId?: unknown }
+      | { title?: unknown; state?: unknown; selectedModelId?: unknown; selectedReasoningIntensity?: unknown }
       | undefined
 
     if (!body || typeof body !== "object" || Array.isArray(body)) {
@@ -31,7 +31,8 @@ export async function PATCH(
         conversationId: id,
         title: body.title,
         state: body.state,
-        selectedModelId: body.selectedModelId
+        selectedModelId: body.selectedModelId,
+        selectedReasoningIntensity: body.selectedReasoningIntensity
       })
     )
   } catch (error) {

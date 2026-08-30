@@ -211,7 +211,7 @@ test("OpenClaw runtime sessions survive restart with bootstrap and delivery stat
   closeFirstDatabase()
 
   reopened.database = openHiveDatabase({ dataDir })
-  assert.equal(reopened.database.schemaVersion(), 8)
+  assert.equal(reopened.database.schemaVersion(), 10)
 
   const secondRepository = createHiveMemoryRepository(reopened.database) as ConversationRepository
   const persisted = secondRepository.getOpenClawRuntimeSession(
@@ -332,7 +332,7 @@ test("schema v3 backfills conversation metadata from legacy entries and keeps un
     await rm(dataDir, { recursive: true, force: true })
   })
 
-  assert.equal(migratedDatabase.schemaVersion(), 8)
+  assert.equal(migratedDatabase.schemaVersion(), 10)
   const migrated = repository.getConversationMetadata("conversation:44444444-4444-4444-8444-444444444444")
   assert.ok(migrated)
   assert.equal(migrated.title, "This migrated title should be truncated to eighty characters exactly after white")

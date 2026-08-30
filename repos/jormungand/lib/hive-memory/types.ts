@@ -236,6 +236,7 @@ export interface ConversationMetadata {
   title: string
   state: ConversationState
   selectedModelId?: string
+  selectedReasoningIntensity?: import("../types").CodexReasoningIntensity
   createdAt: string
   updatedAt: string
   archivedAt?: string
@@ -246,6 +247,7 @@ export interface ConversationSummary {
   title: string
   state: ConversationState
   selectedModelId?: string
+  selectedReasoningIntensity?: import("../types").CodexReasoningIntensity
   messageCount: number
   latestMessageAt?: string
   latestMessage?: string

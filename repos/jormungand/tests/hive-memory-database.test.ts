@@ -12,16 +12,16 @@ test("database initializes WAL schema and survives restart", async (t) => {
   const first = openHiveDatabase({ dataDir })
   assert.equal(first.health().status, "ready")
   assert.equal(first.pragma("journal_mode"), "wal")
-  assert.equal(first.schemaVersion(), 9)
+  assert.equal(first.schemaVersion(), 10)
   first.close()
 
   const second = openHiveDatabase({ dataDir })
   assert.equal(second.health().status, "ready")
-  assert.equal(second.schemaVersion(), 9)
+  assert.equal(second.schemaVersion(), 10)
   second.close()
 })
 
-test("schema v9 adds a nullable selected model column to conversation metadata", async (t) => {
+test("schema keeps nullable Codex profile columns in conversation metadata", async (t) => {
   const dataDir = await mkdtemp(join(tmpdir(), "jormungand-memory-"))
   const database = openHiveDatabase({ dataDir })
   t.after(async () => {
@@ -29,7 +29,7 @@ test("schema v9 adds a nullable selected model column to conversation metadata",
     await rm(dataDir, { recursive: true, force: true })
   })
 
-  assert.equal(database.schemaVersion(), 9)
+  assert.equal(database.schemaVersion(), 10)
   const selectedModelColumn = database.read((connection) =>
     (connection.prepare("PRAGMA table_info(conversations)").all() as Array<{
       name: string
@@ -38,6 +38,25 @@ test("schema v9 adds a nullable selected model column to conversation metadata",
   )
   assert.ok(selectedModelColumn)
   assert.equal(selectedModelColumn.notnull, 0)
+})
+
+test("schema v10 adds a nullable reasoning intensity column to conversation metadata", async (t) => {
+  const dataDir = await mkdtemp(join(tmpdir(), "jormungand-memory-"))
+  const database = openHiveDatabase({ dataDir })
+  t.after(async () => {
+    database.close()
+    await rm(dataDir, { recursive: true, force: true })
+  })
+
+  assert.equal(database.schemaVersion(), 10)
+  const selectedReasoningColumn = database.read((connection) =>
+    (connection.prepare("PRAGMA table_info(conversations)").all() as Array<{
+      name: string
+      notnull: number
+    }>).find((column) => column.name === "selected_reasoning_intensity")
+  )
+  assert.ok(selectedReasoningColumn)
+  assert.equal(selectedReasoningColumn.notnull, 0)
 })
 
 test("database opening with an explicit data directory does not mutate process-global env", async (t) => {

@@ -70,9 +70,11 @@ test("unbound Codex model state uses existing metadata and selector data flow", 
   assert.match(dashboard, /unboundSelectedModelId/)
 })
 
-test("unbound model persistence is limited to model selection changes", () => {
+test("unbound Codex profile changes include reasoning intensity", () => {
   assert.match(dashboard, /applyProfile\(nextModelId, selectedReasoningIntensity, true\)/)
-  assert.match(dashboard, /applyProfile\(selectedModelId, nextReasoningIntensity\)/)
+  assert.match(dashboard, /applyProfile\(selectedModelId, nextReasoningIntensity, true\)/)
+  assert.match(dashboard, /unboundSelectedReasoningIntensity/)
+  assert.match(taskConversation, /selectedReasoningIntensity: isUnbound && targetAgent === "codex" \? props\.unboundSelectedReasoningIntensity : undefined/)
 })
 
 test("unbound submit carries the parent model state through the POST contract", () => {
