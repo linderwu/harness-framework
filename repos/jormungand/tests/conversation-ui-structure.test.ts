@@ -232,3 +232,9 @@ test("conversation header exposes the action layout styles without changing the 
   assert.match(globalsCss, /\.taskConversationHeaderActions\s*\{[\s\S]*display:\s*flex/)
   assert.match(globalsCss, /\.taskConversationHeaderActions\s*\{[\s\S]*flex-wrap:\s*wrap/)
 })
+test("Codex profile updates are gated until unbound identity hydrates and persist for bound runs", () => {
+  assert.match(dashboard, /const canEditCodexProfile =/)
+  assert.match(dashboard, /disabled=\{!canEditCodexProfile\}/)
+  assert.match(dashboard, /fetch\(`\/api\/workflow-runs\/\$\{input\.runId\}`/)
+  assert.match(dashboard, /method: "PATCH"/)
+})

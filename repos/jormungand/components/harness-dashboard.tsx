@@ -513,22 +513,29 @@ export function HarnessDashboard({
     }
   }
 
-  function updateCodexProfileForRun(input: {
+  async function updateCodexProfileForRun(input: {
     runId: string
     selectedModelId: string
     selectedReasoningIntensity: CodexReasoningIntensity
   }) {
-    setRuns((currentRuns) =>
-      currentRuns.map((run) =>
-        run.id === input.runId
-          ? {
-              ...run,
-              selectedModelId: input.selectedModelId,
-              selectedReasoningIntensity: input.selectedReasoningIntensity
-            }
-          : run
+    setMutationError(undefined)
+
+    try {
+      const response = await fetch(`/api/workflow-runs/${input.runId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          selectedModelId: input.selectedModelId,
+          selectedReasoningIntensity: input.selectedReasoningIntensity
+        })
+      })
+      const updatedRun = await readRunMutationResponse(response)
+      setRuns((currentRuns) =>
+        currentRuns.map((run) => run.id === updatedRun.id ? updatedRun : run)
       )
-    )
+    } catch (error) {
+      setMutationError(error instanceof Error ? error.message : String(error))
+    }
   }
 
   function updateUnboundCodexModel(input: {
@@ -554,7 +561,22 @@ export function HarnessDashboard({
         input.conversationId,
         input.selectedModelId,
         input.selectedReasoningIntensity
-      ).then(() => undefined)
+      ).then((result) => {
+        if (!("selectedModelId" in result) || !("selectedReasoningIntensity" in result)) {
+          return
+        }
+
+        setUnboundConversationState((current) =>
+          current.conversationId === input.conversationId
+            ? {
+                ...current,
+                selectedModelId: result.selectedModelId,
+                selectedReasoningIntensity: result.selectedReasoningIntensity,
+                isHydrated: true
+              }
+            : current
+        )
+      })
     ).catch((error) => {
       setMutationError(error instanceof Error ? error.message : String(error))
     })
@@ -2477,6 +2499,7 @@ function AgentBridgeRow({
     codexModels[0]?.id ??
     ""
   const selectedReasoningIntensity = run?.selectedReasoningIntensity ?? unboundSelectedReasoningIntensity ?? "auto"
+  const canEditCodexProfile = Boolean(run?.id || (conversationId && onUnboundCodexModelChange))
 
   if (!profile) {
     return null
@@ -2525,7 +2548,7 @@ function AgentBridgeRow({
               aria-label="Codex model"
               aria-busy={isCodexModelsLoading}
               className="plainSelect bridgeAgentSmallSelect"
-              disabled={isCodexModelsLoading || codexModels.length === 0}
+              disabled={isCodexModelsLoading || codexModels.length === 0 || !canEditCodexProfile}
               value={selectedModelId}
               onChange={(event) => {
                 const nextModelId = event.target.value
@@ -2550,6 +2573,7 @@ function AgentBridgeRow({
             <select
               aria-label="Codex reasoning intensity"
               className="plainSelect bridgeAgentSmallSelect"
+              disabled={!canEditCodexProfile}
               value={selectedReasoningIntensity}
               onChange={(event) => {
                 const nextReasoningIntensity =
