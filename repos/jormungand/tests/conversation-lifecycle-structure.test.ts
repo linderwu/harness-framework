@@ -367,6 +367,54 @@ describe("conversation route contracts", { concurrency: false }, () => {
     assert.deepEqual(newBody, collectionBody)
   })
 
+  test("queued POST and duplicate submission retain stable response identities", async (t) => {
+    const { POST } = await importRouteWithIsolatedDataDir<{
+      POST: (request: Request) => Promise<Response>
+    }>(t, "../app/api/conversation/route")
+    const requestBody = JSON.stringify({
+      conversationId: "conversation:dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+      content: "Keep this queued request auditable.",
+      idempotencyKey: "phase-0-queued-post",
+      targetAgent: "codex"
+    })
+    const createRequest = () => new Request("http://localhost/api/conversation", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: requestBody
+    })
+
+    const freshResponse = await POST(createRequest())
+    const freshBody = await freshResponse.json() as {
+      conversationId: string
+      duplicate: boolean
+      jobId: string
+      jobStatus: string
+      responseEntry: { id: string }
+      status: string
+      userEntry: { id: string }
+    }
+    const duplicateResponse = await POST(createRequest())
+    const duplicateBody = await duplicateResponse.json() as typeof freshBody
+    const { getDefaultHiveServices } = await getRouteServices()
+    await getDefaultHiveServices().conversationDispatcher.drain(freshBody.conversationId)
+
+    assert.equal(freshResponse.status, 202)
+    assert.equal(duplicateResponse.status, 200)
+    assert.deepEqual(Object.keys(freshBody).sort(), [
+      "conversationId",
+      "duplicate",
+      "jobId",
+      "jobStatus",
+      "responseEntry",
+      "status",
+      "userEntry"
+    ].sort())
+    assert.deepEqual(Object.keys(duplicateBody).sort(), Object.keys(freshBody).sort())
+    assert.equal(duplicateBody.userEntry.id, freshBody.userEntry.id)
+    assert.equal(duplicateBody.responseEntry.id, freshBody.responseEntry.id)
+    assert.equal(duplicateBody.jobId, freshBody.jobId)
+  })
+
   test("conversations collection route creates managed conversations and filters archived items by default", async (t) => {
     const { GET, POST } = await importRouteWithIsolatedDataDir<{
       GET: (request: Request) => Promise<Response>

@@ -117,6 +117,7 @@ async function loadConversationManagementModule() {
     createConversationManagementService?: (dependencies: {
       repository: ConversationManagementRepository
       stopSession: (conversationId: string) => Promise<void>
+      renameNativeThread?: (conversationId: string, title: string) => Promise<void>
     }) => ConversationManagementService
   }
 }
@@ -530,6 +531,74 @@ test("conversation management service validates updates, allows running state ch
       error !== null &&
       "status" in error &&
       (error as { status?: number }).status === 404
+  )
+})
+
+test("native rename succeeds before local failure and native failure stops local rename", async (t) => {
+  const repository = await createRepositoryFixture(t)
+  const conversationManagementModule = await loadConversationManagementModule()
+  assert.equal(
+    typeof conversationManagementModule.createConversationManagementService,
+    "function",
+    "lib/conversation-management.ts must export createConversationManagementService()."
+  )
+  const originalRename = repository.renameConversation.bind(repository)
+  const localFailureConversationId = "conversation:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaab"
+  await repository.createConversation({ id: localFailureConversationId, title: "Local title" })
+
+  let nativeRenameCalls = 0
+  repository.renameConversation = async () => {
+    throw new Error("local rename failed")
+  }
+  const localFailureService = conversationManagementModule.createConversationManagementService!({
+    repository,
+    stopSession: async () => undefined,
+    renameNativeThread: async (conversationId, title) => {
+      nativeRenameCalls += 1
+      assert.equal(conversationId, localFailureConversationId)
+      assert.equal(title, "Native title")
+    }
+  })
+
+  await assert.rejects(
+    localFailureService.updateConversation({
+      conversationId: localFailureConversationId,
+      title: "Native title"
+    }),
+    /local rename failed/
+  )
+  assert.equal(nativeRenameCalls, 1)
+  assert.equal(
+    repository.getConversationMetadata(localFailureConversationId)?.title,
+    "Local title"
+  )
+
+  const nativeFailureConversationId = "conversation:bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbc"
+  await repository.createConversation({ id: nativeFailureConversationId, title: "Keep local title" })
+  let localRenameCalls = 0
+  repository.renameConversation = async (conversationId, title) => {
+    localRenameCalls += 1
+    return originalRename(conversationId, title)
+  }
+  const nativeFailureService = conversationManagementModule.createConversationManagementService!({
+    repository,
+    stopSession: async () => undefined,
+    renameNativeThread: async () => {
+      throw new Error("native rename failed")
+    }
+  })
+
+  await assert.rejects(
+    nativeFailureService.updateConversation({
+      conversationId: nativeFailureConversationId,
+      title: "Do not persist"
+    }),
+    /native rename failed/
+  )
+  assert.equal(localRenameCalls, 0)
+  assert.equal(
+    repository.getConversationMetadata(nativeFailureConversationId)?.title,
+    "Keep local title"
   )
 })
 
