@@ -271,6 +271,42 @@ type ExecutionJobRow = {
   completed_at: string | null
 }
 
+export type ConversationTurnRepositoryErrorCode =
+  | "conversation_not_found"
+  | "conversation_not_active"
+  | "incomplete_turn_record"
+  | "invalid_idempotency_key"
+
+export class ConversationTurnRepositoryError extends Error {
+  constructor(
+    readonly code: ConversationTurnRepositoryErrorCode,
+    conversationId?: string
+  ) {
+    super(conversationTurnRepositoryErrorMessage(code, conversationId))
+    this.name = "ConversationTurnRepositoryError"
+  }
+}
+
+export interface SubmitConversationTurnInput {
+  conversationId: string
+  targetAgent: AgentKind
+  content: string
+  idempotencyKey: string
+  responseRole: "agent" | "manager"
+}
+
+export interface SubmittedConversationTurn {
+  conversationId: string
+  userEntryId: string
+  responseEntryId: string
+  jobId: string
+  idempotencyKey: string
+  userEntry: ConversationEntry
+  responseEntry: ConversationEntry
+  jobStatus: ExecutionJob["status"]
+  duplicate: boolean
+}
+
 export class HiveMemoryRepository {
   constructor(private readonly database: HiveDatabase) {}
 
@@ -1122,6 +1158,100 @@ export class HiveMemoryRepository {
       entry: inserted ? entry : this.getConversationByIdempotencyKey(input.idempotencyKey)!,
       inserted
     }
+  }
+
+  async submitConversationTurn(input: SubmitConversationTurnInput): Promise<SubmittedConversationTurn> {
+    return this.database.transaction((connection) => {
+      const metadata = connection.prepare(
+        "SELECT * FROM conversations WHERE id = ?"
+      ).get(input.conversationId) as ConversationMetadataRow | undefined
+      if (!metadata) {
+        throw new ConversationTurnRepositoryError("conversation_not_found", input.conversationId)
+      }
+      if (metadata.state !== "active") {
+        throw new ConversationTurnRepositoryError("conversation_not_active", input.conversationId)
+      }
+
+      const storageKey = conversationTurnStorageBase(input.conversationId, input.idempotencyKey)
+      const responseStorageKey = `${storageKey}:response`
+      const dispatchStorageKey = `${storageKey}:dispatch`
+      const userRow = connection.prepare(
+        "SELECT * FROM conversation_entries WHERE idempotency_key = ?"
+      ).get(storageKey) as ConversationRow | undefined
+      const responseRow = connection.prepare(
+        "SELECT * FROM conversation_entries WHERE idempotency_key = ?"
+      ).get(responseStorageKey) as ConversationRow | undefined
+      const jobRow = connection.prepare(
+        "SELECT * FROM execution_jobs WHERE idempotency_key = ?"
+      ).get(dispatchStorageKey) as ExecutionJobRow | undefined
+
+      if (userRow && responseRow && jobRow) {
+        return submittedConversationTurnFromRecords(
+          input.conversationId,
+          input.idempotencyKey,
+          conversationFromRow(userRow),
+          conversationFromRow(responseRow),
+          executionJobFromRow(jobRow),
+          true
+        )
+      }
+      if (userRow || responseRow || jobRow) {
+        throw new ConversationTurnRepositoryError("incomplete_turn_record", input.conversationId)
+      }
+
+      const now = new Date().toISOString()
+      const userEntry: ConversationEntry = {
+        id: crypto.randomUUID(),
+        workflowRunId: input.conversationId,
+        role: "user",
+        agentId: input.targetAgent,
+        content: input.content,
+        importance: "normal",
+        status: "queued",
+        artifactIds: [],
+        memoryIds: [],
+        idempotencyKey: storageKey,
+        createdAt: now
+      }
+      const responseEntry: ConversationEntry = {
+        id: crypto.randomUUID(),
+        workflowRunId: input.conversationId,
+        role: input.responseRole,
+        agentId: input.targetAgent,
+        content: "Queued for agent response...",
+        importance: "important",
+        status: "queued",
+        replyToId: userEntry.id,
+        artifactIds: [],
+        memoryIds: [],
+        idempotencyKey: responseStorageKey,
+        createdAt: now
+      }
+      const job = createQueuedExecutionJob({
+        kind: "conversation_dispatch",
+        workflowRunId: input.conversationId,
+        payload: {
+          conversationId: input.conversationId,
+          entryId: userEntry.id,
+          responseEntryId: responseEntry.id,
+          targetAgent: input.targetAgent
+        },
+        idempotencyKey: dispatchStorageKey
+      }, now)
+
+      this.insertConversationOnConnection(connection, userEntry)
+      this.insertConversationOnConnection(connection, responseEntry)
+      this.insertExecutionJobOnConnection(connection, job)
+
+      return submittedConversationTurnFromRecords(
+        input.conversationId,
+        input.idempotencyKey,
+        userEntry,
+        responseEntry,
+        job,
+        false
+      )
+    })
   }
 
   listConversation(workflowRunId: string) {
@@ -2559,6 +2689,54 @@ function executionJobFromRow(row: ExecutionJobRow): ExecutionJob {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     completedAt: row.completed_at ?? undefined
+  }
+}
+
+function submittedConversationTurnFromRecords(
+  conversationId: string,
+  idempotencyKey: string,
+  userEntry: ConversationEntry,
+  responseEntry: ConversationEntry,
+  job: ExecutionJob,
+  duplicate: boolean
+): SubmittedConversationTurn {
+  return {
+    conversationId,
+    userEntryId: userEntry.id,
+    responseEntryId: responseEntry.id,
+    jobId: job.id,
+    idempotencyKey,
+    userEntry,
+    responseEntry,
+    jobStatus: job.status,
+    duplicate
+  }
+}
+
+function conversationTurnRepositoryErrorMessage(
+  code: ConversationTurnRepositoryErrorCode,
+  conversationId?: string
+) {
+  switch (code) {
+    case "conversation_not_found":
+      return `Conversation ${conversationId ?? ""} was not found.`
+    case "conversation_not_active":
+      return `Conversation ${conversationId ?? ""} is not active.`
+    case "incomplete_turn_record":
+      return "Conversation turn record is incomplete."
+    case "invalid_idempotency_key":
+      return "Conversation turn idempotency key is invalid."
+  }
+}
+
+function conversationTurnStorageBase(conversationId: string, idempotencyKey: string) {
+  try {
+    return `${conversationId}:${encodeURIComponent(idempotencyKey)}`
+  } catch (error) {
+    if (error instanceof URIError) {
+      throw new ConversationTurnRepositoryError("invalid_idempotency_key", conversationId)
+    }
+    throw error
   }
 }
 
