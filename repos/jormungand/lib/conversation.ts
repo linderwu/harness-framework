@@ -3,6 +3,7 @@ import {
   createConversationId,
   legacyConversationId
 } from "./conversation-identity"
+import { ConversationLifecycleService } from "./conversation-lifecycle/service"
 import type { ContextPack } from "./context-builder"
 import type {
   ConversationDispatchOutcome,
@@ -49,6 +50,7 @@ export function listAllowedAgents(
 
 interface ConversationDependencies {
   repository: HiveMemoryRepository
+  lifecycle: ConversationLifecycleService
   getRun: (id: string) => Promise<WorkflowRun | undefined>
   getHealth?: () => Promise<AgentHealth> | AgentHealth
   buildContext: (input: {
@@ -124,105 +126,6 @@ export class ConversationService {
     return createConversationId()
   }
 
-  async postUnboundMessage(input: {
-    conversationId?: string
-    content: string
-    targetAgent?: AgentKind
-    idempotencyKey: string
-    selectedModelId?: unknown
-    selectedReasoningIntensity?: unknown
-  }) {
-    const conversationId = input.conversationId ?? unboundConversationId
-    const content = input.content.trim()
-    const targetAgent = normalizeAgentKind(input.targetAgent)
-    const health = await this.dependencies.getHealth?.() ?? {}
-    const allowedAgents = listAllowedAgents("development", health)
-    const storageIdempotencyKey = toConversationScopedIdempotencyKey(
-      conversationId,
-      input.idempotencyKey
-    )
-
-    if (!content) throw new ConversationError("content is required", 400)
-    if (!input.idempotencyKey.trim()) throw new ConversationError("idempotencyKey is required", 400)
-    if (!allowedAgents.includes(targetAgent)) {
-      throw new ConversationError("Target agent is not allowed for unbound conversation", 403)
-    }
-    if (!this.dependencies.routeUnbound) throw new ConversationError("Conversation manager is unavailable", 503)
-
-    const selectedModelId = targetAgent === "codex"
-      ? parseUnboundSelectedModelId(input.selectedModelId)
-      : undefined
-    const selectedReasoningIntensity = targetAgent === "codex"
-      ? parseUnboundSelectedReasoningIntensity(input.selectedReasoningIntensity)
-      : undefined
-
-    const existing = this.dependencies.repository.getConversationByIdempotencyKey(storageIdempotencyKey)
-    if (existing) return this.duplicateUnboundResult(existing, conversationId)
-
-    const userInsert = await this.dependencies.repository.insertConversation({
-      workflowRunId: conversationId,
-      role: "user",
-      agentId: targetAgent,
-      content,
-      importance: "normal",
-      status: "queued",
-      artifactIds: [],
-      memoryIds: [],
-      idempotencyKey: storageIdempotencyKey
-    })
-    const userEntry = userInsert.entry
-    if (!userInsert.inserted) return this.duplicateUnboundResult(userEntry, conversationId)
-
-    try {
-      if (selectedModelId !== undefined || selectedReasoningIntensity !== undefined) {
-        await this.dependencies.repository.updateConversationProfile({
-          id: conversationId,
-          selectedModelId,
-          selectedReasoningIntensity
-        })
-      }
-      await this.dependencies.repository.updateConversation({ id: userEntry.id, status: "running" })
-      const decision = await this.dependencies.routeUnbound({
-        conversationId,
-        targetAgent,
-        content,
-        entries: this.dependencies.repository.listConversation(conversationId),
-        idempotencyKey: userEntry.idempotencyKey,
-        selectedModelId: this.dependencies.repository.getConversationMetadata(conversationId)?.selectedModelId,
-        selectedReasoningIntensity: this.dependencies.repository.getConversationMetadata(conversationId)?.selectedReasoningIntensity
-      })
-      const responseInsert = await this.dependencies.repository.insertConversation({
-        workflowRunId: conversationId,
-        role: targetAgent === "codex" ? "manager" : "agent",
-        agentId: targetAgent,
-        content: compactResponse(decision.body),
-        importance: decision.status === "failed" ? "critical" : "important",
-        status: decision.status,
-        replyToId: userEntry.id,
-        artifactIds: [],
-        memoryIds: [],
-        idempotencyKey: `${storageIdempotencyKey}:response`
-      })
-      await this.dependencies.repository.updateConversation({
-        id: userEntry.id,
-        status: decision.status === "completed" ? "completed" : "failed"
-      })
-      if (targetAgent === "codex" && decision.binding) {
-        await this.dependencies.repository.moveConversation(conversationId, decision.binding.workflowRunId)
-      }
-      return {
-        conversationId,
-        userEntry: this.dependencies.repository.getConversationEntry(userEntry.id)!,
-        responseEntry: this.dependencies.repository.getConversationEntry(responseInsert.entry.id)!,
-        binding: decision.binding,
-        duplicate: false
-      }
-    } catch (error) {
-      await this.dependencies.repository.updateConversation({ id: userEntry.id, status: "failed" })
-      throw error
-    }
-  }
-
   async enqueueUnboundMessage(input: {
     conversationId?: string
     content: string
@@ -242,41 +145,56 @@ export class ConversationService {
     if (!allowedAgents.includes(targetAgent)) {
       throw new ConversationError("Target agent is not allowed for unbound conversation", 403)
     }
-    if (!this.dependencies.enqueueConversation) {
-      throw new ConversationError("Conversation queue is unavailable", 503)
-    }
+    const selectedModelId = targetAgent === "codex"
+      ? parseUnboundSelectedModelId(input.selectedModelId)
+      : undefined
+    const selectedReasoningIntensity = targetAgent === "codex"
+      ? parseUnboundSelectedReasoningIntensity(input.selectedReasoningIntensity)
+      : undefined
+    const validatedTurn = this.dependencies.lifecycle.validateSubmitTurn({
+      content,
+      idempotencyKey: input.idempotencyKey,
+      responseRole: "agent"
+    })
 
-    const storageIdempotencyKey = toConversationScopedIdempotencyKey(
+    await this.dependencies.lifecycle.openConversation({
       conversationId,
-      input.idempotencyKey
+      title: "New conversation"
+    })
+    const storageIdempotencyKey = toConversationTurnStorageKey(
+      conversationId,
+      validatedTurn.idempotencyKey
     )
-    const existing = this.dependencies.repository.getConversationByIdempotencyKey(
-      storageIdempotencyKey
-    )
-    if (!existing) {
-      const selectedModelId = targetAgent === "codex"
-        ? parseUnboundSelectedModelId(input.selectedModelId)
-        : undefined
-      const selectedReasoningIntensity = targetAgent === "codex"
-        ? parseUnboundSelectedReasoningIntensity(input.selectedReasoningIntensity)
-        : undefined
-      if (selectedModelId !== undefined || selectedReasoningIntensity !== undefined) {
-        await this.dependencies.repository.updateConversationProfile({
-          id: conversationId,
-          selectedModelId,
-          selectedReasoningIntensity
-        })
-      }
+    const existing = storageIdempotencyKey
+      ? this.dependencies.repository.getConversationByIdempotencyKey(storageIdempotencyKey)
+      : undefined
+    if (
+      storageIdempotencyKey &&
+      !existing &&
+      (selectedModelId !== undefined || selectedReasoningIntensity !== undefined)
+    ) {
+      await this.dependencies.lifecycle.updateConversationSettings({
+        conversationId,
+        selectedModelId,
+        selectedReasoningIntensity
+      })
     }
-
-    const queued = await this.dependencies.enqueueConversation({
+    const submitted = await this.dependencies.lifecycle.submitTurn({
       conversationId,
       targetAgent,
       content,
       idempotencyKey: input.idempotencyKey,
       responseRole: "agent"
     })
-    return { conversationId, status: queued.jobStatus, ...queued }
+    return {
+      conversationId: submitted.conversationId,
+      status: submitted.jobStatus,
+      jobId: submitted.jobId,
+      jobStatus: submitted.jobStatus,
+      userEntry: submitted.userEntry,
+      responseEntry: submitted.responseEntry,
+      duplicate: submitted.duplicate
+    }
   }
 
   async postMessage(input: {
@@ -539,18 +457,6 @@ export class ConversationService {
     }
   }
 
-  private async duplicateUnboundResult(userEntry: ConversationEntry, conversationId: string) {
-    const run = userEntry.workflowRunId === unboundConversationId
-      ? undefined
-      : await this.dependencies.getRun(userEntry.workflowRunId)
-    return {
-      conversationId,
-      userEntry,
-      responseEntry: this.dependencies.repository.getConversationByIdempotencyKey(`${userEntry.idempotencyKey}:response`),
-      binding: run ? { projectId: run.projectId, workflowRunId: run.id, projectName: run.projectName } : undefined,
-      duplicate: true
-    }
-  }
 }
 
 export function createConversationService(dependencies: ConversationDependencies) {
@@ -620,18 +526,18 @@ function parseUnboundSelectedReasoningIntensity(value: unknown): CodexReasoningI
   return value
 }
 
-function compactResponse(body: string) {
-  const normalized = body.trim()
-  return normalized.length <= 4_000 ? normalized : normalized.slice(0, 4_000)
-}
-
 function compactAgentResultBody(body: string) {
   return body.length <= 4_000 ? body : body.slice(0, 4_000)
 }
 
-function toConversationScopedIdempotencyKey(
+function toConversationTurnStorageKey(
   conversationId: string,
   idempotencyKey: string
 ) {
-  return `${conversationId}:${idempotencyKey.trim()}`
+  try {
+    return `${conversationId}:${encodeURIComponent(idempotencyKey.trim())}`
+  } catch (error) {
+    if (error instanceof URIError) return undefined
+    throw error
+  }
 }

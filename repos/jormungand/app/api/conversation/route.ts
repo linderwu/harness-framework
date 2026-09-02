@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
 import { ConversationError } from "@/lib/conversation"
+import { ConversationLifecycleCommandError } from "@/lib/conversation-lifecycle/service"
 import {
   ConversationIdentityError,
   resolveConversationId,
@@ -26,9 +27,8 @@ export async function GET(request?: Request) {
   const services = getDefaultHiveServices()
   void services.conversationDispatcher.drain(identity.conversationId).catch(() => undefined)
   const metadata = identity.conversationId.startsWith("conversation:")
-    ? services.repository.getConversationMetadata(identity.conversationId)
-      ?? await services.repository.createConversation({
-        id: identity.conversationId,
+    ? await services.conversationLifecycle.openConversation({
+        conversationId: identity.conversationId,
         title: "New conversation"
       })
     : services.repository.getConversationMetadata(identity.conversationId)
@@ -96,6 +96,9 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: error.message }, { status: error.status })
     }
     if (error instanceof ConversationError) {
+      return NextResponse.json({ error: error.message }, { status: error.status })
+    }
+    if (error instanceof ConversationLifecycleCommandError) {
       return NextResponse.json({ error: error.message }, { status: error.status })
     }
     return NextResponse.json({ error: error instanceof Error ? error.message : String(error) }, { status: 500 })

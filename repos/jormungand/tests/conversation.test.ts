@@ -6,11 +6,13 @@ import test from "node:test"
 import {
   createConversationService,
   listAllowedAgents,
-  parseUnboundManagerDecision,
-  unboundConversationId
+  parseUnboundManagerDecision
 } from "../lib/conversation"
 import type { AgentInvocationInput } from "../lib/agent-bridge"
-import { ConversationQueueService } from "../lib/conversation-dispatcher"
+import {
+  ConversationLifecycleCommandError,
+  ConversationLifecycleService
+} from "../lib/conversation-lifecycle/service"
 import { openHiveDatabase } from "../lib/hive-memory/database"
 import { createHiveMemoryRepository } from "../lib/hive-memory/repository"
 import type { WorkflowRun } from "../lib/types"
@@ -38,6 +40,7 @@ async function fixture(t: test.TestContext, options: {
   let invocations = 0
   const service = createConversationService({
     repository,
+    lifecycle: new ConversationLifecycleService(repository),
     getRun: async (id) => id === run.id ? run : undefined,
     getHealth: () => options.health ?? {},
     buildContext: async () => {
@@ -64,6 +67,26 @@ async function fixture(t: test.TestContext, options: {
     await rm(dataDir, { recursive: true, force: true })
   })
   return { repository, run, service, invocations: () => invocations }
+}
+
+async function submitUnboundAndDispatch(
+  service: ReturnType<typeof createConversationService>,
+  repository: ReturnType<typeof createHiveMemoryRepository>,
+  input: Parameters<ReturnType<typeof createConversationService>["enqueueUnboundMessage"]>[0]
+) {
+  const submitted = await service.enqueueUnboundMessage(input)
+  const outcome = await service.dispatchQueuedEntry({
+    conversationId: submitted.conversationId,
+    targetAgent: input.targetAgent ?? "codex",
+    userEntry: submitted.userEntry,
+    responseEntry: submitted.responseEntry
+  })
+  return {
+    ...submitted,
+    outcome,
+    userEntry: repository.getConversationEntry(submitted.userEntry.id) ?? submitted.userEntry,
+    responseEntry: repository.getConversationEntry(submitted.responseEntry.id) ?? submitted.responseEntry
+  }
 }
 
 test("conversation persists before dispatch and retries produce one response", async (t) => {
@@ -126,6 +149,91 @@ test("routing excludes unavailable agents and fixes Arceus to Codex", () => {
   assert.equal(listAllowedAgents("agent_task", { "openclaw.gengar": "offline" }).includes("openclaw.gengar"), false)
 })
 
+test("active Conversation opening creates unknown identities without resetting existing metadata", async (t) => {
+  const { repository } = await fixture(t)
+  const lifecycle = new ConversationLifecycleService(repository)
+  const conversationId = "conversation:11111111-1111-4111-8111-111111111111"
+
+  const created = await lifecycle.openConversation({
+    conversationId,
+    title: "New conversation"
+  })
+  await repository.renameConversation(conversationId, "Keep this title")
+  await repository.setConversationState(conversationId, "archived")
+
+  const reopened = await lifecycle.openConversation({
+    conversationId,
+    title: "New conversation"
+  })
+
+  assert.equal(created.state, "active")
+  assert.equal(created.title, "New conversation")
+  assert.equal(reopened.state, "archived")
+  assert.equal(reopened.title, "Keep this title")
+})
+
+test("Conversation settings update only supplied fields without rewriting a queued Turn", async (t) => {
+  const { repository } = await fixture(t)
+  const lifecycle = new ConversationLifecycleService(repository)
+  const conversationId = "conversation:22222222-2222-4222-8222-222222222222"
+  await lifecycle.openConversation({ conversationId, title: "New conversation" })
+  const submitted = await lifecycle.submitTurn({
+    conversationId,
+    targetAgent: "codex",
+    content: "Keep the turn queued.",
+    idempotencyKey: "settings-preserve-turn"
+  })
+
+  const metadata = await lifecycle.updateConversationSettings({
+    conversationId,
+    selectedModelId: "gpt-5.6-sol"
+  })
+
+  assert.equal(metadata.selectedModelId, "gpt-5.6-sol")
+  assert.equal(metadata.selectedReasoningIntensity, undefined)
+  assert.equal(repository.getConversationEntry(submitted.userEntryId)?.status, "queued")
+
+  const reasoningOnly = await lifecycle.updateConversationSettings({
+    conversationId,
+    selectedReasoningIntensity: "high"
+  })
+
+  assert.equal(reasoningOnly.selectedModelId, "gpt-5.6-sol")
+  assert.equal(reasoningOnly.selectedReasoningIntensity, "high")
+  assert.equal(repository.getConversationEntry(submitted.userEntryId)?.status, "queued")
+
+  await assert.rejects(
+    () => lifecycle.updateConversationSettings({ conversationId }),
+    (error: unknown) =>
+      error instanceof ConversationLifecycleCommandError &&
+      error.code === "conversation_settings_required" &&
+      error.status === 400
+  )
+
+  await assert.rejects(
+    () => lifecycle.updateConversationSettings({
+      conversationId: "conversation:missing-settings",
+      selectedModelId: "gpt-5.6-luna"
+    }),
+    (error: unknown) =>
+      error instanceof ConversationLifecycleCommandError &&
+      error.code === "conversation_not_found" &&
+      error.status === 404
+  )
+
+  await repository.setConversationState(conversationId, "archived")
+  await assert.rejects(
+    () => lifecycle.updateConversationSettings({
+      conversationId,
+      selectedModelId: "gpt-5.6-luna"
+    }),
+    (error: unknown) =>
+      error instanceof ConversationLifecycleCommandError &&
+      error.code === "conversation_not_active" &&
+      error.status === 409
+  )
+})
+
 test("context failures retain the committed user entry as failed", async (t) => {
   const run = createRun()
   const { repository, service } = await fixture(t, { run, failContext: true })
@@ -137,30 +245,33 @@ test("context failures retain the committed user entry as failed", async (t) => 
 
 test("unbound conversation is persisted and moved intact after manager binding", async (t) => {
   const { repository, run, service } = await fixture(t)
-  assert.deepEqual((await service.getUnboundConversation()).entries, [])
+  const conversationId = "conversation:33333333-3333-4333-8333-333333333333"
+  assert.deepEqual((await service.getUnboundConversation(conversationId)).entries, [])
 
-  const result = await service.postUnboundMessage({
+  const result = await submitUnboundAndDispatch(service, repository, {
+    conversationId,
     content: "Continue the Mission project.",
     idempotencyKey: "unbound-message"
   })
 
-  assert.equal(result.binding?.workflowRunId, run.id)
-  assert.equal(repository.listConversation(unboundConversationId).length, 0)
+  assert.equal(result.outcome.status, "completed")
+  assert.equal(repository.listConversation(conversationId).length, 0)
   const movedEntries = repository.listConversation(run.id)
   assert.equal(movedEntries.filter((entry) => entry.role === "user").length, 1)
-  assert.equal(movedEntries.filter((entry) => entry.role === "manager").length, 1)
+  assert.equal(movedEntries.filter((entry) => entry.role === "agent").length, 1)
   const movedUser = movedEntries.find((entry) => entry.role === "user")
-  const movedManager = movedEntries.find((entry) => entry.role === "manager")
+  const movedAgent = movedEntries.find((entry) => entry.role === "agent")
   assert.ok(movedUser)
-  assert.ok(movedManager)
+  assert.ok(movedAgent)
   assert.equal(movedUser.workflowRunId, run.id)
-  assert.equal(movedManager.workflowRunId, run.id)
-  assert.equal(movedManager.replyToId, movedUser.id)
+  assert.equal(movedAgent.workflowRunId, run.id)
+  assert.equal(movedAgent.replyToId, movedUser.id)
 })
 
 test("unbound conversation exposes the registered roster and preserves its OpenClaw target", async (t) => {
   const { repository, service } = await fixture(t)
-  const initial = await service.getUnboundConversation()
+  const conversationId = "conversation:44444444-4444-4444-8444-444444444444"
+  const initial = await service.getUnboundConversation(conversationId)
 
   assert.deepEqual(initial.allowedAgents, [
     "codex",
@@ -172,16 +283,17 @@ test("unbound conversation exposes the registered roster and preserves its OpenC
     "openclaw.gengar"
   ])
 
-  const result = await service.postUnboundMessage({
+  const result = await submitUnboundAndDispatch(service, repository, {
+    conversationId,
     content: "Give me a short research note.",
     targetAgent: "openclaw.gengar",
     idempotencyKey: "unbound-openclaw-message"
   })
 
-  assert.equal(result.binding, undefined)
+  assert.equal(result.outcome.status, "completed")
   assert.equal(result.responseEntry?.agentId, "openclaw.gengar")
   assert.equal(result.responseEntry?.role, "agent")
-  assert.equal(repository.listConversation(unboundConversationId).length, 2)
+  assert.equal(repository.listConversation(conversationId).length, 2)
 })
 
 test("unbound conversation metadata and Codex dispatch preserve the selected model", async (t) => {
@@ -213,6 +325,7 @@ test("unbound conversation metadata and Codex dispatch preserve the selected mod
   let observedRun: WorkflowRun | undefined
   const dispatchService = createConversationService({
     repository,
+    lifecycle: new ConversationLifecycleService(repository),
     getRun: async () => undefined,
     buildContext: async () => undefined,
     invokeAgent: async () => ({ status: "completed" as const, body: "unused" }),
@@ -274,26 +387,31 @@ test("unbound Codex dispatch preserves the selected reasoning intensity", async 
 
   assert.equal(observedRun?.selectedReasoningIntensity, "high")
 })
-test("unbound Codex enqueue persists the selected model before queueing", async (t) => {
+test("unbound lifecycle submission persists Codex settings without rewriting queued Turns", async (t) => {
   const { repository } = await fixture(t)
   const conversationId = "conversation:model-before-enqueue"
   await repository.createConversation({ id: conversationId, title: "Before enqueue" })
+  const lifecycle = new ConversationLifecycleService(repository)
+  const callOrder: string[] = []
+  const submitTurn = lifecycle.submitTurn.bind(lifecycle)
+  const updateConversationSettings = lifecycle.updateConversationSettings.bind(lifecycle)
+  lifecycle.submitTurn = async (input) => {
+    callOrder.push("submitTurn")
+    return await submitTurn(input)
+  }
+  lifecycle.updateConversationSettings = async (input) => {
+    callOrder.push("updateConversationSettings")
+    return await updateConversationSettings(input)
+  }
 
-  const queue = new ConversationQueueService(repository)
-  let modelAtEnqueue: string | undefined
-  let enqueueCalls = 0
   const service = createConversationService({
     repository,
+    lifecycle,
     getRun: async () => undefined,
     buildContext: async () => undefined,
     invokeAgent: async () => ({ status: "completed" as const, body: "unused" }),
     persistRawArtifact: async () => "unused-artifact",
     enqueueManagerWake: async () => undefined,
-    enqueueConversation: async (input) => {
-      enqueueCalls += 1
-      modelAtEnqueue = repository.getConversationMetadata(conversationId)?.selectedModelId
-      return queue.enqueue(input)
-    },
     routeUnbound: async () => ({ status: "completed" as const, body: "unused" })
   })
 
@@ -301,21 +419,42 @@ test("unbound Codex enqueue persists the selected model before queueing", async 
     conversationId,
     targetAgent: "codex",
     content: "Queue with the selected model.",
-    idempotencyKey: "model-before-enqueue",
-    selectedModelId: "gpt-5.6-sol"
+    idempotencyKey: "model/before%enqueue",
+    selectedModelId: "gpt-5.6-sol",
+    selectedReasoningIntensity: "high"
   } as Parameters<typeof service.enqueueUnboundMessage>[0] & { selectedModelId: string }
 
-  await service.enqueueUnboundMessage(selectedModelMessage)
-  assert.equal(modelAtEnqueue, "gpt-5.6-sol")
+  const first = await service.enqueueUnboundMessage(selectedModelMessage)
   assert.equal(repository.getConversationMetadata(conversationId)?.selectedModelId, "gpt-5.6-sol")
+  assert.equal(repository.getConversationMetadata(conversationId)?.selectedReasoningIntensity, "high")
+  assert.equal(repository.getConversationEntry(first.userEntry.id)?.status, "queued")
+  assert.equal(repository.getConversationEntry(first.responseEntry.id)?.status, "queued")
+  assert.deepEqual(callOrder, ["updateConversationSettings", "submitTurn"])
 
   const duplicateModelMessage = {
     ...selectedModelMessage,
-    selectedModelId: "gpt-5.6-luna"
+    selectedModelId: "gpt-5.6-luna",
+    selectedReasoningIntensity: "low"
   } as Parameters<typeof service.enqueueUnboundMessage>[0] & { selectedModelId: string }
   const duplicate = await service.enqueueUnboundMessage(duplicateModelMessage)
   assert.equal(duplicate.duplicate, true)
   assert.equal(repository.getConversationMetadata(conversationId)?.selectedModelId, "gpt-5.6-sol")
+  assert.equal(repository.getConversationMetadata(conversationId)?.selectedReasoningIntensity, "high")
+  assert.equal(duplicate.userEntry.id, first.userEntry.id)
+  assert.equal(duplicate.responseEntry.id, first.responseEntry.id)
+  assert.equal(duplicate.jobId, first.jobId)
+  assert.deepEqual(callOrder, ["updateConversationSettings", "submitTurn", "submitTurn"])
+
+  const nonCodex = await service.enqueueUnboundMessage({
+    ...selectedModelMessage,
+    targetAgent: "mavis",
+    idempotencyKey: "non-codex-settings-ignored",
+    selectedModelId: "must-not-persist",
+    selectedReasoningIntensity: "low"
+  })
+  assert.equal(repository.getConversationMetadata(conversationId)?.selectedModelId, "gpt-5.6-sol")
+  assert.equal(repository.getConversationMetadata(conversationId)?.selectedReasoningIntensity, "high")
+  assert.equal(repository.getConversationEntry(nonCodex.userEntry.id)?.status, "queued")
 
   const invalidModelMessage = {
     ...selectedModelMessage,
@@ -326,7 +465,7 @@ test("unbound Codex enqueue persists the selected model before queueing", async 
     () => service.enqueueUnboundMessage(invalidModelMessage),
     /selectedModelId/
   )
-  assert.equal(enqueueCalls, 2)
+  assert.equal(repository.listConversation(conversationId).length, 4)
 })
 
 test("createHiveServices retains the queued unbound model through the Codex bridge boundary", async (t) => {

@@ -4,7 +4,12 @@ import {
   type SubmittedConversationTurn,
   type SubmitConversationTurnInput
 } from "../hive-memory/repository"
-import type { ConversationEntry, ExecutionJobStatus } from "../hive-memory/types"
+import type {
+  ConversationEntry,
+  ConversationMetadata,
+  ExecutionJobStatus
+} from "../hive-memory/types"
+import type { CodexReasoningIntensity } from "../types"
 import type { TurnIdentity } from "./types"
 
 export interface SubmittedTurn extends TurnIdentity {
@@ -12,6 +17,12 @@ export interface SubmittedTurn extends TurnIdentity {
   readonly responseEntry: ConversationEntry
   readonly jobStatus: ExecutionJobStatus
   readonly duplicate: boolean
+}
+
+interface ValidatedTurnSubmission {
+  readonly content: string
+  readonly idempotencyKey: string
+  readonly responseRole: "agent" | "manager"
 }
 
 export interface ConversationTurnRepository {
@@ -26,6 +37,7 @@ export type ConversationLifecycleCommandErrorCode =
   | "conversation_not_found"
   | "conversation_not_active"
   | "incomplete_turn_record"
+  | "conversation_settings_required"
 
 export class ConversationLifecycleCommandError extends Error {
   constructor(
@@ -39,15 +51,65 @@ export class ConversationLifecycleCommandError extends Error {
 }
 
 export class ConversationLifecycleService {
-  constructor(private readonly repository: ConversationTurnRepository) {}
+  constructor(private readonly repository: ConversationLifecycleRepository) {}
 
-  async submitTurn(input: {
+  async openConversation(input: {
     conversationId: string
-    targetAgent: AgentKind
+    title: string
+  }): Promise<ConversationMetadata> {
+    const existing = this.repository.getConversationMetadata?.(input.conversationId)
+    if (existing) return existing
+    if (!this.repository.createConversation) {
+      throw new Error("Conversation creation is unavailable")
+    }
+    return await this.repository.createConversation({
+      id: input.conversationId,
+      title: input.title
+    })
+  }
+
+  async updateConversationSettings(input: {
+    conversationId: string
+    selectedModelId?: string | null
+    selectedReasoningIntensity?: CodexReasoningIntensity | null
+  }): Promise<ConversationMetadata> {
+    const metadata = this.repository.getConversationMetadata?.(input.conversationId)
+    if (!metadata) {
+      throw new ConversationLifecycleCommandError(
+        "conversation_not_found",
+        404,
+        `Conversation ${input.conversationId} was not found.`
+      )
+    }
+    if (metadata.state !== "active") {
+      throw new ConversationLifecycleCommandError(
+        "conversation_not_active",
+        409,
+        `Conversation ${input.conversationId} is not active.`
+      )
+    }
+    if (input.selectedModelId === undefined && input.selectedReasoningIntensity === undefined) {
+      throw new ConversationLifecycleCommandError(
+        "conversation_settings_required",
+        400,
+        "At least one conversation setting is required."
+      )
+    }
+    if (!this.repository.updateConversationProfile) {
+      throw new Error("Conversation settings are unavailable")
+    }
+    return await this.repository.updateConversationProfile({
+      id: input.conversationId,
+      selectedModelId: input.selectedModelId,
+      selectedReasoningIntensity: input.selectedReasoningIntensity
+    })
+  }
+
+  validateSubmitTurn(input: {
     content: unknown
     idempotencyKey: unknown
     responseRole?: unknown
-  }): Promise<SubmittedTurn> {
+  }): ValidatedTurnSubmission {
     if (typeof input.content !== "string" || !input.content.trim()) {
       throw new ConversationLifecycleCommandError("content_required", 400, "content is required")
     }
@@ -70,12 +132,23 @@ export class ConversationLifecycleService {
         "responseRole must be agent or manager"
       )
     }
+    return { content: input.content, idempotencyKey, responseRole }
+  }
+
+  async submitTurn(input: {
+    conversationId: string
+    targetAgent: AgentKind
+    content: unknown
+    idempotencyKey: unknown
+    responseRole?: unknown
+  }): Promise<SubmittedTurn> {
+    const { content, idempotencyKey, responseRole } = this.validateSubmitTurn(input)
 
     try {
       const submitted = await this.repository.submitConversationTurn({
         conversationId: input.conversationId,
         targetAgent: input.targetAgent,
-        content: input.content,
+        content,
         idempotencyKey,
         responseRole
       })
@@ -97,6 +170,16 @@ export class ConversationLifecycleService {
       throw error
     }
   }
+}
+
+interface ConversationLifecycleRepository extends ConversationTurnRepository {
+  getConversationMetadata?: (conversationId: string) => ConversationMetadata | undefined
+  createConversation?: (input: { id: string; title: string }) => Promise<ConversationMetadata>
+  updateConversationProfile?: (input: {
+    id: string
+    selectedModelId?: string | null
+    selectedReasoningIntensity?: CodexReasoningIntensity | null
+  }) => Promise<ConversationMetadata>
 }
 
 function commandErrorFromRepository(

@@ -3,6 +3,7 @@ import type { AgentInvocationInput } from "./agent-bridge"
 import { invokeConfiguredAgent, invokeConfiguredHiveManager } from "./agent-bridge"
 import { getAgentPermissionMode } from "./agent-permissions"
 import { createConversationService } from "./conversation"
+import { ConversationLifecycleService } from "./conversation-lifecycle/service"
 import {
   ConversationDispatcher,
   ConversationQueueService
@@ -54,6 +55,7 @@ export function createHiveServices(options: HiveServicesOptions = {}) {
   const database = options.database ?? openHiveDatabase()
   const repository = options.repository ?? createHiveMemoryRepository(database)
   const contextBuilder = createContextBuilder(repository)
+  const conversationLifecycle = new ConversationLifecycleService(repository)
   const conversationQueue = new ConversationQueueService(repository)
   const getRun = options.getRun ?? getWorkflowRun
   const saveRun = options.saveRun ?? ((run) => upsertWorkflowRun(run, { expectedVersion: run.version }))
@@ -124,6 +126,7 @@ export function createHiveServices(options: HiveServicesOptions = {}) {
   })
   const conversation = createConversationService({
     repository,
+    lifecycle: conversationLifecycle,
     getRun,
     buildContext: async ({ run, targetAgent, entries, content }) => {
       const shareableEntries = entries.filter(isShareableConversationEntry).slice(-20)
@@ -218,6 +221,7 @@ export function createHiveServices(options: HiveServicesOptions = {}) {
   return {
     database,
     repository,
+    conversationLifecycle,
     scheduler,
     conversation,
     conversationQueue,

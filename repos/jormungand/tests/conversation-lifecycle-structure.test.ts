@@ -15,6 +15,7 @@ import {
   unboundConversationId
 } from "../lib/conversation"
 import { ConversationHistorySync } from "../lib/conversation-history-sync"
+import { ConversationLifecycleService } from "../lib/conversation-lifecycle/service"
 import {
   buildSharedConversationHistory,
   sharedConversationHistoryLimit
@@ -85,6 +86,7 @@ async function conversationFixture(t: test.TestContext) {
   const run = createRun()
   const service = createConversationService({
     repository,
+    lifecycle: new ConversationLifecycleService(repository),
     getRun: async (id) => (id === run.id ? run : undefined),
     buildContext: async () => undefined,
     invokeAgent: async () => ({ status: "completed", body: "Conversation reply" }),
@@ -97,6 +99,19 @@ async function conversationFixture(t: test.TestContext) {
       }) satisfies { status: "completed"; body: string; binding?: ConversationBinding }
   })
   return { repository, run, service }
+}
+
+async function submitUnboundAndDrain(
+  services: ReturnType<typeof createHiveServices>,
+  input: Parameters<ReturnType<typeof createHiveServices>["conversation"]["enqueueUnboundMessage"]>[0]
+) {
+  const submitted = await services.conversation.enqueueUnboundMessage(input)
+  await services.conversationDispatcher.drain(submitted.conversationId)
+  return {
+    ...submitted,
+    userEntry: services.repository.getConversationEntry(submitted.userEntry.id) ?? submitted.userEntry,
+    responseEntry: services.repository.getConversationEntry(submitted.responseEntry.id) ?? submitted.responseEntry
+  }
 }
 
 function installFetchMock(
@@ -309,7 +324,7 @@ describe("conversation route contracts", { concurrency: false }, () => {
     assert.equal(body.metadata?.state, "active")
   })
 
-  test("conversation new route persists active metadata as well as the cookie", async (t) => {
+  test("body-less conversation new POST persists active metadata as well as the cookie", async (t) => {
     const { POST } = await importRouteWithIsolatedDataDir<{
       POST: (request: Request) => Promise<Response>
     }>(t, "../app/api/conversation/new/route")
@@ -413,6 +428,99 @@ describe("conversation route contracts", { concurrency: false }, () => {
     assert.equal(duplicateBody.userEntry.id, freshBody.userEntry.id)
     assert.equal(duplicateBody.responseEntry.id, freshBody.responseEntry.id)
     assert.equal(duplicateBody.jobId, freshBody.jobId)
+  })
+
+  test("unbound POST creates an unknown valid identity on first use", async (t) => {
+    const { POST } = await importRouteWithIsolatedDataDir<{
+      POST: (request: Request) => Promise<Response>
+    }>(t, "../app/api/conversation/route")
+    const { getDefaultHiveServices } = await getRouteServices()
+    const conversationId = "conversation:eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"
+    const response = await POST(new Request("http://localhost/api/conversation", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        conversationId,
+        content: "Create this unbound conversation on first use.",
+        idempotencyKey: "unknown-conversation-first-use",
+        targetAgent: "codex"
+      })
+    }))
+    const body = await response.json() as { conversationId?: string }
+    const services = getDefaultHiveServices()
+    const metadata = services.repository.getConversationMetadata(conversationId)
+    await services.conversationDispatcher.drain(conversationId)
+
+    assert.equal(response.status, 202)
+    assert.equal(body.conversationId, conversationId)
+    assert.equal(metadata?.conversationId, conversationId)
+    assert.equal(metadata?.title, "New conversation")
+    assert.equal(metadata?.state, "active")
+  })
+
+  test("unbound POST rejects malformed idempotency before creating an unknown conversation", async (t) => {
+    const { POST } = await importRouteWithIsolatedDataDir<{
+      POST: (request: Request) => Promise<Response>
+    }>(t, "../app/api/conversation/route")
+    const { getDefaultHiveServices } = await getRouteServices()
+    const conversationId = "conversation:abababab-abab-4bab-8bab-abababababab"
+
+    const response = await POST(new Request("http://localhost/api/conversation", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        conversationId,
+        content: "Reject this before opening the conversation.",
+        idempotencyKey: "\uD800",
+        targetAgent: "codex"
+      })
+    }))
+    const body = await response.json() as { error?: string }
+    const services = getDefaultHiveServices()
+    const jobCount = services.database.read((connection) =>
+      (connection.prepare(
+        "SELECT COUNT(*) AS count FROM execution_jobs WHERE workflow_run_id = ?"
+      ).get(conversationId) as { count: number }).count
+    )
+
+    assert.equal(response.status, 400)
+    assert.match(body.error ?? "", /idempotencyKey.*invalid/i)
+    assert.equal(services.repository.getConversationMetadata(conversationId), undefined)
+    assert.deepEqual(services.repository.listConversation(conversationId), [])
+    assert.equal(jobCount, 0)
+  })
+
+  test("archived Conversation POST returns 409 JSON without creating a Turn or Job", async (t) => {
+    const { POST } = await importRouteWithIsolatedDataDir<{
+      POST: (request: Request) => Promise<Response>
+    }>(t, "../app/api/conversation/route")
+    const { getDefaultHiveServices } = await getRouteServices()
+    const services = getDefaultHiveServices()
+    const conversationId = "conversation:ffffffff-ffff-4fff-8fff-ffffffffffff"
+    await services.repository.createConversation({ id: conversationId, title: "Archived" })
+    await services.repository.setConversationState(conversationId, "archived")
+
+    const response = await POST(new Request("http://localhost/api/conversation", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        conversationId,
+        content: "This must not enqueue.",
+        idempotencyKey: "archived-conversation-submit",
+        targetAgent: "codex"
+      })
+    }))
+    const body = await response.json() as { error?: string }
+
+    assert.equal(response.status, 409)
+    assert.match(body.error ?? "", /active/i)
+    assert.deepEqual(services.repository.listConversation(conversationId), [])
+    assert.equal(
+      services.repository.getExecutionJobByIdempotencyKey(
+        `${conversationId}:archived-conversation-submit:dispatch`
+      ),
+      undefined
+    )
   })
 
   test("conversations collection route creates managed conversations and filters archived items by default", async (t) => {
@@ -853,7 +961,7 @@ test("unbound Codex routing dispatches directly to Codex with direct execution s
   const conversationId = "conversation:direct-codex"
   const content = "Please answer directly from the unbound conversation."
 
-  await services.conversation.postUnboundMessage({
+  await submitUnboundAndDrain(services, {
     conversationId,
     targetAgent: "codex",
     content,
@@ -1062,7 +1170,7 @@ test("unbound OpenClaw direct routing bounds first bootstrap history to the newe
   }
 
   const existingEntries = repository.listConversation("conversation:bootstrap-bounded")
-  const result = await services.conversation.postUnboundMessage({
+  const result = await submitUnboundAndDrain(services, {
     conversationId: "conversation:bootstrap-bounded",
     targetAgent: "openclaw.gengar",
     content: "Use only the bounded newest bootstrap history.",
@@ -1119,7 +1227,7 @@ test("unbound OpenClaw direct routing persists per-agent runtime state and skips
   })
 
   await repository.insertConversation({
-    workflowRunId: "conversation-runtime",
+    workflowRunId: "conversation:runtime",
     role: "manager",
     agentId: "codex",
     content: "Earlier manager note",
@@ -1127,10 +1235,10 @@ test("unbound OpenClaw direct routing persists per-agent runtime state and skips
     status: "completed",
     artifactIds: [],
     memoryIds: [],
-    idempotencyKey: "conversation-runtime:seed-manager"
+    idempotencyKey: "conversation:runtime:seed-manager"
   })
   await repository.insertConversation({
-    workflowRunId: "conversation-runtime",
+    workflowRunId: "conversation:runtime",
     role: "system",
     agentId: "codex",
     content: "System messages must not be shared as bootstrap history",
@@ -1138,17 +1246,17 @@ test("unbound OpenClaw direct routing persists per-agent runtime state and skips
     status: "completed",
     artifactIds: [],
     memoryIds: [],
-    idempotencyKey: "conversation-runtime:seed-system"
+    idempotencyKey: "conversation:runtime:seed-system"
   })
 
-  const first = await services.conversation.postUnboundMessage({
-    conversationId: "conversation-runtime",
+  const first = await submitUnboundAndDrain(services, {
+    conversationId: "conversation:runtime",
     targetAgent: "openclaw.gengar",
     content: "First persistent turn",
-    idempotencyKey: "conversation-runtime:first"
+    idempotencyKey: "conversation:runtime:first"
   })
   const firstRuntime = repository.getOpenClawRuntimeSession(
-    "conversation-runtime",
+    "conversation:runtime",
     "openclaw.gengar"
   )
 
@@ -1179,14 +1287,14 @@ test("unbound OpenClaw direct routing persists per-agent runtime state and skips
   assert.match(firstRuntime?.sessionKeyFingerprint ?? "", /^sha256:[0-9a-f]{64}$/)
 
   const firstFingerprint = firstRuntime?.sessionKeyFingerprint
-  const second = await services.conversation.postUnboundMessage({
-    conversationId: "conversation-runtime",
+  const second = await submitUnboundAndDrain(services, {
+    conversationId: "conversation:runtime",
     targetAgent: "openclaw.gengar",
     content: "Second turn should reuse the persistent transcript",
-    idempotencyKey: "conversation-runtime:second"
+    idempotencyKey: "conversation:runtime:second"
   })
   const secondRuntime = repository.getOpenClawRuntimeSession(
-    "conversation-runtime",
+    "conversation:runtime",
     "openclaw.gengar"
   )
 
@@ -1196,14 +1304,14 @@ test("unbound OpenClaw direct routing persists per-agent runtime state and skips
   assert.equal(secondRuntime?.lastDeliveredEntryId, second.userEntry.id)
   assert.equal(secondRuntime?.sessionKeyFingerprint, firstFingerprint)
 
-  const rowlet = await services.conversation.postUnboundMessage({
-    conversationId: "conversation-runtime",
+  const rowlet = await submitUnboundAndDrain(services, {
+    conversationId: "conversation:runtime",
     targetAgent: "openclaw.rowlet",
     content: "Different agent gets its own bootstrap",
-    idempotencyKey: "conversation-runtime:rowlet"
+    idempotencyKey: "conversation:runtime:rowlet"
   })
   const rowletRuntime = repository.getOpenClawRuntimeSession(
-    "conversation-runtime",
+    "conversation:runtime",
     "openclaw.rowlet"
   )
 
@@ -1223,14 +1331,14 @@ test("unbound OpenClaw direct routing persists per-agent runtime state and skips
   assert.equal(rowletRuntime?.lastDeliveredEntryId, rowlet.userEntry.id)
   assert.notEqual(rowletRuntime?.sessionKeyFingerprint, firstFingerprint)
 
-  const otherConversation = await services.conversation.postUnboundMessage({
-    conversationId: "conversation-other",
+  const otherConversation = await submitUnboundAndDrain(services, {
+    conversationId: "conversation:other",
     targetAgent: "openclaw.gengar",
     content: "Different conversation gets an isolated runtime row",
-    idempotencyKey: "conversation-other:first"
+    idempotencyKey: "conversation:other:first"
   })
   const otherRuntime = repository.getOpenClawRuntimeSession(
-    "conversation-other",
+    "conversation:other",
     "openclaw.gengar"
   )
 
@@ -1265,14 +1373,14 @@ test("unbound OpenClaw direct routing keeps bootstrap pending after failed first
     }
   })
 
-  const failedFirstTurn = await services.conversation.postUnboundMessage({
-    conversationId: "conversation-failure",
+  const failedFirstTurn = await submitUnboundAndDrain(services, {
+    conversationId: "conversation:failure",
     targetAgent: "openclaw.gengar",
     content: "The first direct delivery should fail",
-    idempotencyKey: "conversation-failure:first"
+    idempotencyKey: "conversation:failure:first"
   })
   const afterFailure = repository.getOpenClawRuntimeSession(
-    "conversation-failure",
+    "conversation:failure",
     "openclaw.gengar"
   )
 
@@ -1284,18 +1392,18 @@ test("unbound OpenClaw direct routing keeps bootstrap pending after failed first
   assert.equal(afterFailure?.bootstrapDelivered, false)
   assert.equal(afterFailure?.lastDeliveredEntryId, undefined)
 
-  const retriedTurn = await services.conversation.postUnboundMessage({
-    conversationId: "conversation-failure",
+  const retriedTurn = await submitUnboundAndDrain(services, {
+    conversationId: "conversation:failure",
     targetAgent: "openclaw.gengar",
     content: "The retry should bootstrap again and activate the session",
-    idempotencyKey: "conversation-failure:retry"
+    idempotencyKey: "conversation:failure:retry"
   })
   const afterRetry = repository.getOpenClawRuntimeSession(
-    "conversation-failure",
+    "conversation:failure",
     "openclaw.gengar"
   )
   const retryHistoryEntries = repository
-    .listConversation("conversation-failure")
+    .listConversation("conversation:failure")
     .filter((entry) => entry.id !== retriedTurn.responseEntry?.id)
 
   assert.deepEqual(
@@ -1325,13 +1433,13 @@ test("unbound OpenClaw direct routing records ambiguous first delivery without r
     }
   })
 
-  const first = await services.conversation.postUnboundMessage({
+  const first = await submitUnboundAndDrain(services, {
     conversationId: "conversation:ambiguous-first",
     targetAgent: "openclaw.gengar",
     content: "The first request may have been accepted.",
     idempotencyKey: "conversation:ambiguous-first:request"
   })
-  const duplicate = await services.conversation.postUnboundMessage({
+  const duplicate = await submitUnboundAndDrain(services, {
     conversationId: "conversation:ambiguous-first",
     targetAgent: "openclaw.gengar",
     content: "The first request may have been accepted.",
@@ -1376,13 +1484,13 @@ test("unbound OpenClaw direct routing preserves the cursor after ambiguous later
     }
   })
 
-  const first = await services.conversation.postUnboundMessage({
+  const first = await submitUnboundAndDrain(services, {
     conversationId: "conversation:ambiguous-later",
     targetAgent: "openclaw.gengar",
     content: "Confirmed first turn.",
     idempotencyKey: "conversation:ambiguous-later:first"
   })
-  const second = await services.conversation.postUnboundMessage({
+  const second = await submitUnboundAndDrain(services, {
     conversationId: "conversation:ambiguous-later",
     targetAgent: "openclaw.gengar",
     content: "The later request may have been accepted.",
@@ -1428,7 +1536,7 @@ test("a new OpenClaw entry after ambiguous delivery uses the persistent session 
     }
   })
 
-  const first = await services.conversation.postUnboundMessage({
+  const first = await submitUnboundAndDrain(services, {
     conversationId: "conversation:ambiguous-recovery",
     targetAgent: "openclaw.gengar",
     content: "The first request may have been accepted.",
@@ -1440,7 +1548,7 @@ test("a new OpenClaw entry after ambiguous delivery uses the persistent session 
   )
   assert.equal(capturedInputs.length, 1)
 
-  const second = await services.conversation.postUnboundMessage({
+  const second = await submitUnboundAndDrain(services, {
     conversationId: "conversation:ambiguous-recovery",
     targetAgent: "openclaw.gengar",
     content: "This is a new operator turn.",
@@ -1519,16 +1627,16 @@ test("unbound OpenClaw routing preserves conversation and agent identity at the 
   })
 
   const post = (conversationId: string, targetAgent: AgentKind, sequence: number) =>
-    services.conversation.postUnboundMessage({
+    submitUnboundAndDrain(services, {
       conversationId,
       targetAgent,
       content: `Message ${sequence}`,
       idempotencyKey: `openclaw-boundary-${sequence}`
     })
-  await post("conversation-a", "openclaw.gengar", 1)
-  await post("conversation-a", "openclaw.gengar", 2)
-  await post("conversation-a", "openclaw.rowlet", 3)
-  await post("conversation-b", "openclaw.gengar", 4)
+  await post("conversation:a", "openclaw.gengar", 1)
+  await post("conversation:a", "openclaw.gengar", 2)
+  await post("conversation:a", "openclaw.rowlet", 3)
+  await post("conversation:b", "openclaw.gengar", 4)
 
   assert.equal(bridgePayloads.length, 4)
   for (const payload of bridgePayloads) {
@@ -1543,10 +1651,10 @@ test("unbound OpenClaw routing preserves conversation and agent identity at the 
       mainAgent: payload.mainAgent
     })),
     [
-      { conversationId: "conversation-a", executor: "openclaw.gengar", mainAgent: "gengar" },
-      { conversationId: "conversation-a", executor: "openclaw.gengar", mainAgent: "gengar" },
-      { conversationId: "conversation-a", executor: "openclaw.rowlet", mainAgent: "rowlet" },
-      { conversationId: "conversation-b", executor: "openclaw.gengar", mainAgent: "gengar" }
+      { conversationId: "conversation:a", executor: "openclaw.gengar", mainAgent: "gengar" },
+      { conversationId: "conversation:a", executor: "openclaw.gengar", mainAgent: "gengar" },
+      { conversationId: "conversation:a", executor: "openclaw.rowlet", mainAgent: "rowlet" },
+      { conversationId: "conversation:b", executor: "openclaw.gengar", mainAgent: "gengar" }
     ]
   )
 
