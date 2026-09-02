@@ -1,11 +1,13 @@
 import assert from "node:assert/strict"
-import { lstat, mkdir, realpath, rm, symlink } from "node:fs/promises"
+import { lstat, mkdir, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises"
+import { createRequire } from "node:module"
 import { join } from "node:path"
 import { createElement } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
 import test from "node:test"
 import type { AgentKind } from "../lib/types"
 import type { AgentLiveEvent } from "../lib/agent-live-events"
+import type { ConversationEntry } from "../lib/hive-memory/types"
 import { createWorkflowRun } from "../lib/workflow"
 
 type AgentLivePreview = {
@@ -13,6 +15,15 @@ type AgentLivePreview = {
   reasoning?: string
   status?: string
 }
+
+type MergeResult = (
+  current: ConversationEntry[],
+  optimisticId: string,
+  userEntry: ConversationEntry,
+  responseEntry?: ConversationEntry
+) => ConversationEntry[]
+
+const requireCompiledModule = createRequire(__filename)
 
 async function ensureCompiledAlias() {
   const tmpRoot = join(process.cwd(), ".tmp-tests")
@@ -50,6 +61,24 @@ async function loadTaskConversation() {
 async function loadTaskConversationModule() {
   await ensureCompiledAlias()
   return await import("../components/task-conversation") as typeof import("../components/task-conversation") & Record<string, unknown>
+}
+
+async function withMergeResultProbe<T>(operation: (mergeResult: MergeResult) => T | Promise<T>) {
+  await ensureCompiledAlias()
+  const componentPath = join(process.cwd(), ".tmp-tests", "components", "task-conversation.js")
+  const probePath = join(process.cwd(), ".tmp-tests", "components", `task-conversation.merge-probe-${process.pid}.cjs`)
+  const compiledComponent = await readFile(componentPath, "utf8")
+  await writeFile(probePath, `${compiledComponent}\nmodule.exports.mergeResultForTest = mergeResult\n`)
+
+  try {
+    const probe = requireCompiledModule(probePath) as { mergeResultForTest?: MergeResult }
+    const mergeResult = probe.mergeResultForTest
+    assert.equal(typeof mergeResult, "function")
+    if (!mergeResult) throw new Error("Compiled conversation merge helper was not exposed by the probe")
+    return await operation(mergeResult)
+  } finally {
+    await rm(probePath, { force: true })
+  }
 }
 
 async function loadHarnessDashboardModule() {
@@ -1167,4 +1196,37 @@ test("openclaw live helpers encode the SSE path and bound preview activity", asy
   assert.equal(preview.events.length, 18)
   assert.equal(preview.events[0]?.delta, "delta-6")
   assert.equal(preview.reasoning?.length, 8_000)
+})
+
+test("immediate conversation POST merge preserves server causal order when timestamps tie", async () => {
+  await withMergeResultProbe((mergeResult) => {
+    const entry = (id: string, createdAt: string): ConversationEntry => ({
+      id,
+      workflowRunId: "run-ui-order",
+      role: "user",
+      content: id,
+      importance: "normal",
+      status: "completed",
+      artifactIds: [],
+      memoryIds: [],
+      idempotencyKey: id,
+      createdAt
+    })
+
+    const merged = mergeResult(
+      [
+        entry("earlier", "2026-09-02T00:00:00.000Z"),
+        entry("optimistic", "2026-09-02T00:00:01.000Z"),
+        entry("later", "2026-09-02T00:00:02.000Z")
+      ],
+      "optimistic",
+      entry("server-user-z", "2026-09-02T00:00:01.000Z"),
+      entry("server-response-a", "2026-09-02T00:00:01.000Z")
+    )
+
+    assert.deepEqual(
+      merged.map((entry) => entry.id),
+      ["earlier", "server-user-z", "server-response-a", "later"]
+    )
+  })
 })

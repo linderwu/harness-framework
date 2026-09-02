@@ -1146,7 +1146,7 @@ export class HiveMemoryRepository {
     return this.database.read((connection) =>
       (connection.prepare(`
         SELECT * FROM conversation_entries
-        WHERE workflow_run_id = ? ORDER BY created_at ASC, id ASC
+        WHERE workflow_run_id = ? ORDER BY created_at ASC, rowid ASC
       `).all(workflowRunId) as ConversationRow[]).map(conversationFromRow)
     )
   }

@@ -1344,7 +1344,7 @@ function readAgentLiveMessage(event: AgentLiveEvent) {
 function mergeResult(current: ConversationEntry[], optimisticId: string, userEntry: ConversationEntry, responseEntry?: ConversationEntry) {
   const withoutOptimistic = current.filter((entry) => entry.id !== optimisticId && entry.id !== userEntry.id && entry.id !== responseEntry?.id)
   return [...withoutOptimistic, userEntry, ...(responseEntry ? [responseEntry] : [])]
-    .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id))
+    .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
 }
 
 function formatError(error: unknown) { return error instanceof Error ? error.message : String(error) }

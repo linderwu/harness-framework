@@ -757,3 +757,31 @@ test("updateA2ATask returns its own projection even when another update is queue
   assert.equal(persisted?.status, "failed")
   assert.equal(persisted?.remoteTaskId, "remote-task-race")
 })
+
+test("listConversation preserves insertion order when entries share a timestamp", async (t) => {
+  const dataDir = await mkdtemp(join(tmpdir(), "jormungand-conversation-order-"))
+  const database = openHiveDatabase({ dataDir })
+  t.after(async () => {
+    database.close()
+    await rm(dataDir, { recursive: true, force: true })
+  })
+  const repository = createHiveMemoryRepository(database)
+  const workflowRunId = "run-conversation-order"
+  const createdAt = "2026-09-02T00:00:00.000Z"
+
+  await database.write((connection) => {
+    const insert = connection.prepare(`
+      INSERT INTO conversation_entries(
+        id, workflow_run_id, task_id, role, agent_id, recipient_agent, content, importance,
+        status, reply_to_id, artifact_ids_json, memory_ids_json, idempotency_key, created_at
+      ) VALUES (?, ?, NULL, ?, NULL, NULL, ?, 'normal', 'completed', NULL, '[]', '[]', ?, ?)
+    `)
+    insert.run("entry-z-inserted-first", workflowRunId, "user", "first entry", "conversation-order-first", createdAt)
+    insert.run("entry-a-inserted-second", workflowRunId, "agent", "second entry", "conversation-order-second", createdAt)
+  })
+
+  assert.deepEqual(
+    repository.listConversation(workflowRunId).map((entry) => entry.id),
+    ["entry-z-inserted-first", "entry-a-inserted-second"]
+  )
+})
