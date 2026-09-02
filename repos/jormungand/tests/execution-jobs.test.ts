@@ -143,7 +143,10 @@ test("enqueueing the same execution job idempotency key returns the original row
   assert.equal(first.job.status, "queued")
   assert.equal(first.job.attemptCount, 0)
 
-  const duplicate = await repository.createExecutionJob(createJobInput())
+  const duplicate = await repository.createExecutionJob({
+    ...createJobInput(),
+    payload: { step: 2 }
+  })
   assert.equal(duplicate.inserted, false)
   assert.equal(duplicate.job.id, first.job.id)
   assert.equal(duplicate.job.payloadJson, first.job.payloadJson)

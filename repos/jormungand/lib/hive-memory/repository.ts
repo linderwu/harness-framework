@@ -9,6 +9,7 @@ import type {
   ConversationEntry,
   ConversationMetadata,
   ConversationState,
+  ConversationStatus,
   ConversationSummary,
   CreateA2ATaskInput,
   CreateExecutionJobInput,
@@ -1116,26 +1117,7 @@ export class HiveMemoryRepository {
       id: crypto.randomUUID(),
       createdAt: new Date().toISOString()
     }
-    const inserted = await this.database.transaction((connection) => {
-      this.ensureConversationMetadata(connection, input.workflowRunId, deriveConversationTitle(input.role, input.content), entry.createdAt)
-      const result = connection.prepare(`
-        INSERT OR IGNORE INTO conversation_entries(
-          id, workflow_run_id, task_id, role, agent_id, recipient_agent, content, importance,
-          status, reply_to_id, artifact_ids_json, memory_ids_json,
-          idempotency_key, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(
-        entry.id, entry.workflowRunId, entry.taskId ?? null, entry.role,
-        entry.agentId ?? null, entry.recipientAgent ?? null,
-        entry.content, entry.importance, entry.status,
-        entry.replyToId ?? null, JSON.stringify(entry.artifactIds),
-        JSON.stringify(entry.memoryIds), entry.idempotencyKey, entry.createdAt
-      )
-      if (result.changes > 0) {
-        this.touchConversationMetadata(connection, input.workflowRunId, entry.createdAt)
-      }
-      return result.changes > 0
-    })
+    const inserted = await this.database.transaction((connection) => this.insertConversationOnConnection(connection, entry))
     return {
       entry: inserted ? entry : this.getConversationByIdempotencyKey(input.idempotencyKey)!,
       inserted
@@ -1196,25 +1178,7 @@ export class HiveMemoryRepository {
     memoryIds?: string[]
   }) {
     await this.database.transaction((connection) => {
-      const existing = connection.prepare("SELECT workflow_run_id FROM conversation_entries WHERE id = ?")
-        .get(input.id) as { workflow_run_id: string } | undefined
-      connection.prepare(`
-        UPDATE conversation_entries SET
-          content = COALESCE(?, content),
-          status = COALESCE(?, status),
-          artifact_ids_json = COALESCE(?, artifact_ids_json),
-          memory_ids_json = COALESCE(?, memory_ids_json)
-        WHERE id = ?
-      `).run(
-        input.content ?? null,
-        input.status ?? null,
-        input.artifactIds ? JSON.stringify(input.artifactIds) : null,
-        input.memoryIds ? JSON.stringify(input.memoryIds) : null,
-        input.id
-      )
-      if (existing) {
-        this.touchConversationMetadata(connection, existing.workflow_run_id)
-      }
+      this.updateConversationOnConnection(connection, input)
     })
     return this.getConversationEntry(input.id)
   }
@@ -1710,26 +1674,7 @@ export class HiveMemoryRepository {
         return { job: executionJobFromRow(existing), inserted: false }
       }
 
-      connection.prepare(`
-        INSERT INTO execution_jobs(
-          id, kind, workflow_run_id, payload_json, idempotency_key, status,
-          attempt_count, available_at, lease_owner, lease_expires_at,
-          result_json, last_error, created_at, updated_at, completed_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, ?, ?, NULL)
-      `).run(
-        job.id,
-        job.kind,
-        job.workflowRunId ?? null,
-        job.payloadJson,
-        job.idempotencyKey,
-        job.status,
-        job.attemptCount,
-        job.availableAt,
-        job.createdAt,
-        job.updatedAt
-      )
-
-      return { job, inserted: true }
+      return { job, inserted: this.insertExecutionJobOnConnection(connection, job) }
     })
   }
 
@@ -2165,6 +2110,117 @@ export class HiveMemoryRepository {
     const metadata = this.getConversationMetadata(id)
     if (!metadata) throw new Error(`Conversation ${id} not found.`)
     return metadata
+  }
+
+  private insertConversationOnConnection(
+    connection: Database.Database,
+    entry: ConversationEntry
+  ): boolean {
+    this.ensureConversationMetadata(
+      connection,
+      entry.workflowRunId,
+      deriveConversationTitle(entry.role, entry.content),
+      entry.createdAt
+    )
+    const result = connection.prepare(`
+      INSERT OR IGNORE INTO conversation_entries(
+        id, workflow_run_id, task_id, role, agent_id, recipient_agent, content, importance,
+        status, reply_to_id, artifact_ids_json, memory_ids_json,
+        idempotency_key, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      entry.id, entry.workflowRunId, entry.taskId ?? null, entry.role,
+      entry.agentId ?? null, entry.recipientAgent ?? null,
+      entry.content, entry.importance, entry.status,
+      entry.replyToId ?? null, JSON.stringify(entry.artifactIds),
+      JSON.stringify(entry.memoryIds), entry.idempotencyKey, entry.createdAt
+    )
+    if (result.changes > 0) {
+      this.touchConversationMetadata(connection, entry.workflowRunId, entry.createdAt)
+    }
+    return result.changes > 0
+  }
+
+  private insertExecutionJobOnConnection(
+    connection: Database.Database,
+    job: ExecutionJob
+  ): boolean {
+    connection.prepare(`
+      INSERT INTO execution_jobs(
+        id, kind, workflow_run_id, payload_json, idempotency_key, status,
+        attempt_count, available_at, lease_owner, lease_expires_at,
+        result_json, last_error, created_at, updated_at, completed_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, ?, ?, NULL)
+    `).run(
+      job.id,
+      job.kind,
+      job.workflowRunId ?? null,
+      job.payloadJson,
+      job.idempotencyKey,
+      job.status,
+      job.attemptCount,
+      job.availableAt,
+      job.createdAt,
+      job.updatedAt
+    )
+    return true
+  }
+
+  private updateConversationOnConnection(
+    connection: Database.Database,
+    input: {
+      id: string
+      content?: string
+      status?: ConversationStatus
+      artifactIds?: string[]
+      memoryIds?: string[]
+    }
+  ): undefined
+  private updateConversationOnConnection(
+    connection: Database.Database,
+    input: {
+      id: string
+      content?: string
+      status?: ConversationStatus
+      artifactIds?: string[]
+      memoryIds?: string[]
+    },
+    updatedAt: string
+  ): ConversationEntry | undefined
+  private updateConversationOnConnection(
+    connection: Database.Database,
+    input: {
+      id: string
+      content?: string
+      status?: ConversationStatus
+      artifactIds?: string[]
+      memoryIds?: string[]
+    },
+    updatedAt?: string
+  ): ConversationEntry | undefined {
+    const existing = connection.prepare("SELECT workflow_run_id FROM conversation_entries WHERE id = ?")
+      .get(input.id) as { workflow_run_id: string } | undefined
+    connection.prepare(`
+      UPDATE conversation_entries SET
+        content = COALESCE(?, content),
+        status = COALESCE(?, status),
+        artifact_ids_json = COALESCE(?, artifact_ids_json),
+        memory_ids_json = COALESCE(?, memory_ids_json)
+      WHERE id = ?
+    `).run(
+      input.content ?? null,
+      input.status ?? null,
+      input.artifactIds ? JSON.stringify(input.artifactIds) : null,
+      input.memoryIds ? JSON.stringify(input.memoryIds) : null,
+      input.id
+    )
+    if (existing) {
+      this.touchConversationMetadata(connection, existing.workflow_run_id, updatedAt)
+    }
+    if (updatedAt === undefined) return undefined
+    const row = connection.prepare("SELECT * FROM conversation_entries WHERE id = ?")
+      .get(input.id) as ConversationRow | undefined
+    return row ? conversationFromRow(row) : undefined
   }
 
   private requireMemoryFromConnection(connection: Database.Database, id: string) {

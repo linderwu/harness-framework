@@ -785,3 +785,84 @@ test("listConversation preserves insertion order when entries share a timestamp"
     ["entry-z-inserted-first", "entry-a-inserted-second"]
   )
 })
+
+test("conversation entry insertion rolls back entries and metadata when metadata touch fails", async (t) => {
+  const dataDir = await mkdtemp(join(tmpdir(), "jormungand-conversation-entry-atomicity-"))
+  const database = openHiveDatabase({ dataDir })
+  t.after(async () => {
+    database.close()
+    await rm(dataDir, { recursive: true, force: true })
+  })
+  const repository = createHiveMemoryRepository(database)
+  const existingConversationId = "conversation:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+  const missingConversationId = "conversation:bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+
+  await repository.createConversation({ id: existingConversationId, title: "Stable metadata" })
+  const metadataBeforeFailure = repository.getConversationMetadata(existingConversationId)
+  assert.ok(metadataBeforeFailure)
+
+  await database.write((connection) => {
+    connection.prepare(`
+      CREATE TRIGGER fail_conversation_entry_metadata_touch
+      BEFORE UPDATE ON conversations
+      WHEN OLD.id IN ('${existingConversationId}', '${missingConversationId}')
+      BEGIN
+        SELECT RAISE(FAIL, 'metadata touch failed');
+      END;
+    `).run()
+  })
+
+  for (const workflowRunId of [existingConversationId, missingConversationId]) {
+    await assert.rejects(
+      repository.insertConversation({
+        workflowRunId,
+        role: "user",
+        content: "Atomic insertion must not leak state.",
+        importance: "normal",
+        status: "queued",
+        artifactIds: [],
+        memoryIds: [],
+        idempotencyKey: `conversation-entry-atomicity:${workflowRunId}`
+      }),
+      /metadata touch failed/i
+    )
+    assert.deepEqual(repository.listConversation(workflowRunId), [])
+  }
+
+  assert.deepEqual(repository.getConversationMetadata(existingConversationId), metadataBeforeFailure)
+  assert.equal(repository.getConversationMetadata(missingConversationId), undefined)
+})
+
+test("conversation updates commit before a corrupted JSON readback fails", async (t) => {
+  const dataDir = await mkdtemp(join(tmpdir(), "jormungand-conversation-update-corruption-"))
+  const database = openHiveDatabase({ dataDir })
+  t.after(async () => {
+    database.close()
+    await rm(dataDir, { recursive: true, force: true })
+  })
+  const repository = createHiveMemoryRepository(database)
+  const inserted = await repository.insertConversation({
+    workflowRunId: "run-conversation-update-corruption",
+    role: "user",
+    content: "Original content",
+    importance: "normal",
+    status: "queued",
+    artifactIds: [],
+    memoryIds: [],
+    idempotencyKey: "conversation-update-corruption"
+  })
+
+  await database.write((connection) => {
+    connection.prepare("UPDATE conversation_entries SET artifact_ids_json = '{' WHERE id = ?").run(inserted.entry.id)
+  })
+
+  await assert.rejects(
+    repository.updateConversation({ id: inserted.entry.id, content: "Updated despite corrupted JSON." }),
+    SyntaxError
+  )
+
+  const persisted = database.read((connection) => connection.prepare(
+    "SELECT content FROM conversation_entries WHERE id = ?"
+  ).get(inserted.entry.id) as { content: string } | undefined)
+  assert.equal(persisted?.content, "Updated despite corrupted JSON.")
+})
