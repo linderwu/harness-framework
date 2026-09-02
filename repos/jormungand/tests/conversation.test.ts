@@ -158,12 +158,13 @@ test("unbound conversation is persisted and moved intact after manager binding",
   assert.equal(movedManager.replyToId, movedUser.id)
 })
 
-test("unbound conversation exposes the OpenClaw roster and preserves its target", async (t) => {
+test("unbound conversation exposes the registered roster and preserves its OpenClaw target", async (t) => {
   const { repository, service } = await fixture(t)
   const initial = await service.getUnboundConversation()
 
   assert.deepEqual(initial.allowedAgents, [
     "codex",
+    "mavis",
     "openclaw.rowlet",
     "openclaw.roaringmoon",
     "openclaw.charizard",

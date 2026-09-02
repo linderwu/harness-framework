@@ -140,46 +140,46 @@ test("task workspace makes conversation the largest responsive column", () => {
   assert.match(tablet, /grid-template-columns:\s*1fr/)
 })
 
-test("Codex activity is a responsive page-level lower-left overlay", () => {
+test("Codex activity stays in the left navigation footer", () => {
+  const mountRule = ruleBody(/\.taskNavigation\s+\.liveActivityMount/, ".taskNavigation .liveActivityMount")
   const activityRule = ruleBody(/\.codexActivity/, ".codexActivity")
-  const mobileBlock = mediaBlock(/\(max-width: 640px\)/, "mobile Codex activity layout")
 
-  assert.match(activityRule, /position:\s*fixed;/)
-  assert.match(activityRule, /left:\s*18px;/)
-  assert.match(activityRule, /bottom:\s*max\(18px,\s*env\(safe-area-inset-bottom\)\);/)
-  assert.match(activityRule, /width:\s*min\(360px,\s*calc\(100vw\s*-\s*36px\)\);/)
+  assert.match(mountRule, /display:\s*grid;/)
+  assert.match(mountRule, /margin-top:\s*auto;/)
+  assert.match(mountRule, /min-width:\s*0;/)
+  assert.match(activityRule, /position:\s*static;/)
+  assert.match(activityRule, /width:\s*auto;/)
   assert.match(activityRule, /max-height:\s*min\(32vh,\s*280px\);/)
   assert.match(activityRule, /overflow:\s*hidden;/)
-  assert.match(activityRule, /z-index:\s*20;/)
-  assert.match(
-    mobileBlock,
-    /\.codexActivity\s*\{[\s\S]*?bottom:\s*max\(96px,\s*calc\(12px\s*\+\s*env\(safe-area-inset-bottom\)\)\);[\s\S]*?left:\s*max\(12px,\s*env\(safe-area-inset-left\)\);[\s\S]*?width:\s*min\(360px,\s*calc\(100vw\s*-\s*24px\)\);/
-  )
+  assert.match(css, /\.taskNavigation\s+\.codexActivityPanel\s*\{\s*width:\s*100%;\s*\}/)
 })
 
-test("conversation buttons use short layered press depth with focus, disabled, and motion-safe states", () => {
+test("conversation and live activity buttons use short layered press depth", () => {
   const rootRule = ruleBody(/:root/, ":root")
   const sharedConversationRule = ruleBody(
-    /\.taskConversation\s+\.primaryButton,\s*\n\.taskConversation\s+\.dangerButton,\s*\n\.taskConversation\s+\.compactPanelButton/,
+    /\.taskConversation\s+\.primaryButton,\s*\n\.taskConversation\s+\.dangerButton,\s*\n\.taskConversation\s+\.compactPanelButton,\s*\n\.codexActivity\s+\.compactPanelButton/,
     "conversation-scoped button depth rule"
   )
   const primaryRule = ruleBody(/\.taskConversation\s+\.primaryButton/, ".taskConversation .primaryButton")
-  const compactRule = ruleBody(/\.taskConversation\s+\.compactPanelButton/, ".taskConversation .compactPanelButton")
+  const compactRule = ruleBody(
+    /\.taskConversation\s+\.compactPanelButton,\s*\n\.codexActivity\s+\.compactPanelButton/,
+    ".taskConversation .compactPanelButton"
+  )
   const dangerRule = ruleBody(/\.taskConversation\s+\.dangerButton/, ".taskConversation .dangerButton")
   const compactDangerRule = ruleBody(
-    /\.taskConversation\s+\.compactPanelButton\.danger/,
+    /\.taskConversation\s+\.compactPanelButton\.danger,\s*\n\.codexActivity\s+\.compactPanelButton\.danger/,
     ".taskConversation .compactPanelButton.danger"
   )
   const activeRule = ruleBody(
-    /\.taskConversation\s+\.primaryButton:active,\s*\n\.taskConversation\s+\.dangerButton:active,\s*\n\.taskConversation\s+\.compactPanelButton:active/,
+    /\.taskConversation\s+\.primaryButton:active,\s*\n\.taskConversation\s+\.dangerButton:active,\s*\n\.taskConversation\s+\.compactPanelButton:active,\s*\n\.codexActivity\s+\.compactPanelButton:active/,
     "conversation active layered press rule"
   )
   const focusRule = ruleBody(
-    /\.taskConversation\s+\.primaryButton:focus-visible,\s*\n\.taskConversation\s+\.dangerButton:focus-visible,\s*\n\.taskConversation\s+\.compactPanelButton:focus-visible/,
+    /\.taskConversation\s+\.primaryButton:focus-visible,\s*\n\.taskConversation\s+\.dangerButton:focus-visible,\s*\n\.taskConversation\s+\.compactPanelButton:focus-visible,\s*\n\.codexActivity\s+\.compactPanelButton:focus-visible/,
     "conversation focus-visible button rule"
   )
   const disabledRule = ruleBody(
-    /\.taskConversation\s+\.primaryButton:disabled,\s*\n\.taskConversation\s+\.dangerButton:disabled,\s*\n\.taskConversation\s+\.compactPanelButton:disabled/,
+    /\.taskConversation\s+\.primaryButton:disabled,\s*\n\.taskConversation\s+\.dangerButton:disabled,\s*\n\.taskConversation\s+\.compactPanelButton:disabled,\s*\n\.codexActivity\s+\.compactPanelButton:disabled/,
     "conversation disabled button rule"
   )
   const reducedMotion = mediaBlock(/\(prefers-reduced-motion: reduce\)/, "reduced motion")

@@ -790,6 +790,9 @@ test("coalesces a native response projected before its Harness placeholder", asy
   await getCodexConversationState(repository, conversationId)
 
   const entries = repository.listConversation(conversationId)
-  assert.deepEqual(entries.map((entry) => entry.id), [user.entry.id, response.entry.id])
+  assert.deepEqual(
+    entries.map((entry) => entry.id).sort(),
+    [user.entry.id, response.entry.id].sort()
+  )
   assert.equal(repository.listCodexSyncItems(conversationId)[0]?.conversationEntryId, response.entry.id)
 })

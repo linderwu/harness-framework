@@ -7,7 +7,7 @@ import test from "node:test"
 import { sha256Json } from "../lib/a2a-runtime"
 import { legacyConversationId } from "../lib/conversation-identity"
 import type { HiveDatabase } from "../lib/hive-memory/database"
-import { openHiveDatabase } from "../lib/hive-memory/database"
+import { hiveSchemaVersion, openHiveDatabase } from "../lib/hive-memory/database"
 import { createHiveMemoryRepository } from "../lib/hive-memory/repository"
 
 type ConversationState = "active" | "archived"
@@ -387,7 +387,7 @@ test("schema v3 backfills conversation metadata from legacy entries and keeps un
   )
 })
 
-test("schema v4 migrates a v3 database and creates durable A2A tables", async (t) => {
+test("current schema migrates a v3 fixture and creates durable A2A tables", async (t) => {
   const dataDir = await mkdtemp(join(tmpdir(), "jormungand-a2a-migration-"))
   const databasePath = join(dataDir, "hive-memory.sqlite")
 
@@ -423,6 +423,14 @@ test("schema v4 migrates a v3 database and creates durable A2A tables", async (t
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
+    CREATE TABLE conversations (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      state TEXT NOT NULL DEFAULT 'active' CHECK(state IN ('active', 'archived')),
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      archived_at TEXT
+    );
   `)
   seed.prepare("INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(1, "2026-08-18T00:00:00.000Z")
   seed.prepare("INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(2, "2026-08-18T00:01:00.000Z")
@@ -435,7 +443,7 @@ test("schema v4 migrates a v3 database and creates durable A2A tables", async (t
     await rm(dataDir, { recursive: true, force: true })
   })
 
-  assert.equal(database.schemaVersion(), 8)
+  assert.equal(database.schemaVersion(), hiveSchemaVersion)
   const tables = database.read((connection) =>
     connection.prepare(`
       SELECT name

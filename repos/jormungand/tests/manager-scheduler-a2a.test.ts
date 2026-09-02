@@ -5,7 +5,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test, { TestContext } from "node:test"
 import type { ContextPack } from "../lib/context-builder"
-import { openHiveDatabase } from "../lib/hive-memory/database"
+import { hiveSchemaVersion, openHiveDatabase } from "../lib/hive-memory/database"
 import { createHiveMemoryRepository } from "../lib/hive-memory/repository"
 import type { ManagerProposal, WorkflowRun } from "../lib/types"
 import { createHiveMissionConfig } from "../lib/managed-workflows"
@@ -61,7 +61,7 @@ function createManagedRun() {
   })
 }
 
-test("schema v5 adds recipient_agent and preserves conversation rows while round-tripping recipient metadata", async (t) => {
+test("current schema migrates a v4 fixture and preserves recipient metadata", async (t) => {
   const dataDir = await mkdtemp(join(tmpdir(), "jormungand-conversation-v5-"))
   const databasePath = join(dataDir, "hive-memory.sqlite")
   const seed = new Database(databasePath)
@@ -95,6 +95,14 @@ test("schema v5 adds recipient_agent and preserves conversation rows while round
       cursor INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
+    );
+    CREATE TABLE conversations (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      state TEXT NOT NULL DEFAULT 'active' CHECK(state IN ('active', 'archived')),
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      archived_at TEXT
     );
   `)
   for (const version of [1, 2, 3, 4]) {
@@ -130,7 +138,7 @@ test("schema v5 adds recipient_agent and preserves conversation rows while round
     await rm(dataDir, { recursive: true, force: true })
   })
 
-  assert.equal(database.schemaVersion(), 8)
+  assert.equal(database.schemaVersion(), hiveSchemaVersion)
   const migratedColumns = database.read((connection) =>
     connection.prepare("PRAGMA table_info(conversation_entries)").all() as Array<{ name: string }>
   )

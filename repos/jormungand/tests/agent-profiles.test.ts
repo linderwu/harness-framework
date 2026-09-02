@@ -11,6 +11,7 @@ test("manual is not offered as an executor profile", () => {
     agentProfiles.map((agent) => agent.family),
     [
       "codex",
+      "minimax",
       "openclaw",
       "openclaw",
       "openclaw",

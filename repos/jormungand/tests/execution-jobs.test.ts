@@ -4,7 +4,7 @@ import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
-import { openHiveDatabase } from "../lib/hive-memory/database"
+import { hiveSchemaVersion, openHiveDatabase } from "../lib/hive-memory/database"
 import { createHiveMemoryRepository } from "../lib/hive-memory/repository"
 import type { ExecutionJob, ExecutionJobJsonValue } from "../lib/execution-jobs"
 
@@ -73,7 +73,7 @@ function createJobInput() {
   }
 }
 
-test("schema v6 creates durable execution job storage", async (t) => {
+test("current schema migrates a v5 fixture and creates durable execution job storage", async (t) => {
   const dataDir = await mkdtemp(join(tmpdir(), "jormungand-execution-jobs-schema-"))
   const databasePath = join(dataDir, "hive-memory.sqlite")
   const seed = new Database(databasePath)
@@ -81,6 +81,25 @@ test("schema v6 creates durable execution job storage", async (t) => {
     CREATE TABLE schema_migrations (
       version INTEGER PRIMARY KEY,
       applied_at TEXT NOT NULL
+    );
+    CREATE TABLE codex_sessions (
+      conversation_id TEXT PRIMARY KEY,
+      bridge_session_id TEXT NOT NULL UNIQUE,
+      codex_thread_id TEXT NOT NULL,
+      status TEXT NOT NULL,
+      turn_status TEXT NOT NULL,
+      current_turn_id TEXT,
+      cursor INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE TABLE conversations (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      state TEXT NOT NULL DEFAULT 'active' CHECK(state IN ('active', 'archived')),
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      archived_at TEXT
     );
   `)
   seed.prepare("INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(5, "2026-08-20T00:00:00.000Z")
@@ -92,7 +111,7 @@ test("schema v6 creates durable execution job storage", async (t) => {
     await rm(dataDir, { recursive: true, force: true })
   })
 
-  assert.equal(database.schemaVersion(), 6)
+  assert.equal(database.schemaVersion(), hiveSchemaVersion)
   const tableNames = database.read((connection) =>
     connection.prepare(`
       SELECT name
