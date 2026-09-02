@@ -170,7 +170,7 @@ test("workflow run submissions send idempotency keys", () => {
   )
 })
 
-test("bridge status panel polls quotas and forwards only codex quota to the Arceus row", () => {
+test("bridge status panel polls per-agent quotas and maps Lucky quota to OpenClaw rows", () => {
   const panel = functionBody("BridgeStatusPanel")
   const card = functionBody("BridgeStatusCard")
   const row = functionBody("AgentBridgeRow")
@@ -178,8 +178,9 @@ test("bridge status panel polls quotas and forwards only codex quota to the Arce
 
   assert.match(panel, /const agentQuotaPollIntervalMs = 5 \* 60 \* 1000/)
   assert.match(panel, /refreshCodexQuota/)
-  assert.match(panel, /bridge.id === "codex-bridge" \? codexQuota : undefined/)
-  assert.match(card, /isOpenClawAgent\(agent\)/)
+  assert.match(panel, /next\[quota\.agentId\] = quota/)
+  assert.match(card, /const displayQuota = isOpenClawAgent\(agent\)/)
+  assert.match(card, /quotas\.mavis \?\? quotas\[agent\]/)
   assert.match(
     row,
     /windowLabel=\{agent === \"codex\" \? \"Weekly\" : \"5h\"\}/
