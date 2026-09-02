@@ -5,6 +5,7 @@ import { join } from "node:path"
 import { createElement } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
 import test from "node:test"
+import ts from "typescript"
 import type { AgentKind } from "../lib/types"
 import type { AgentLiveEvent } from "../lib/agent-live-events"
 import type { ConversationEntry } from "../lib/hive-memory/types"
@@ -1196,6 +1197,556 @@ test("openclaw live helpers encode the SSE path and bound preview activity", asy
   assert.equal(preview.events.length, 18)
   assert.equal(preview.events[0]?.delta, "delta-6")
   assert.equal(preview.reasoning?.length, 8_000)
+})
+
+test("conversation control controller retains durable Stop entries after a stale running response", async () => {
+  const taskConversationModule = await loadTaskConversationModule()
+  const runConversationControl = Reflect.get(taskConversationModule, "runConversationControl") as
+    | ((input: Record<string, unknown>) => Promise<void>)
+    | undefined
+  const entry = (id: string, status: ConversationEntry["status"]): ConversationEntry => ({
+    id,
+    workflowRunId: "run-stop-ui",
+    role: id === "user" ? "user" : "agent",
+    agentId: "codex",
+    content: id,
+    importance: "normal",
+    status,
+    artifactIds: [],
+    memoryIds: [],
+    idempotencyKey: id,
+    createdAt: "2026-09-02T00:00:00.000Z"
+  })
+
+  assert.equal(typeof runConversationControl, "function")
+  if (!runConversationControl) throw new Error("Conversation control controller was not exported")
+
+  const runningEntries = [entry("user", "running"), entry("response", "running")]
+  const stoppedEntries = [entry("user", "interrupted"), entry("response", "interrupted")]
+  let entries = runningEntries
+  const commitEntries = (reconcile: (current: ConversationEntry[]) => ConversationEntry[]) => {
+    entries = reconcile(entries)
+    return entries
+  }
+  const entryNotifications: ConversationEntry[][] = []
+  const statusMessages: Array<string | undefined> = []
+  const errors: Array<string | undefined> = []
+  const sessions: unknown[] = []
+  const events: unknown[] = []
+  const requests: Array<{ input: RequestInfo | URL; init?: RequestInit }> = []
+  const responses = [
+    {
+      conversationId: "conversation:stop-ui",
+      entries: stoppedEntries,
+      session: { id: "session-stop", status: "stopped", turnStatus: "interrupted" },
+      events: []
+    },
+    {
+      conversationId: "conversation:stop-ui",
+      entries: runningEntries,
+      session: { id: "session-stop", status: "running", turnStatus: "inProgress" },
+      events: []
+    }
+  ]
+  const fetchImpl = async (input: RequestInfo | URL, init?: RequestInit) => {
+    requests.push({ input, init })
+    return new Response(JSON.stringify(responses.shift()), { status: 200, headers: { "Content-Type": "application/json" } })
+  }
+  const run = async () => runConversationControl({
+    action: "stop",
+    conversationId: "conversation:stop-ui",
+    commitEntries,
+    generation: 4,
+    getCurrentGeneration: () => 4,
+    fetchImpl,
+    setConversationId: () => undefined,
+    setSession: (next: unknown) => { sessions.push(next) },
+    setEvents: (next: unknown) => { events.push(next) },
+    setError: (next: string | undefined) => { errors.push(next) },
+    setStatusMessage: (next: string | undefined) => { statusMessages.push(next) },
+    onEntriesChanged: (next: ConversationEntry[]) => { entryNotifications.push(next) }
+  })
+
+  await run()
+  const afterStop = entries
+  await run()
+  const afterStaleResponse = entries
+
+  assert.deepEqual(afterStop.map((item) => item.status), ["interrupted", "interrupted"])
+  assert.deepEqual(afterStaleResponse.map((item) => item.status), ["interrupted", "interrupted"])
+  assert.deepEqual(entryNotifications.map((notification) => notification.map((item) => item.status)), [
+    ["interrupted", "interrupted"],
+    ["interrupted", "interrupted"]
+  ])
+  assert.deepEqual(JSON.parse(String(requests[0]?.init?.body)), {
+    action: "stop",
+    conversationId: "conversation:stop-ui"
+  })
+  assert.equal(requests.every((request) => request.input === "/api/conversation/control"), true)
+  assert.deepEqual(statusMessages, [undefined, undefined])
+  assert.deepEqual(errors, [undefined, undefined])
+  assert.equal(sessions.length, 2)
+  assert.equal(events.length, 2)
+})
+
+test("conversation hydration ignores a deferred running poll after Stop while normal polling still applies", async () => {
+  const taskConversationModule = await loadTaskConversationModule()
+  const runConversationControl = Reflect.get(taskConversationModule, "runConversationControl") as
+    | ((input: Record<string, unknown>) => Promise<void>)
+    | undefined
+  const runConversationHydration = Reflect.get(taskConversationModule, "runConversationHydration") as
+    | ((input: Record<string, unknown>) => Promise<unknown>)
+    | undefined
+  const entry = (id: string, status: ConversationEntry["status"]): ConversationEntry => ({
+    id,
+    workflowRunId: "run-stop-poll-ui",
+    role: id === "user" ? "user" : "agent",
+    agentId: "codex",
+    content: id,
+    importance: "normal",
+    status,
+    artifactIds: [],
+    memoryIds: [],
+    idempotencyKey: id,
+    createdAt: "2026-09-02T00:00:00.000Z"
+  })
+
+  assert.equal(typeof runConversationControl, "function")
+  assert.equal(typeof runConversationHydration, "function")
+  if (!runConversationControl || !runConversationHydration) throw new Error("Conversation control and hydration controllers were not exported")
+
+  const runningEntries = [entry("user", "running"), entry("response", "running")]
+  const stoppedEntries = [entry("user", "interrupted"), entry("response", "interrupted")]
+  let entries = runningEntries
+  const commitEntries = (reconcile: (current: ConversationEntry[]) => ConversationEntry[]) => {
+    entries = reconcile(entries)
+    return entries
+  }
+  let generation = 8
+  const notifications: ConversationEntry[][] = []
+  let resolvePoll: ((response: Response) => void) | undefined
+  let markPollStarted: (() => void) | undefined
+  const pollStarted = new Promise<void>((resolve) => { markPollStarted = resolve })
+  const pendingPoll = runConversationHydration({
+    path: "/api/conversation?conversationId=conversation%3Astop-poll-ui",
+    requireConversationId: true,
+    generation,
+    getCurrentGeneration: () => generation,
+    commitEntries,
+    fetchImpl: async () => {
+      markPollStarted?.()
+      return await new Promise<Response>((resolve) => { resolvePoll = resolve })
+    },
+    onEntriesChanged: (next: ConversationEntry[]) => { notifications.push(next) }
+  })
+
+  await pollStarted
+  await runConversationControl({
+    action: "stop",
+    conversationId: "conversation:stop-poll-ui",
+    commitEntries,
+    generation,
+    getCurrentGeneration: () => generation,
+    fetchImpl: async () => new Response(JSON.stringify({
+      conversationId: "conversation:stop-poll-ui",
+      entries: stoppedEntries,
+      events: []
+    }), { status: 200, headers: { "Content-Type": "application/json" } }),
+    setConversationId: () => undefined,
+    setSession: () => undefined,
+    setEvents: () => undefined,
+    setError: () => undefined,
+    setStatusMessage: () => undefined,
+    onEntriesChanged: (next: ConversationEntry[]) => { notifications.push(next) },
+    onStopConfirmed: () => { generation += 1 }
+  })
+  resolvePoll?.(new Response(JSON.stringify({
+    conversationId: "conversation:stop-poll-ui",
+    entries: runningEntries,
+    allowedAgents: ["codex"]
+  }), { status: 200, headers: { "Content-Type": "application/json" } }))
+  assert.equal(await pendingPoll, undefined)
+  assert.deepEqual(entries.map((item) => item.status), ["interrupted", "interrupted"])
+  assert.deepEqual(notifications.map((items) => items.map((item) => item.status)), [["interrupted", "interrupted"]])
+
+  entries = [entry("user", "queued"), entry("response", "queued")]
+  const normalPoll = await runConversationHydration({
+    path: "/api/conversation?conversationId=conversation%3Astop-poll-ui",
+    requireConversationId: true,
+    generation,
+    getCurrentGeneration: () => generation,
+    commitEntries,
+    fetchImpl: async () => new Response(JSON.stringify({
+      conversationId: "conversation:stop-poll-ui",
+      entries: runningEntries,
+      allowedAgents: ["codex"]
+    }), { status: 200, headers: { "Content-Type": "application/json" } }),
+    onEntriesChanged: (next: ConversationEntry[]) => { notifications.push(next) }
+  })
+
+  assert.ok(normalPoll)
+  assert.deepEqual(entries.map((item) => item.status), ["running", "running"])
+
+  await runConversationControl({
+    action: "stop",
+    conversationId: "conversation:stop-poll-ui",
+    commitEntries,
+    generation,
+    getCurrentGeneration: () => generation,
+    fetchImpl: async () => new Response(JSON.stringify({
+      conversationId: "conversation:stop-poll-ui",
+      entries: stoppedEntries,
+      events: []
+    }), { status: 200, headers: { "Content-Type": "application/json" } }),
+    setConversationId: () => undefined,
+    setSession: () => undefined,
+    setEvents: () => undefined,
+    setError: () => undefined,
+    setStatusMessage: () => undefined,
+    onEntriesChanged: (next: ConversationEntry[]) => { notifications.push(next) },
+    onStopConfirmed: () => { generation += 1 }
+  })
+  assert.deepEqual(entries.map((item) => item.status), ["interrupted", "interrupted"])
+})
+
+test("conversation hydration commits a stale response against newer entries", async () => {
+  const taskConversationModule = await loadTaskConversationModule()
+  const runConversationHydration = Reflect.get(taskConversationModule, "runConversationHydration") as
+    | ((input: Record<string, unknown>) => Promise<unknown>)
+    | undefined
+  const entry = (id: string, status: ConversationEntry["status"]): ConversationEntry => ({
+    id,
+    workflowRunId: "run-overlap-hydration-ui",
+    role: id === "user" || id === "new-user" ? "user" : "agent",
+    agentId: "codex",
+    content: id,
+    importance: "normal",
+    status,
+    artifactIds: [],
+    memoryIds: [],
+    idempotencyKey: id,
+    createdAt: id === "new-user" ? "2026-09-02T00:00:01.000Z" : "2026-09-02T00:00:00.000Z"
+  })
+
+  assert.equal(typeof runConversationHydration, "function")
+  if (!runConversationHydration) throw new Error("Conversation hydration controller was not exported")
+
+  const runningEntries = [entry("user", "running"), entry("response", "running")]
+  const interruptedEntries = [entry("user", "interrupted"), entry("response", "interrupted")]
+  const newEntry = entry("new-user", "queued")
+  let entries = runningEntries
+  const notifications: ConversationEntry[][] = []
+  let resolveResponse: ((response: Response) => void) | undefined
+  let markRequestStarted: (() => void) | undefined
+  const requestStarted = new Promise<void>((resolve) => { markRequestStarted = resolve })
+  const commitEntries = (reconcile: (current: ConversationEntry[]) => ConversationEntry[]) => {
+    entries = reconcile(entries)
+    return entries
+  }
+
+  const pendingHydration = runConversationHydration({
+    path: "/api/conversation?conversationId=conversation%3Aoverlap-hydration-ui",
+    requireConversationId: true,
+    generation: 12,
+    getCurrentGeneration: () => 12,
+    currentEntries: entries,
+    commitEntries,
+    fetchImpl: async () => {
+      markRequestStarted?.()
+      return await new Promise<Response>((resolve) => { resolveResponse = resolve })
+    },
+    setEntries: (next: ConversationEntry[]) => { entries = next },
+    onEntriesChanged: (next: ConversationEntry[]) => { notifications.push(next) }
+  })
+
+  await requestStarted
+  commitEntries(() => interruptedEntries)
+  commitEntries((current) => [...current, newEntry])
+  resolveResponse?.(jsonResponse({
+    conversationId: "conversation:overlap-hydration-ui",
+    entries: runningEntries,
+    allowedAgents: ["codex"]
+  }))
+  await pendingHydration
+
+  assert.deepEqual(entries.map((item) => [item.id, item.status]), [
+    ["user", "interrupted"],
+    ["response", "interrupted"],
+    ["new-user", "queued"]
+  ])
+  assert.deepEqual(notifications, [entries])
+})
+
+test("conversation control commits a stale response against newer entries", async () => {
+  const taskConversationModule = await loadTaskConversationModule()
+  const runConversationControl = Reflect.get(taskConversationModule, "runConversationControl") as
+    | ((input: Record<string, unknown>) => Promise<void>)
+    | undefined
+  const entry = (id: string, status: ConversationEntry["status"]): ConversationEntry => ({
+    id,
+    workflowRunId: "run-overlap-control-ui",
+    role: id === "user" || id === "new-user" ? "user" : "agent",
+    agentId: "codex",
+    content: id,
+    importance: "normal",
+    status,
+    artifactIds: [],
+    memoryIds: [],
+    idempotencyKey: id,
+    createdAt: id === "new-user" ? "2026-09-02T00:00:01.000Z" : "2026-09-02T00:00:00.000Z"
+  })
+
+  assert.equal(typeof runConversationControl, "function")
+  if (!runConversationControl) throw new Error("Conversation control controller was not exported")
+
+  const runningEntries = [entry("user", "running"), entry("response", "running")]
+  const interruptedEntries = [entry("user", "interrupted"), entry("response", "interrupted")]
+  const newEntry = entry("new-user", "queued")
+  let entries = runningEntries
+  const notifications: ConversationEntry[][] = []
+  let resolveResponse: ((response: Response) => void) | undefined
+  let markRequestStarted: (() => void) | undefined
+  const requestStarted = new Promise<void>((resolve) => { markRequestStarted = resolve })
+  const commitEntries = (reconcile: (current: ConversationEntry[]) => ConversationEntry[]) => {
+    entries = reconcile(entries)
+    return entries
+  }
+
+  const pendingControl = runConversationControl({
+    action: "resume",
+    conversationId: "conversation:overlap-control-ui",
+    currentEntries: entries,
+    commitEntries,
+    generation: 13,
+    getCurrentGeneration: () => 13,
+    fetchImpl: async () => {
+      markRequestStarted?.()
+      return await new Promise<Response>((resolve) => { resolveResponse = resolve })
+    },
+    setConversationId: () => undefined,
+    setEntries: (next: ConversationEntry[]) => { entries = next },
+    setSession: () => undefined,
+    setEvents: () => undefined,
+    setError: () => undefined,
+    setStatusMessage: () => undefined,
+    onEntriesChanged: (next: ConversationEntry[]) => { notifications.push(next) }
+  })
+
+  await requestStarted
+  commitEntries(() => interruptedEntries)
+  commitEntries((current) => [...current, newEntry])
+  resolveResponse?.(jsonResponse({
+    conversationId: "conversation:overlap-control-ui",
+    entries: runningEntries,
+    session: { id: "session-overlap", status: "running", turnStatus: "inProgress" },
+    events: []
+  }))
+  await pendingControl
+
+  assert.deepEqual(entries.map((item) => [item.id, item.status]), [
+    ["user", "interrupted"],
+    ["response", "interrupted"],
+    ["new-user", "queued"]
+  ])
+  assert.deepEqual(notifications, [entries])
+})
+
+test("back-to-back hydration commits compose before React renders", async () => {
+  const taskConversationModule = await loadTaskConversationModule()
+  const runConversationHydration = Reflect.get(taskConversationModule, "runConversationHydration") as
+    | ((input: Record<string, unknown>) => Promise<unknown>)
+    | undefined
+  const entry = (id: string, createdAt: string): ConversationEntry => ({
+    id,
+    workflowRunId: "run-back-to-back-hydration-ui",
+    role: id === "user" ? "user" : "agent",
+    agentId: "codex",
+    content: id,
+    importance: "normal",
+    status: id === "user" || id === "response" ? "running" : "queued",
+    artifactIds: [],
+    memoryIds: [],
+    idempotencyKey: id,
+    createdAt
+  })
+
+  assert.equal(typeof runConversationHydration, "function")
+  if (!runConversationHydration) throw new Error("Conversation hydration controller was not exported")
+
+  const currentEntries = [
+    entry("user", "2026-09-02T00:00:00.000Z"),
+    entry("response", "2026-09-02T00:00:00.000Z")
+  ]
+  const firstResponseEntries = [...currentEntries, entry("first-response", "2026-09-02T00:00:01.000Z")]
+  const secondResponseEntries = [...currentEntries, entry("second-response", "2026-09-02T00:00:02.000Z")]
+  let entries = currentEntries
+  const notifications: ConversationEntry[][] = []
+  const deferredResponses: Array<(response: Response) => void> = []
+  let resolveRequestsStarted: (() => void) | undefined
+  const requestsStarted = new Promise<void>((resolve) => { resolveRequestsStarted = resolve })
+  const commitEntries = (reconcile: (current: ConversationEntry[]) => ConversationEntry[]) => {
+    entries = reconcile(entries)
+    return entries
+  }
+  const run = () => runConversationHydration({
+    path: "/api/conversation?conversationId=conversation%3Aback-to-back-hydration-ui",
+    requireConversationId: true,
+    generation: 14,
+    getCurrentGeneration: () => 14,
+    currentEntries,
+    commitEntries,
+    fetchImpl: async () => {
+      if (deferredResponses.length === 1) resolveRequestsStarted?.()
+      return await new Promise<Response>((resolve) => { deferredResponses.push(resolve) })
+    },
+    setEntries: (next: ConversationEntry[]) => { entries = next },
+    onEntriesChanged: (next: ConversationEntry[]) => { notifications.push(next) }
+  })
+
+  const first = run()
+  const second = run()
+  await requestsStarted
+  deferredResponses[0]?.(jsonResponse({
+    conversationId: "conversation:back-to-back-hydration-ui",
+    entries: firstResponseEntries,
+    allowedAgents: ["codex"]
+  }))
+  await first
+  deferredResponses[1]?.(jsonResponse({
+    conversationId: "conversation:back-to-back-hydration-ui",
+    entries: secondResponseEntries,
+    allowedAgents: ["codex"]
+  }))
+  await second
+
+  assert.deepEqual(entries.map((item) => item.id), ["user", "response", "first-response", "second-response"])
+  assert.deepEqual(notifications.map((items) => items.map((item) => item.id)), [
+    ["user", "response", "first-response"],
+    ["user", "response", "first-response", "second-response"]
+  ])
+})
+
+test("TaskConversation control directly delegates to the controller without an entries overwrite", async () => {
+  const sourceText = await readFile(join(process.cwd(), "components", "task-conversation.tsx"), "utf8")
+  const source = ts.createSourceFile("task-conversation.tsx", sourceText, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
+  let control: ts.FunctionDeclaration | undefined
+
+  const visit = (node: ts.Node): void => {
+    if (ts.isFunctionDeclaration(node) && node.name?.text === "control") {
+      control = node
+      return
+    }
+    ts.forEachChild(node, visit)
+  }
+  ts.forEachChild(source, visit)
+
+  assert.ok(control?.body)
+  const body = control.body
+  const tryIndex = body.statements.findIndex(ts.isTryStatement)
+  assert.notEqual(tryIndex, -1)
+  assert.equal(body.statements.slice(0, tryIndex).some(ts.isReturnStatement), false)
+  const controlTry = body.statements[tryIndex] as ts.TryStatement
+  const delegateIndex = controlTry.tryBlock.statements.findIndex((statement) => (
+    ts.isExpressionStatement(statement)
+    && ts.isAwaitExpression(statement.expression)
+    && ts.isCallExpression(statement.expression.expression)
+    && ts.isIdentifier(statement.expression.expression.expression)
+    && statement.expression.expression.expression.text === "runConversationControl"
+  ))
+  assert.notEqual(delegateIndex, -1)
+  assert.equal(controlTry.tryBlock.statements.slice(0, delegateIndex).some(ts.isReturnStatement), false)
+
+  let directEntriesWrites = 0
+  const inspectControl = (node: ts.Node): void => {
+    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "setEntries") {
+      directEntriesWrites += 1
+    }
+    ts.forEachChild(node, inspectControl)
+  }
+  inspectControl(body)
+  assert.equal(directEntriesWrites, 0)
+
+  let hydrationCalls = 0
+  let rawSnapshotEntriesWrites = 0
+  const inspectComponent = (node: ts.Node): void => {
+    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "runConversationHydration") {
+      hydrationCalls += 1
+    }
+    if (
+      ts.isCallExpression(node)
+      && ts.isIdentifier(node.expression)
+      && node.expression.text === "setEntries"
+      && ts.isPropertyAccessExpression(node.arguments[0])
+      && ts.isIdentifier(node.arguments[0].expression)
+      && (node.arguments[0].expression.text === "data" || node.arguments[0].expression.text === "result")
+    ) {
+      rawSnapshotEntriesWrites += 1
+    }
+    ts.forEachChild(node, inspectComponent)
+  }
+  inspectComponent(source)
+  assert.equal(hydrationCalls, 1)
+  assert.equal(rawSnapshotEntriesWrites, 0)
+
+  const controllerInputTypes = new Map<string, ts.TypeLiteralNode>()
+  const controllers: ts.FunctionDeclaration[] = []
+  const inspectCommitContract = (node: ts.Node): void => {
+    if (
+      ts.isTypeAliasDeclaration(node)
+      && (node.name.text === "ConversationControlInput" || node.name.text === "ConversationHydrationInput")
+      && ts.isTypeLiteralNode(node.type)
+    ) {
+      controllerInputTypes.set(node.name.text, node.type)
+    }
+    if (
+      ts.isFunctionDeclaration(node)
+      && (node.name?.text === "runConversationControl" || node.name?.text === "runConversationHydration")
+    ) {
+      controllers.push(node)
+    }
+    ts.forEachChild(node, inspectCommitContract)
+  }
+  inspectCommitContract(source)
+  assert.equal(controllerInputTypes.size, 2)
+  for (const inputType of controllerInputTypes.values()) {
+    const members = inputType.members
+      .filter(ts.isPropertySignature)
+      .map((member) => member.name?.getText(source))
+    assert.equal(members.includes("currentEntries"), false)
+    assert.equal(members.includes("setEntries"), false)
+    assert.equal(members.includes("commitEntries"), true)
+  }
+
+  let commitCalls = 0
+  let staleSnapshotReconciliations = 0
+  let directEntriesReplacements = 0
+  const inspectControllers = (node: ts.Node): void => {
+    if (
+      ts.isCallExpression(node)
+      && ts.isPropertyAccessExpression(node.expression)
+      && ts.isIdentifier(node.expression.expression)
+      && node.expression.expression.text === "input"
+    ) {
+      if (node.expression.name.text === "commitEntries") commitCalls += 1
+      if (node.expression.name.text === "setEntries") directEntriesReplacements += 1
+    }
+    if (
+      ts.isCallExpression(node)
+      && ts.isIdentifier(node.expression)
+      && node.expression.text === "reconcileConversationEntries"
+      && ts.isPropertyAccessExpression(node.arguments[0])
+      && ts.isIdentifier(node.arguments[0].expression)
+      && node.arguments[0].expression.text === "input"
+      && node.arguments[0].name.text === "currentEntries"
+    ) {
+      staleSnapshotReconciliations += 1
+    }
+    ts.forEachChild(node, inspectControllers)
+  }
+  for (const controller of controllers) inspectControllers(controller)
+  assert.equal(commitCalls, 2)
+  assert.equal(staleSnapshotReconciliations, 0)
+  assert.equal(directEntriesReplacements, 0)
 })
 
 test("immediate conversation POST merge preserves server causal order when timestamps tie", async () => {

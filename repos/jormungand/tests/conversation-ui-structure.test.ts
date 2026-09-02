@@ -14,14 +14,15 @@ test("task conversation keeps an active conversation id and sends it with unboun
   assert.match(taskConversation, /const activeConversationId = isUnbound \? conversationId : runId/)
   assert.match(taskConversation, /workflowRunId: activeConversationId/)
   assert.match(taskConversation, /body: JSON\.stringify\(buildConversationMessagePayload\(\{/)
-  assert.match(taskConversation, /body: JSON\.stringify\(\{ action, conversationId: activeConversationId \}\)/)
+  assert.match(taskConversation, /export async function runConversationControl/)
+  assert.match(taskConversation, /body: JSON\.stringify\(\{ action: input\.action, conversationId: input\.conversationId \}\)/)
 })
 
 test("task conversation exposes a new conversation action with pending reset behavior", () => {
   assert.match(taskConversation, /New conversation/)
   assert.match(taskConversation, /const \[isStartingConversation, setIsStartingConversation\] = useState\(false\)/)
   assert.match(taskConversation, /requestNewConversation\(fetch\)/)
-  assert.match(taskConversation, /setEntries\(\[\]\)/)
+  assert.match(taskConversation, /commitEntries\(\(\) => \[\]\)/)
   assert.match(taskConversation, /setSession\(undefined\)/)
   assert.match(taskConversation, /setEvents\(\[\]\)/)
   assert.match(taskConversation, /props\.onNewConversation\?\.\(/)
@@ -33,7 +34,7 @@ test("conversation submission stays gated until the server identity hydrates", (
   assert.match(taskConversation, /if \(!message \|\| allowedAgents\.length === 0 \|\| !activeConversationId \|\| isLoadingConversation \|\| isStartingConversation\) return/)
   assert.match(taskConversation, /if \(activeManagerAction\) return/)
   assert.match(taskConversation, /disabled=\{!content\.trim\(\) \|\| !allowedAgents\.length \|\| !activeConversationId \|\| isLoadingConversation \|\| isStartingConversation \|\| !!activeManagerAction\}/)
-  assert.match(taskConversation, /if \(requireConversationId && !data\.conversationId\) \{[\s\S]*throw new Error\(/)
+  assert.match(taskConversation, /if \(input\.requireConversationId && !data\.conversationId\) \{[\s\S]*throw new Error\(/)
 })
 
 test("new conversation invalidates stale poll responses before they can write state", () => {
@@ -155,7 +156,7 @@ test("openclaw live stream cleanup closes listeners on terminal events and reque
   assert.match(taskConversation, /if \(lifecycleResult\.shouldCloseSource\) \{[\s\S]*closeAgentLiveSource\(\)/)
   assert.match(taskConversation, /function invalidateConversationRequests\(\) \{[\s\S]*closeAgentLiveSource\(\)/)
   assert.match(taskConversation, /useEffect\(\(\) => \(\) => \{[\s\S]*closeAgentLiveSource\(\)[\s\S]*\}, \[\]\)/)
-  assert.match(taskConversation, /} catch \(submitError\) \{[\s\S]*closeAgentLiveSource\(\)[\s\S]*setEntries\(/)
+  assert.match(taskConversation, /} catch \(submitError\) \{[\s\S]*closeAgentLiveSource\(\)[\s\S]*commitEntries\(/)
 })
 
 test("activity panel renders live agent preview details without changing codex controls", () => {

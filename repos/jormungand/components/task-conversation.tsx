@@ -229,6 +229,94 @@ export function getConversationActivityViewModel(input: {
   }
 }
 
+type ConversationControlAction = "interrupt" | "resume" | "stop"
+type ConversationControlResult = CodexConversationState & {
+  error?: string
+  jobId?: string
+  status?: string
+}
+type ConversationEntriesCommit = (
+  reconcile: (current: ConversationEntry[]) => ConversationEntry[]
+) => ConversationEntry[]
+type ConversationControlInput = {
+  action: ConversationControlAction
+  conversationId: string
+  commitEntries: ConversationEntriesCommit
+  generation: number
+  getCurrentGeneration: () => number
+  fetchImpl: typeof fetch
+  setConversationId: (conversationId: string | undefined) => void
+  setSession: (session: CodexConversationState["session"] | undefined) => void
+  setEvents: (events: CodexConversationEvent[]) => void
+  setError: (error: string | undefined) => void
+  setStatusMessage: (statusMessage: string | undefined) => void
+  onEntriesChanged: (entries: ConversationEntry[]) => void
+  onStopConfirmed?: () => void
+}
+type ConversationHydrationInput = {
+  path: string
+  requireConversationId: boolean
+  generation: number
+  getCurrentGeneration: () => number
+  commitEntries: ConversationEntriesCommit
+  fetchImpl: typeof fetch
+  onEntriesChanged: (entries: ConversationEntry[]) => void
+}
+
+export async function runConversationControl(input: ConversationControlInput) {
+  input.setError(undefined)
+  input.setStatusMessage(undefined)
+
+  try {
+    const response = await input.fetchImpl("/api/conversation/control", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: input.action, conversationId: input.conversationId })
+    })
+    const result = await response.json() as ConversationControlResult
+    if (!response.ok) throw new Error(result.error ?? "Codex control request failed")
+    if (input.generation !== input.getCurrentGeneration()) return
+
+    const responseEntries = Array.isArray(result.entries) ? result.entries : undefined
+    const nextEntries = input.commitEntries((current) => responseEntries
+      ? reconcileConversationEntries(current, responseEntries)
+      : current)
+
+    if (response.status === 202) {
+      if (!result.jobId) throw new Error(result.error ?? "Codex control request failed")
+      if (result.conversationId) input.setConversationId(result.conversationId)
+      if ("session" in result) input.setSession(result.session)
+      if ("events" in result) input.setEvents(result.events ?? [])
+      input.onEntriesChanged(nextEntries)
+      input.setStatusMessage(`Conversation control queued. Job ID: ${result.jobId}.`)
+      return
+    }
+
+    input.setConversationId(result.conversationId ?? input.conversationId)
+    input.setSession(result.session)
+    input.setEvents(result.events ?? [])
+    input.onEntriesChanged(nextEntries)
+    if (input.action === "stop") input.onStopConfirmed?.()
+  } catch (controlError) {
+    if (input.generation !== input.getCurrentGeneration()) return
+    input.setError(formatError(controlError))
+  }
+}
+
+export async function runConversationHydration(input: ConversationHydrationInput) {
+  const response = await input.fetchImpl(input.path, { cache: "no-store" })
+  const data = await response.json() as ConversationLoadResult
+  if (!response.ok) throw new Error(data.error ?? "Conversation could not be loaded")
+  if (input.requireConversationId && !data.conversationId) {
+    throw new Error("Conversation response did not include a conversationId")
+  }
+  if (input.generation !== input.getCurrentGeneration()) return undefined
+
+  const nextEntries = input.commitEntries((current) => reconcileConversationEntries(current, data.entries))
+  input.onEntriesChanged(nextEntries)
+  return data
+}
+
 export function TaskConversation(props: {
   run?: WorkflowRun
   initialEntries: ConversationEntry[]
@@ -251,6 +339,7 @@ export function TaskConversation(props: {
   const conversationPath = runId ? `/api/workflow-runs/${runId}/conversation` : "/api/conversation"
   const onEntriesChanged = props.onEntriesChanged
   const [entries, setEntries] = useState(props.initialEntries)
+  const entriesRef = useRef(entries)
   const initialAllowedAgents = props.allowedAgents
   const [allowedAgents, setAllowedAgents] = useState(initialAllowedAgents)
   const [targetAgent, setTargetAgent] = useState<AgentKind>(initialAllowedAgents[0] ?? "codex")
@@ -294,8 +383,14 @@ export function TaskConversation(props: {
   const agentLiveSubmissionLifecycleRef = useRef<{ postPending: boolean; terminalEventReceived: boolean } | undefined>(undefined)
   const pollingInFlight = useRef<{
     generation: number
-    promise: ReturnType<typeof loadConversation>
+    promise: ReturnType<typeof runConversationHydration>
   } | undefined>(undefined)
+  const commitEntries = useCallback<ConversationEntriesCommit>((reconcile) => {
+    const nextEntries = reconcile(entriesRef.current)
+    entriesRef.current = nextEntries
+    setEntries(nextEntries)
+    return nextEntries
+  }, [])
   const pending = useMemo(() => entries.some((entry) => entry.status === "queued" || entry.status === "running"), [entries])
   const activeConversationId = isUnbound ? conversationId : runId
   const conversationLoadPath = isUnbound && activeConversationId
@@ -388,6 +483,10 @@ export function TaskConversation(props: {
 
   function invalidateConversationRequests() {
     closeAgentLiveSource()
+    invalidateConversationLoads()
+  }
+
+  function invalidateConversationLoads() {
     requestGeneration.current += 1
     pollingInFlight.current = undefined
   }
@@ -396,9 +495,18 @@ export function TaskConversation(props: {
     const inFlight = pollingInFlight.current
     if (inFlight) return inFlight
 
+    const generation = requestGeneration.current
     const request = {
-      generation: requestGeneration.current,
-      promise: loadConversation(path, requireConversationId)
+      generation,
+      promise: runConversationHydration({
+        path,
+        requireConversationId,
+        generation,
+        getCurrentGeneration: () => requestGeneration.current,
+        commitEntries,
+        fetchImpl: fetch,
+        onEntriesChanged
+      })
     }
     pollingInFlight.current = request
     request.promise.then(
@@ -459,9 +567,8 @@ export function TaskConversation(props: {
     const request = loadConversationWithGuard(conversationLoadPath, isUnbound)
     const { generation } = request
     void request.promise.then((data) => {
-      if (!active || generation !== requestGeneration.current) return
+      if (!data || !active || generation !== requestGeneration.current) return
       setConversationId(data.conversationId ?? runId)
-      setEntries(data.entries)
       setAllowedAgents(data.allowedAgents)
       setTargetAgent((current) => data.allowedAgents.includes(current) ? current : data.allowedAgents[0] ?? "codex")
       setSession(data.session)
@@ -472,7 +579,6 @@ export function TaskConversation(props: {
       if (!isRenameFormOpenRef.current) {
         setRenameDraft(data.metadata?.title ?? "")
       }
-      onEntriesChanged(data.entries)
     }).catch((loadError) => {
       if (!active || generation !== requestGeneration.current) return
       setError(formatError(loadError))
@@ -495,15 +601,13 @@ export function TaskConversation(props: {
       const request = loadConversationWithGuard(conversationLoadPath, isUnbound)
       const { generation } = request
       void request.promise.then((data) => {
-        if (!active || generation !== requestGeneration.current) return
+        if (!data || !active || generation !== requestGeneration.current) return
         setConversationId(data.conversationId ?? runId)
-        setEntries(data.entries)
         setSession(data.session)
         setEvents(data.events ?? [])
         setMetadata(data.metadata)
         reportUnboundConversationState(data.conversationId ?? runId, data.metadata)
         setPermissionMode(data.permissionMode)
-        onEntriesChanged(data.entries)
       }).catch((loadError) => {
         if (!active || generation !== requestGeneration.current) return
         setError(formatError(loadError))
@@ -554,7 +658,7 @@ export function TaskConversation(props: {
       idempotencyKey,
       createdAt: new Date().toISOString()
     }
-    setEntries((current) => [...current, optimistic])
+    commitEntries((current) => [...current, optimistic])
     setContent("")
     setError(undefined)
     setStatusMessage(undefined)
@@ -637,9 +741,9 @@ export function TaskConversation(props: {
         if (!result.jobId) throw new Error(result.error ?? "Message dispatch failed")
         setConversationId(result.conversationId ?? activeConversationId)
         if (result.entries) {
-          setEntries(result.entries)
+          commitEntries((current) => reconcileConversationEntries(current, result.entries!))
         } else if (result.userEntry) {
-          setEntries((current) => mergeResult(current, optimistic.id, result.userEntry!, result.responseEntry))
+          commitEntries((current) => mergeResult(current, optimistic.id, result.userEntry!, result.responseEntry))
         }
         if ("session" in result) setSession(result.session)
         if ("events" in result) setEvents(result.events ?? [])
@@ -655,7 +759,9 @@ export function TaskConversation(props: {
         closeAgentLiveSource({ preservePreview: true })
       }
       setConversationId(result.conversationId ?? activeConversationId)
-      setEntries((current) => result.entries ?? mergeResult(current, optimistic.id, result.userEntry!, result.responseEntry))
+      commitEntries((current) => result.entries
+        ? reconcileConversationEntries(current, result.entries)
+        : mergeResult(current, optimistic.id, result.userEntry!, result.responseEntry))
       setSession(result.session)
       setEvents(result.events ?? [])
       if (isUnbound) void refreshConversations(generation)
@@ -663,46 +769,31 @@ export function TaskConversation(props: {
     } catch (submitError) {
       if (generation !== requestGeneration.current) return
       closeAgentLiveSource()
-      setEntries((current) => current.map((entry) => entry.id === optimistic.id ? { ...entry, status: "failed" } : entry))
+      commitEntries((current) => current.map((entry) => entry.id === optimistic.id ? { ...entry, status: "failed" } : entry))
       setError(formatError(submitError))
     }
   }
 
-  async function control(action: "interrupt" | "resume" | "stop") {
+  async function control(action: ConversationControlAction) {
     if (!activeConversationId || isLoadingConversation || isStartingConversation) return
     const generation = requestGeneration.current
     setIsControlling(true)
-    setError(undefined)
-    setStatusMessage(undefined)
     try {
-      const response = await fetch("/api/conversation/control", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action, conversationId: activeConversationId })
+      await runConversationControl({
+        action,
+        conversationId: activeConversationId,
+        commitEntries,
+        generation,
+        getCurrentGeneration: () => requestGeneration.current,
+        fetchImpl: fetch,
+        setConversationId,
+        setSession,
+        setEvents,
+        setError,
+        setStatusMessage,
+        onEntriesChanged,
+        onStopConfirmed: invalidateConversationLoads
       })
-      const result = await response.json() as CodexConversationState & { error?: string; jobId?: string; status?: string }
-      if (!response.ok) throw new Error(result.error ?? "Codex control request failed")
-      if (generation !== requestGeneration.current) return
-      if (response.status === 202) {
-        if (!result.jobId) throw new Error(result.error ?? "Codex control request failed")
-        if (result.conversationId) setConversationId(result.conversationId)
-        if ("entries" in result) {
-          setEntries(result.entries)
-        }
-        if ("session" in result) setSession(result.session)
-        if ("events" in result) setEvents(result.events ?? [])
-        onEntriesChanged(result.entries ?? entries)
-        setStatusMessage(`Conversation control queued. Job ID: ${result.jobId}.`)
-        return
-      }
-      setConversationId(result.conversationId ?? activeConversationId)
-      setEntries(result.entries)
-      setSession(result.session)
-      setEvents(result.events ?? [])
-      onEntriesChanged(result.entries)
-    } catch (controlError) {
-      if (generation !== requestGeneration.current) return
-      setError(formatError(controlError))
     } finally {
       setIsControlling(false)
     }
@@ -730,7 +821,7 @@ export function TaskConversation(props: {
         return
       }
       setConversationId(result.conversationId)
-      setEntries([])
+      commitEntries(() => [])
       setAllowedAgents(initialAllowedAgents)
       setTargetAgent((current) => initialAllowedAgents.includes(current) ? current : initialAllowedAgents[0] ?? "codex")
       setContent("")
@@ -763,7 +854,7 @@ export function TaskConversation(props: {
     const nextState = buildConversationSwitchState(nextConversationId)
     setConversationId(nextState.conversationId)
     setContent(nextState.content)
-    setEntries(nextState.entries)
+    commitEntries(() => nextState.entries)
     setError(nextState.error)
     setEvents(nextState.events)
     setIsLoadingConversation(nextState.isLoadingConversation)
@@ -918,7 +1009,7 @@ export function TaskConversation(props: {
       setIsReplacingDeletedConversation(true)
       setConversationId(deletedState.conversationId)
       setContent(deletedState.content)
-      setEntries(deletedState.entries)
+      commitEntries(() => deletedState.entries)
       setError(deletedState.error)
       setEvents(deletedState.events)
       setIsLoadingConversation(deletedState.isLoadingConversation)
@@ -949,7 +1040,7 @@ export function TaskConversation(props: {
         const failureState = buildReplacementFailureState()
         setConversationId(failureState.conversationId)
         setContent(failureState.content)
-        setEntries(failureState.entries)
+        commitEntries(() => failureState.entries)
         setEvents(failureState.events)
         setIsLoadingConversation(failureState.isLoadingConversation)
         setMetadata(failureState.metadata)
@@ -1303,16 +1394,6 @@ export function TaskConversation(props: {
   )
 }
 
-async function loadConversation(path: string, requireConversationId = false) {
-  const response = await fetch(path, { cache: "no-store" })
-  const data = await response.json() as ConversationLoadResult
-  if (!response.ok) throw new Error(data.error ?? "Conversation could not be loaded")
-  if (requireConversationId && !data.conversationId) {
-    throw new Error("Conversation response did not include a conversationId")
-  }
-  return data
-}
-
 function formatSessionStatus(session: CodexConversationState["session"]) {
   if (!session) return "not started"
   if (session.status === "paused") return "paused"
@@ -1345,6 +1426,23 @@ function mergeResult(current: ConversationEntry[], optimisticId: string, userEnt
   const withoutOptimistic = current.filter((entry) => entry.id !== optimisticId && entry.id !== userEntry.id && entry.id !== responseEntry?.id)
   return [...withoutOptimistic, userEntry, ...(responseEntry ? [responseEntry] : [])]
     .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
+}
+
+function reconcileConversationEntries(current: ConversationEntry[], response: ConversationEntry[]) {
+  const currentById = new Map(current.map((entry) => [entry.id, entry]))
+  const responseIds = new Set(response.map((entry) => entry.id))
+  const reconciled = response.map((entry) => {
+    const previous = currentById.get(entry.id)
+    return previous && isTerminalConversationEntry(previous) && previous.status !== entry.status ? previous : entry
+  })
+  return [...reconciled, ...current.filter((entry) => !responseIds.has(entry.id))]
+    .map((entry, index) => ({ entry, index }))
+    .sort((left, right) => left.entry.createdAt.localeCompare(right.entry.createdAt) || left.index - right.index)
+    .map(({ entry }) => entry)
+}
+
+function isTerminalConversationEntry(entry: ConversationEntry) {
+  return entry.status !== "queued" && entry.status !== "running"
 }
 
 function formatError(error: unknown) { return error instanceof Error ? error.message : String(error) }

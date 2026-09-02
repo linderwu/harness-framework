@@ -258,3 +258,32 @@ test("SettleTurn delegates one ProviderOutcome to TX3 without accepting Runtime 
     outcome
   }])
 })
+
+test("cancel pending delegates aggregate cancellation to the lifecycle repository", async () => {
+  const calls: unknown[] = []
+  const service = new ConversationLifecycleService({
+    submitConversationTurn: async () => submittedTurn(),
+    cancelQueuedConversationDispatches: async (conversationId: string) => {
+      calls.push(conversationId)
+      return 2
+    }
+  })
+
+  assert.equal(await service.cancelPendingTurns("conversation:pending"), 2)
+  assert.deepEqual(calls, ["conversation:pending"])
+})
+
+test("StopTurn delegates the current running aggregate without accepting provider state", async () => {
+  const calls: unknown[] = []
+  const result = settledTurn()
+  const service = new ConversationLifecycleService({
+    submitConversationTurn: async () => submittedTurn(),
+    stopConversationTurn: async (conversationId: string) => {
+      calls.push(conversationId)
+      return result
+    }
+  })
+
+  assert.equal(await service.stopTurn("conversation:running"), result)
+  assert.deepEqual(calls, ["conversation:running"])
+})

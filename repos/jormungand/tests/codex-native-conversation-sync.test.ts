@@ -4,10 +4,12 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
 import {
+  controlCodexConversation,
   dispatchCodexConversationEntry,
   getCodexConversationState,
   postCodexConversationMessage
 } from "../lib/codex-conversation"
+import { projectNativeThread } from "../lib/codex-thread-sync"
 import { openHiveDatabase } from "../lib/hive-memory/database"
 import { createHiveMemoryRepository } from "../lib/hive-memory/repository"
 
@@ -101,6 +103,125 @@ test("imports a Codex desktop turn from the native thread snapshot", async (t) =
   await getCodexConversationState(repository, conversationId)
   assert.equal(repository.listConversation(conversationId).length, 2)
   assert.equal(repository.listCodexSyncItems(conversationId).length, 2)
+})
+
+test("native interrupted snapshot remains running progress without a terminal projection", () => {
+  const projection = projectNativeThread({
+    conversationId: "conversation:native-interrupted",
+    nativeThreadId: "thread-native-interrupted",
+    turns: [{
+      id: "turn-native-interrupted",
+      status: "interrupted",
+      items: [
+        { id: "native-user", type: "userMessage", content: [{ type: "text", text: "Pause me" }] },
+        { id: "native-agent", type: "agentMessage", text: "Partial response" }
+      ]
+    }],
+    harnessTurnIds: new Set(),
+    ledgerKeys: new Set()
+  })
+
+  assert.equal(projection.terminalStatus, undefined)
+  assert.deepEqual(projection.entries.map((entry) => entry.status), ["running", "running"])
+  assert.deepEqual(
+    projection.entries.map((entry) => entry.idempotencyKey),
+    [
+      "codex:thread-native-interrupted:turn-native-interrupted:native-user",
+      "codex:thread-native-interrupted:turn-native-interrupted:native-agent"
+    ]
+  )
+})
+
+test("Pause and Continue preserve a claimed application Turn until the same Turn completes", async (t) => {
+  const dataDir = await mkdtemp(join(tmpdir(), "jormungand-native-codex-pause-"))
+  const database = openHiveDatabase({ dataDir })
+  const repository = createHiveMemoryRepository(database)
+  const conversationId = "conversation:native-pause"
+  await repository.createConversation({ id: conversationId, title: "Native pause" })
+  const submitted = await repository.submitConversationTurn({
+    conversationId,
+    targetAgent: "codex",
+    content: "Keep this Turn running through Pause.",
+    idempotencyKey: "native-pause",
+    responseRole: "agent"
+  })
+  const claimed = await repository.claimNextConversationTurn({
+    conversationId,
+    leaseOwner: "native-pause-worker",
+    leaseDurationMs: 60_000
+  })
+  assert.ok(claimed && !("rejected" in claimed))
+  if (!claimed || "rejected" in claimed) throw new Error("Expected claimed Turn")
+  await repository.upsertCodexSession({
+    conversationId,
+    bridgeSessionId: "bridge-native-pause",
+    codexThreadId: "thread-native-pause",
+    status: "running",
+    turnStatus: "inProgress",
+    cursor: 0
+  })
+  const previousBridgeUrl = process.env.CODEX_BRIDGE_URL
+  process.env.CODEX_BRIDGE_URL = "http://codex.test"
+  let state: { status: string; turnStatus: string; cursor: number } = {
+    status: "paused",
+    turnStatus: "interrupted",
+    cursor: 1
+  }
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = async (input) => {
+    const url = String(input)
+    if (url.endsWith("/interrupt") || url.endsWith("/resume")) return jsonResponse({ ok: true })
+    if (url.includes("/events?after=")) {
+      return jsonResponse({
+        id: "bridge-native-pause",
+        threadId: "thread-native-pause",
+        ...state,
+        events: [],
+        nextCursor: state.cursor
+      })
+    }
+    if (url.endsWith("/thread")) return jsonResponse({
+      id: "bridge-native-pause",
+      threadId: "thread-native-pause",
+      thread: { id: "thread-native-pause", turns: [] }
+    })
+    throw new Error(`Unexpected fetch: ${url}`)
+  }
+  t.after(async () => {
+    globalThis.fetch = originalFetch
+    if (previousBridgeUrl === undefined) delete process.env.CODEX_BRIDGE_URL
+    else process.env.CODEX_BRIDGE_URL = previousBridgeUrl
+    database.close()
+    await rm(dataDir, { recursive: true, force: true })
+  })
+
+  await controlCodexConversation(repository, "interrupt", conversationId)
+  assert.deepEqual(repository.listConversation(conversationId).map((entry) => entry.status), ["running", "running"])
+  assert.equal(repository.getExecutionJob(submitted.jobId)?.status, "running")
+  assert.deepEqual(repository.getCodexSession(conversationId), {
+    ...repository.getCodexSession(conversationId),
+    status: "paused",
+    turnStatus: "interrupted"
+  })
+
+  state = { status: "running", turnStatus: "inProgress", cursor: 2 }
+  await controlCodexConversation(repository, "resume", conversationId)
+  assert.deepEqual(repository.listConversation(conversationId).map((entry) => entry.status), ["running", "running"])
+  assert.equal(repository.getExecutionJob(submitted.jobId)?.status, "running")
+
+  state = { status: "idle", turnStatus: "completed", cursor: 3 }
+  await getCodexConversationState(repository, conversationId)
+  const settled = await repository.settleConversationTurn({
+    conversationId,
+    userEntryId: submitted.userEntryId,
+    responseEntryId: submitted.responseEntryId,
+    jobId: submitted.jobId,
+    idempotencyKey: claimed.idempotencyKey,
+    leaseOwner: claimed.leaseOwner,
+    outcome: { kind: "completed", body: "Completed after Continue.", deliveryState: "confirmed" }
+  })
+  assert.equal(settled.applied, true)
+  assert.deepEqual(repository.listConversation(conversationId).map((entry) => entry.status), ["completed", "completed"])
 })
 
 test("does not duplicate a Harness user entry when native turn is ledgered as outbound", async (t) => {

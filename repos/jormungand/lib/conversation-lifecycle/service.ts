@@ -205,6 +205,20 @@ export class ConversationLifecycleService {
     }
     return await this.repository.settleConversationTurn(input)
   }
+
+  async cancelPendingTurns(conversationId: string) {
+    if (!this.repository.cancelQueuedConversationDispatches) {
+      throw new Error("Conversation turn cancellation is unavailable")
+    }
+    return await this.repository.cancelQueuedConversationDispatches(conversationId)
+  }
+
+  async stopTurn(conversationId: string): Promise<SettledTurnAggregate | undefined> {
+    if (!this.repository.stopConversationTurn) {
+      throw new Error("Conversation turn stopping is unavailable")
+    }
+    return await this.repository.stopConversationTurn(conversationId)
+  }
 }
 
 interface ConversationLifecycleRepository extends ConversationTurnRepository {
@@ -215,6 +229,8 @@ interface ConversationLifecycleRepository extends ConversationTurnRepository {
     leaseDurationMs: number
   }) => Promise<unknown>
   settleConversationTurn?: (input: SettleTurnInput) => Promise<SettledTurnAggregate>
+  cancelQueuedConversationDispatches?: (conversationId: string) => Promise<number>
+  stopConversationTurn?: (conversationId: string) => Promise<SettledTurnAggregate | undefined>
   getConversationMetadata?: (conversationId: string) => ConversationMetadata | undefined
   createConversation?: (input: { id: string; title: string }) => Promise<ConversationMetadata>
   updateConversationProfile?: (input: {

@@ -59,7 +59,9 @@ export function projectNativeThread(input: {
   let terminalStatus: NativeThreadProjection["terminalStatus"]
 
   for (const turn of input.turns) {
-    if (turn.status !== "inProgress") terminalStatus = toTerminalStatus(turn.status)
+    if (turn.status === "completed" || turn.status === "failed") {
+      terminalStatus = toTerminalStatus(turn.status)
+    }
     const source = input.harnessTurnIds.has(turn.id) ? "harness" : "codex"
 
     for (const item of turn.items) {
@@ -110,10 +112,10 @@ function extractUserText(item: NativeUserMessageItem) {
 }
 
 function toEntryStatus(status: NativeTurnStatus): NativeProjectionEntry["status"] {
-  if (status === "inProgress") return "running"
+  if (status === "inProgress" || status === "interrupted") return "running"
   return status
 }
 
-function toTerminalStatus(status: Exclude<NativeTurnStatus, "inProgress">) {
+function toTerminalStatus(status: "completed" | "failed") {
   return status
 }

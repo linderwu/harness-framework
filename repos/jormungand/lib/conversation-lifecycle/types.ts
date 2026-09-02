@@ -12,7 +12,7 @@ export type TerminalTurnStatus =
 
 export type ProviderOutcome =
   | { kind: "completed"; body: string; deliveryState: "confirmed" }
-  | { kind: "interrupted"; body: string; deliveryState: "confirmed" }
+  | { kind: "interrupted"; body: string; deliveryState: "confirmed"; disposition?: "stopped" }
   | { kind: "failed"; body: string; deliveryState: "confirmed" | "unknown" }
 
 export interface TurnIdentity {

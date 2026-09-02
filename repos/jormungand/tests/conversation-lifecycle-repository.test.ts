@@ -750,6 +750,27 @@ test("TX3 SettleTurn persists confirmed failure, interruption, and unknown deliv
   }
 })
 
+test("TX3 preserves a stopped interruption as a canceled Job", async (t) => {
+  const fixture = await claimedTx3Turn(t, "tx3-stopped-disposition")
+  const settled = await fixture.repository.settleConversationTurn(settlementInput(fixture, {
+    kind: "interrupted",
+    body: "Provider stopped this Turn.",
+    deliveryState: "confirmed",
+    disposition: "stopped"
+  }))
+
+  assert.equal(settled.applied, true)
+  assert.deepEqual(
+    fixture.repository.listConversation(fixture.conversationId).map((entry) => entry.status),
+    ["interrupted", "interrupted"]
+  )
+  assert.equal(fixture.repository.getExecutionJob(fixture.submitted.jobId)?.status, "canceled")
+  assert.equal(
+    JSON.parse(fixture.repository.getExecutionJob(fixture.submitted.jobId)?.resultJson ?? "{}").reason,
+    "stopped"
+  )
+})
+
 test("TX3 SettleTurn fails a running Job with pre-terminal Entries without overwriting them", async (t) => {
   const cases = [
     {
@@ -887,5 +908,144 @@ test("TX3 SettleTurn ignores duplicate and different late terminal outcomes", as
     assert.equal(Object.isFrozen(settled), true)
     assert.equal(Object.isFrozen(settled.job), true)
   }
+  assert.deepEqual(durableTurnRows(fixture.database, fixture.conversationId), before)
+})
+
+test("cancel pending atomically cancels every queued dispatch aggregate", async (t) => {
+  const { repository, conversationId } = await tx1Fixture(t)
+  const first = await repository.submitConversationTurn(turnInput(conversationId, "cancel-first"))
+  const second = await repository.submitConversationTurn(turnInput(conversationId, "cancel-second"))
+
+  assert.equal(await repository.cancelQueuedConversationDispatches(conversationId), 2)
+  assert.deepEqual(
+    repository.listConversation(conversationId).map((entry) => [entry.id, entry.status]),
+    [
+      [first.userEntryId, "canceled"],
+      [first.responseEntryId, "canceled"],
+      [second.userEntryId, "canceled"],
+      [second.responseEntryId, "canceled"]
+    ]
+  )
+  assert.deepEqual(
+    [first, second].map((turn) => repository.getExecutionJob(turn.jobId)?.status),
+    ["canceled", "canceled"]
+  )
+})
+
+test("cancel pending rolls back every aggregate when an Entry update fails", async (t) => {
+  const { database, repository, conversationId } = await tx1Fixture(t)
+  const first = await repository.submitConversationTurn(turnInput(conversationId, "cancel-rollback-first"))
+  await repository.submitConversationTurn(turnInput(conversationId, "cancel-rollback-second"))
+  await database.write((connection) => connection.exec(`
+    CREATE TEMP TRIGGER fail_cancel_response
+    BEFORE UPDATE ON conversation_entries
+    WHEN NEW.id = '${first.responseEntryId}'
+    BEGIN
+      SELECT RAISE(ABORT, 'injected pending cancellation failure');
+    END;
+  `))
+  try {
+    const before = durableTurnRows(database, conversationId)
+    await assert.rejects(
+      () => repository.cancelQueuedConversationDispatches(conversationId),
+      /injected pending cancellation failure/
+    )
+    assert.deepEqual(durableTurnRows(database, conversationId), before)
+  } finally {
+    await database.write((connection) => connection.exec("DROP TRIGGER IF EXISTS fail_cancel_response"))
+  }
+})
+
+test("cancel pending rolls back when an Entry update is ignored", async (t) => {
+  const { database, repository, conversationId } = await tx1Fixture(t)
+  const submitted = await repository.submitConversationTurn(turnInput(conversationId, "cancel-ignored"))
+  await database.write((connection) => connection.exec(`
+    CREATE TEMP TRIGGER ignore_cancel_response
+    BEFORE UPDATE ON conversation_entries
+    WHEN NEW.id = '${submitted.responseEntryId}'
+    BEGIN
+      SELECT RAISE(IGNORE);
+    END;
+  `))
+  try {
+    const before = durableTurnRows(database, conversationId)
+    await assert.rejects(
+      () => repository.cancelQueuedConversationDispatches(conversationId),
+      /could not be canceled/
+    )
+    assert.deepEqual(durableTurnRows(database, conversationId), before)
+  } finally {
+    await database.write((connection) => connection.exec("DROP TRIGGER IF EXISTS ignore_cancel_response"))
+  }
+})
+
+test("StopTurn atomically interrupts the running aggregate and freezes late outcomes", async (t) => {
+  const fixture = await claimedTx3Turn(t, "stop-turn")
+  const stopped = await fixture.repository.stopConversationTurn(fixture.conversationId)
+
+  assert.ok(stopped)
+  assert.equal(stopped?.applied, true)
+  assert.equal(Object.isFrozen(stopped), true)
+  assert.deepEqual(
+    fixture.repository.listConversation(fixture.conversationId).map((entry) => entry.status),
+    ["interrupted", "interrupted"]
+  )
+  assert.equal(fixture.repository.getExecutionJob(fixture.submitted.jobId)?.status, "canceled")
+
+  for (const outcome of [
+    { kind: "completed", body: "late completion", deliveryState: "confirmed" },
+    { kind: "failed", body: "late failure", deliveryState: "confirmed" }
+  ] as const) {
+    const settled = await fixture.repository.settleConversationTurn({
+      ...settlementInput(fixture, outcome),
+      leaseOwner: fixture.envelope.leaseOwner
+    })
+    assert.equal(settled.applied, false)
+  }
+})
+
+test("StopTurn rejects a malformed running aggregate without writes and is idempotent after Stop", async (t) => {
+  const malformed = await claimedTx3Turn(t, "stop-malformed")
+  await malformed.database.write((connection) => {
+    connection.prepare("UPDATE execution_jobs SET payload_json = ? WHERE id = ?")
+      .run("{invalid", malformed.submitted.jobId)
+  })
+  const before = durableTurnRows(malformed.database, malformed.conversationId)
+  await assert.rejects(
+    () => malformed.repository.stopConversationTurn(malformed.conversationId),
+    /payload is invalid/
+  )
+  assert.deepEqual(durableTurnRows(malformed.database, malformed.conversationId), before)
+
+  const stopped = await claimedTx3Turn(t, "stop-idempotent")
+  await stopped.repository.stopConversationTurn(stopped.conversationId)
+  const terminal = durableTurnRows(stopped.database, stopped.conversationId)
+  const repeated = await stopped.repository.stopConversationTurn(stopped.conversationId)
+  assert.equal(repeated?.applied, false)
+  assert.deepEqual(durableTurnRows(stopped.database, stopped.conversationId), terminal)
+})
+
+test("StopTurn rejects multiple running aggregates and returns undefined with no active or stopped Turn", async (t) => {
+  const empty = await tx1Fixture(t)
+  assert.equal(await empty.repository.stopConversationTurn(empty.conversationId), undefined)
+
+  const fixture = await tx1Fixture(t)
+  const first = await fixture.repository.submitConversationTurn(turnInput(fixture.conversationId, "stop-many-first"))
+  const second = await fixture.repository.submitConversationTurn(turnInput(fixture.conversationId, "stop-many-second"))
+  const expiry = new Date(Date.now() + 60_000).toISOString()
+  await fixture.database.write((connection) => {
+    for (const turn of [first, second]) {
+      connection.prepare("UPDATE conversation_entries SET status = 'running' WHERE id IN (?, ?)")
+        .run(turn.userEntryId, turn.responseEntryId)
+      connection.prepare(`
+        UPDATE execution_jobs SET status = 'running', lease_owner = ?, lease_expires_at = ? WHERE id = ?
+      `).run("ambiguous-worker", expiry, turn.jobId)
+    }
+  })
+  const before = durableTurnRows(fixture.database, fixture.conversationId)
+  await assert.rejects(
+    () => fixture.repository.stopConversationTurn(fixture.conversationId),
+    /multiple running/i
+  )
   assert.deepEqual(durableTurnRows(fixture.database, fixture.conversationId), before)
 })

@@ -16,6 +16,7 @@ import {
 } from "../lib/conversation"
 import { ConversationHistorySync } from "../lib/conversation-history-sync"
 import { ConversationLifecycleService } from "../lib/conversation-lifecycle/service"
+import { ConversationDispatcher } from "../lib/conversation-dispatcher"
 import {
   buildSharedConversationHistory,
   sharedConversationHistoryLimit
@@ -289,6 +290,122 @@ describe("conversation route contracts", { concurrency: false }, () => {
 
     assert.equal(response.status, 400)
     assert.match(body.error ?? "", /conversationId/i)
+  })
+
+  test("StopTurn route preserves the control response envelope and freezes later completion", async (t) => {
+    const { POST } = await importRouteWithIsolatedDataDir<{
+      POST: (request: Request) => Promise<Response>
+    }>(t, "../app/api/conversation/control/route")
+    const { getDefaultHiveServices } = await getRouteServices()
+    const services = getDefaultHiveServices()
+    const conversationId = "conversation:dddddddd-dddd-4ddd-8ddd-dddddddddddd"
+    await services.repository.createConversation({ id: conversationId, title: "Stop route" })
+    const submitted = await services.repository.submitConversationTurn({
+      conversationId,
+      targetAgent: "codex",
+      content: "Stop this active Turn.",
+      idempotencyKey: "route-stop",
+      responseRole: "agent"
+    })
+    const claimed = await services.repository.claimNextConversationTurn({
+      conversationId,
+      leaseOwner: "route-stop-worker",
+      leaseDurationMs: 60_000
+    })
+    assert.ok(claimed && !("rejected" in claimed))
+    if (!claimed || "rejected" in claimed) throw new Error("Expected claimed Turn")
+    await services.repository.upsertCodexSession({
+      conversationId,
+      bridgeSessionId: "bridge-route-stop",
+      codexThreadId: "thread-route-stop",
+      status: "running",
+      turnStatus: "inProgress",
+      cursor: 0
+    })
+    restoreEnv(t, "CODEX_BRIDGE_URL")
+    process.env.CODEX_BRIDGE_URL = "http://codex.test"
+    installFetchMock(t, async (input) => {
+      const url = String(input)
+      if (url.endsWith("/stop")) return jsonResponse({ ok: true })
+      if (url.includes("/events?after=")) return jsonResponse({
+        id: "bridge-route-stop",
+        threadId: "thread-route-stop",
+        status: "stopped",
+        turnStatus: "stopped",
+        cursor: 1,
+        events: [],
+        nextCursor: 1
+      })
+      if (url.endsWith("/thread")) return jsonResponse({ error: "not needed" }, 404)
+      throw new Error(`Unexpected fetch: ${url}`)
+    })
+
+    const response = await POST(new Request("http://localhost/api/conversation/control", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ conversationId, action: "stop" })
+    }))
+    const body = await response.json() as Record<string, unknown>
+
+    assert.equal(response.status, 200)
+    assert.deepEqual(Object.keys(body).sort(), ["allowedAgents", "conversationId", "entries", "events", "nextCursor", "session"])
+    assert.deepEqual(
+      (body.entries as Array<{ status: string }>).map((entry) => entry.status),
+      ["interrupted", "interrupted"]
+    )
+    assert.deepEqual(services.repository.listConversation(conversationId).map((entry) => entry.status), ["interrupted", "interrupted"])
+    const late = await services.repository.settleConversationTurn({
+      conversationId,
+      userEntryId: submitted.userEntryId,
+      responseEntryId: submitted.responseEntryId,
+      jobId: submitted.jobId,
+      idempotencyKey: claimed.idempotencyKey,
+      leaseOwner: claimed.leaseOwner,
+      outcome: { kind: "completed", body: "late route completion", deliveryState: "confirmed" }
+    })
+    assert.equal(late.applied, false)
+  })
+
+  test("StopTurn remote failure preserves its response contract after pending cancellation", async (t) => {
+    const { POST } = await importRouteWithIsolatedDataDir<{
+      POST: (request: Request) => Promise<Response>
+    }>(t, "../app/api/conversation/control/route")
+    const { getDefaultHiveServices } = await getRouteServices()
+    const services = getDefaultHiveServices()
+    const conversationId = "conversation:eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"
+    await services.repository.createConversation({ id: conversationId, title: "Failed control" })
+    const submitted = await services.repository.submitConversationTurn({
+      conversationId,
+      targetAgent: "codex",
+      content: "Cancel this pending Turn.",
+      idempotencyKey: "route-failed-control",
+      responseRole: "agent"
+    })
+    await services.repository.upsertCodexSession({
+      conversationId,
+      bridgeSessionId: "bridge-route-failed-control",
+      codexThreadId: "thread-route-failed-control",
+      status: "running",
+      turnStatus: "inProgress",
+      cursor: 0
+    })
+    restoreEnv(t, "CODEX_BRIDGE_URL")
+    process.env.CODEX_BRIDGE_URL = "http://codex.test"
+    installFetchMock(t, async (input) => {
+      assert.match(String(input), /\/stop$/)
+      return jsonResponse({ error: "bridge unavailable" }, 503)
+    })
+
+    const response = await POST(new Request("http://localhost/api/conversation/control", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ conversationId, action: "stop" })
+    }))
+
+    assert.equal(response.status, 503)
+    assert.deepEqual(await response.json(), { error: "bridge unavailable" })
+    assert.equal(services.repository.getExecutionJob(submitted.jobId)?.status, "canceled")
+    assert.deepEqual(services.repository.listConversation(conversationId).map((entry) => entry.status), ["canceled", "canceled"])
   })
 
   test("conversation GET includes permission mode and current conversation metadata when available", async (t) => {
@@ -750,6 +867,65 @@ describe("conversation route contracts", { concurrency: false }, () => {
       "Provide exactly one of title, state, selectedModelId, or selectedReasoningIntensity."
     )
   })
+})
+
+test("Stop and poller stopped dispositions converge through the real dispatcher in either order", async (t) => {
+  const { repository } = await repositoryFixture(t)
+  const lifecycle = new ConversationLifecycleService(repository)
+  const conversationId = "conversation:stop-poller-race"
+  await repository.createConversation({ id: conversationId, title: "Stop poller race" })
+
+  const pollerFirst = await repository.submitConversationTurn({
+    conversationId,
+    targetAgent: "codex",
+    content: "Poller stops first",
+    idempotencyKey: "poller-first",
+    responseRole: "agent"
+  })
+  const pollerDispatcher = new ConversationDispatcher(repository, async () => ({
+    status: "interrupted" as const,
+    body: "Provider reported stopped.",
+    disposition: "stopped" as const
+  }))
+  await pollerDispatcher.drain(conversationId)
+  assert.equal(repository.getExecutionJob(pollerFirst.jobId)?.status, "canceled")
+  assert.equal((await lifecycle.stopTurn(conversationId))?.applied, false)
+
+  const stopFirst = await repository.submitConversationTurn({
+    conversationId,
+    targetAgent: "codex",
+    content: "Route stops first",
+    idempotencyKey: "stop-first",
+    responseRole: "agent"
+  })
+  let release: ((outcome: { status: "interrupted"; body: string; disposition: "stopped" }) => void) | undefined
+  let markStarted: (() => void) | undefined
+  const runtimeStarted = new Promise<void>((resolve) => {
+    markStarted = resolve
+  })
+  const stopFirstDispatcher = new ConversationDispatcher(repository, async () => {
+    markStarted?.()
+    return await new Promise<{ status: "interrupted"; body: string; disposition: "stopped" }>((resume) => {
+      release = resume
+    })
+  })
+  const stopFirstDrain = stopFirstDispatcher.drain(conversationId)
+  await runtimeStarted
+  const stopped = await lifecycle.stopTurn(conversationId)
+  assert.equal(stopped?.applied, true)
+  release?.({ status: "interrupted", body: "Late stopped poller.", disposition: "stopped" })
+  await stopFirstDrain
+
+  assert.deepEqual(
+    [pollerFirst, stopFirst].map((turn) => repository.getExecutionJob(turn.jobId)?.status),
+    ["canceled", "canceled"]
+  )
+  assert.deepEqual(
+    repository.listConversation(conversationId).filter((entry) =>
+      entry.id === stopFirst.userEntryId || entry.id === stopFirst.responseEntryId
+    ).map((entry) => entry.status),
+    ["interrupted", "interrupted"]
+  )
 })
 
 test("conversation service exposes an explicit new-conversation command", async (t) => {

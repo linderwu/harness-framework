@@ -2243,10 +2243,15 @@ export class HiveMemoryRepository {
         throw new Error(`Conversation dispatch ${job.id} entries could not be settled.`)
       }
 
-      const jobStatus = input.outcome.kind === "interrupted" ? "completed" : input.outcome.kind
+      const jobStatus = input.outcome.kind === "interrupted"
+        ? input.outcome.disposition === "stopped" ? "canceled" : "completed"
+        : input.outcome.kind
       const result = JSON.stringify({
         status: input.outcome.kind,
         responseEntryId: responseEntry.id,
+        ...(input.outcome.kind === "interrupted" && input.outcome.disposition === "stopped"
+          ? { reason: "stopped" }
+          : {}),
         ...(input.outcome.kind === "failed" && input.outcome.deliveryState === "unknown"
           ? { deliveryState: "unknown" }
           : {})
@@ -2306,16 +2311,137 @@ export class HiveMemoryRepository {
           AND workflow_run_id = ?
           AND status = 'queued'
       `).all(conversationId) as ExecutionJobRow[]
+
+      const aggregates = rows.map((row) => {
+        const job = executionJobFromRow(row)
+        return { job, aggregate: this.conversationTurnAggregateOnConnection(connection, job, conversationId) }
+      })
+
+      for (const { job, aggregate } of aggregates) {
+        if (!aggregate.ok) {
+          const failed = connection.prepare(`
+            UPDATE execution_jobs SET
+              status = 'failed', lease_owner = NULL, lease_expires_at = NULL,
+              result_json = NULL, last_error = ?, completed_at = ?, updated_at = ?
+            WHERE id = ? AND status = 'queued'
+          `).run(aggregate.error, now, now, job.id)
+          if (failed.changes !== 1) throw new Error(`Conversation dispatch ${job.id} could not be canceled.`)
+          continue
+        }
+        this.cancelQueuedConversationEntryOnConnection(connection, aggregate.userEntry, undefined, now)
+        this.cancelQueuedConversationEntryOnConnection(
+          connection,
+          aggregate.responseEntry,
+          "Canceled before dispatch.",
+          now
+        )
+      }
+
       for (const row of rows) {
-        const next = cancelQueuedExecutionJob(executionJobFromRow(row), { id: row.id, now })
-        connection.prepare(`
+        const job = executionJobFromRow(row)
+        const aggregate = aggregates.find((candidate) => candidate.job.id === job.id)?.aggregate
+        if (!aggregate?.ok) continue
+        const next = cancelQueuedExecutionJob(job, { id: row.id, now })
+        const canceled = connection.prepare(`
           UPDATE execution_jobs SET
             status = ?, lease_owner = NULL, lease_expires_at = NULL,
             result_json = NULL, completed_at = ?, updated_at = ?
           WHERE id = ? AND status = 'queued'
         `).run(next.status, next.completedAt ?? null, next.updatedAt, next.id)
+        if (canceled.changes !== 1) throw new Error(`Conversation dispatch ${next.id} could not be canceled.`)
       }
       return rows.length
+    })
+  }
+
+  async stopConversationTurn(conversationId: string): Promise<SettledTurnAggregate | undefined> {
+    const now = new Date().toISOString()
+    return this.database.transaction((connection) => {
+      const runningRows = connection.prepare(`
+        SELECT * FROM execution_jobs
+        WHERE kind = 'conversation_dispatch'
+          AND workflow_run_id = ?
+          AND status = 'running'
+      `).all(conversationId) as ExecutionJobRow[]
+      if (runningRows.length > 1) {
+        throw new Error(`Conversation ${conversationId} has multiple running dispatches.`)
+      }
+      const row = runningRows[0] ?? (connection.prepare(`
+        SELECT * FROM execution_jobs
+        WHERE kind = 'conversation_dispatch'
+          AND workflow_run_id = ?
+          AND status = 'canceled'
+        ORDER BY created_at DESC, rowid DESC
+      `).all(conversationId) as ExecutionJobRow[]).find((candidate) =>
+        isStoppedConversationTurn(executionJobFromRow(candidate))
+      )
+      if (!row) return undefined
+
+      const job = executionJobFromRow(row)
+      const aggregate = this.conversationTurnAggregateOnConnection(
+        connection,
+        job,
+        conversationId,
+        job.status === "running" ? ["running"] : null
+      )
+      if (!aggregate.ok) {
+        if (job.status !== "running") return undefined
+        throw new Error(aggregate.error)
+      }
+      if (isTerminalConversationTurnSettlement(job)) {
+        if (!isStoppedConversationTurn(job)) return undefined
+        return freezeSettledTurnAggregate({
+          applied: false,
+          conversationId,
+          userEntryId: aggregate.userEntry.id,
+          responseEntryId: aggregate.responseEntry.id,
+          jobId: job.id,
+          idempotencyKey: job.idempotencyKey,
+          userEntry: aggregate.userEntry,
+          responseEntry: aggregate.responseEntry,
+          job
+        })
+      }
+
+      const userEntry = this.updateConversationOnConnection(
+        connection,
+        { id: aggregate.userEntry.id, status: "interrupted" },
+        now
+      )
+      const responseEntry = this.updateConversationOnConnection(
+        connection,
+        { id: aggregate.responseEntry.id, status: "interrupted" },
+        now
+      )
+      if (!userEntry || !responseEntry) {
+        throw new Error(`Conversation dispatch ${job.id} entries could not be stopped.`)
+      }
+      const result = connection.prepare(`
+        UPDATE execution_jobs SET
+          status = 'canceled', lease_owner = NULL, lease_expires_at = NULL,
+          result_json = ?, last_error = NULL, completed_at = ?, updated_at = ?
+        WHERE id = ? AND status = 'running'
+      `).run(JSON.stringify({
+        status: "interrupted",
+        responseEntryId: responseEntry.id,
+        reason: "stopped"
+      }), now, now, job.id)
+      if (result.changes === 0) throw new Error(`Conversation dispatch ${job.id} could not be stopped.`)
+      const stoppedRow = connection.prepare("SELECT * FROM execution_jobs WHERE id = ?")
+        .get(job.id) as ExecutionJobRow | undefined
+      if (!stoppedRow) throw new Error(`Conversation dispatch ${job.id} disappeared while stopping.`)
+
+      return freezeSettledTurnAggregate({
+        applied: true,
+        conversationId,
+        userEntryId: userEntry.id,
+        responseEntryId: responseEntry.id,
+        jobId: job.id,
+        idempotencyKey: job.idempotencyKey,
+        userEntry,
+        responseEntry,
+        job: executionJobFromRow(stoppedRow)
+      })
     })
   }
 
@@ -2674,6 +2800,27 @@ export class HiveMemoryRepository {
     return row ? conversationFromRow(row) : undefined
   }
 
+  private cancelQueuedConversationEntryOnConnection(
+    connection: Database.Database,
+    entry: ConversationEntry,
+    content: string | undefined,
+    now: string
+  ) {
+    const result = connection.prepare(`
+      UPDATE conversation_entries SET
+        content = COALESCE(?, content), status = 'canceled'
+      WHERE id = ? AND status = 'queued'
+    `).run(content ?? null, entry.id)
+    if (result.changes !== 1) {
+      throw new Error(`Conversation Entry ${entry.id} could not be canceled.`)
+    }
+    this.touchConversationMetadata(connection, entry.workflowRunId, now)
+    const row = connection.prepare("SELECT * FROM conversation_entries WHERE id = ?")
+      .get(entry.id) as ConversationRow | undefined
+    if (!row) throw new Error(`Conversation Entry ${entry.id} disappeared while canceling.`)
+    return conversationFromRow(row)
+  }
+
   private restoreRecoveredConversationTurnEntries(
     connection: Database.Database,
     aggregate: ConversationTurnAggregate,
@@ -2733,8 +2880,10 @@ export class HiveMemoryRepository {
       responseEntry.workflowRunId !== conversationId ||
       userEntry.role !== "user" ||
       (responseEntry.role !== "agent" && responseEntry.role !== "manager") ||
-      responseEntry.replyToId !== userEntry.id ||
-      (allowedEntryStatuses !== null && !allowedEntryStatuses.includes(userEntry.status)) ||
+       responseEntry.replyToId !== userEntry.id ||
+       responseEntry.idempotencyKey !== `${userEntry.idempotencyKey}:response` ||
+       job.idempotencyKey !== `${userEntry.idempotencyKey}:dispatch` ||
+       (allowedEntryStatuses !== null && !allowedEntryStatuses.includes(userEntry.status)) ||
       (allowedEntryStatuses !== null && !allowedEntryStatuses.includes(responseEntry.status)) ||
       userEntry.agentId !== payload.targetAgent ||
       responseEntry.agentId !== payload.targetAgent
@@ -3185,6 +3334,16 @@ function freezeTurnDispatchEnvelope(envelope: TurnDispatchEnvelope): TurnDispatc
 
 function isTerminalConversationTurnSettlement(job: ExecutionJob) {
   return job.status === "completed" || job.status === "failed" || job.status === "canceled"
+}
+
+function isStoppedConversationTurn(job: ExecutionJob) {
+  if (job.status !== "canceled" || !job.resultJson) return false
+  try {
+    const result = JSON.parse(job.resultJson) as Record<string, unknown>
+    return result.status === "interrupted" && result.reason === "stopped"
+  } catch {
+    return false
+  }
 }
 
 function freezeSettledTurnAggregate(aggregate: SettledTurnAggregate): SettledTurnAggregate {

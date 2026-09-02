@@ -22,6 +22,7 @@ export interface ConversationDispatchOutcome {
   status: "completed" | "interrupted" | "failed"
   body: string
   deliveryState?: "confirmed" | "unknown"
+  disposition?: "stopped"
 }
 
 export type ConversationTurnPublication = (settled: SettledTurnAggregate) => Promise<unknown> | unknown
@@ -330,7 +331,10 @@ function providerOutcomeFromDispatch(result: ConversationDispatchOutcome): Provi
   return {
     kind: result.status,
     body: result.body,
-    deliveryState: "confirmed"
+    deliveryState: "confirmed",
+    ...(result.status === "interrupted" && result.disposition === "stopped"
+      ? { disposition: "stopped" as const }
+      : {})
   }
 }
 

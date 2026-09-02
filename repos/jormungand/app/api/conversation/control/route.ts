@@ -32,15 +32,18 @@ export async function POST(request: Request) {
     })
     const services = getDefaultHiveServices()
     if (body.action === "interrupt" || body.action === "stop") {
-      await services.conversationQueue.cancelPending(identity.conversationId)
+      await services.conversationLifecycle.cancelPendingTurns(identity.conversationId)
     }
-    const response = NextResponse.json(
-      await controlCodexConversation(
-        services.repository,
-        body.action,
-        identity.conversationId
-      )
+    let control = await controlCodexConversation(
+      services.repository,
+      body.action,
+      identity.conversationId
     )
+    if (body.action === "stop") {
+      await services.conversationLifecycle.stopTurn(identity.conversationId)
+      control = { ...control, entries: services.repository.listConversation(identity.conversationId) }
+    }
+    const response = NextResponse.json(control)
     return identity.shouldSetCookie
       ? setConversationCookie(response, identity.conversationId, request)
       : response

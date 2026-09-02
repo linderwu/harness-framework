@@ -337,7 +337,9 @@ export async function dispatchCodexConversationEntry(input: {
   for (let attempt = 0; attempt < maxPollAttempts; attempt += 1) {
     const state = await getCodexConversationState(input.repository, input.conversationId)
     const turnStatus = state.session?.turnStatus
-    if (turnStatus && turnStatus !== "inProgress") {
+    const isStopped = turnStatus === "stopped" || state.session?.status === "stopped"
+    const isTerminal = turnStatus === "completed" || turnStatus === "failed" || isStopped
+    if (isTerminal) {
       const responseEntry = input.responseEntryId
         ? input.repository.getConversationEntry(input.responseEntryId)
         : [...state.entries].reverse().find(
@@ -348,9 +350,7 @@ export async function dispatchCodexConversationEntry(input: {
       const status = turnStatus === "completed"
         ? "completed" as const
         : turnStatus === "interrupted"
-          || turnStatus === "stopped"
-          || state.session?.status === "paused"
-          || state.session?.status === "stopped"
+          || isStopped
           ? "interrupted" as const
           : "failed" as const
       return {
@@ -358,7 +358,8 @@ export async function dispatchCodexConversationEntry(input: {
         body: (lifecycleManagedTurn
           ? state.session?.finalText ?? state.session?.liveText
           : responseEntry?.content ?? state.session?.finalText ?? state.session?.liveText)
-          ?? (status === "interrupted" ? "Codex response interrupted." : "Codex response failed.")
+          ?? (status === "interrupted" ? "Codex response interrupted." : "Codex response failed."),
+        ...(isStopped ? { disposition: "stopped" as const } : {})
       }
     }
     await delay(pollIntervalMs)
@@ -532,6 +533,8 @@ async function syncConversation(
     bridgeState.status === "failed" || bridgeState.turnStatus === "failed"
   const isPaused =
     bridgeState.status === "paused" || bridgeState.turnStatus === "interrupted"
+  const isStopped =
+    bridgeState.status === "stopped" || bridgeState.turnStatus === "stopped"
   if (!isActiveLifecycleCodexTurn(repository, conversationId, userEntry, responseEntry)) {
     const responseContent =
       bridgeState.finalText?.trim() ||
@@ -546,13 +549,13 @@ async function syncConversation(
       await repository.updateConversation({
         id: responseEntry.id,
         content: responseContent,
-        status: isCompleted ? "completed" : isFailed ? "failed" : "running"
+        status: isCompleted ? "completed" : isFailed ? "failed" : isStopped ? "interrupted" : "running"
       })
     }
     if (userEntry) {
       await repository.updateConversation({
         id: userEntry.id,
-        status: isCompleted ? "completed" : isFailed ? "failed" : "running"
+        status: isCompleted ? "completed" : isFailed ? "failed" : isStopped ? "interrupted" : "running"
       })
     }
   }
