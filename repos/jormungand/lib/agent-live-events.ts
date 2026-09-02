@@ -2,7 +2,7 @@ import { agentProfiles } from "./agents"
 import type { AgentKind } from "./types"
 
 export const MAX_AGENT_LIVE_TEXT = 8_000
-export const MAX_AGENT_LIVE_DETAILS_CHARS = 64_000
+export const MAX_AGENT_LIVE_DETAILS_CHARS = 512_000
 export const MAX_AGENT_LIVE_EVENTS = 64
 
 export type AgentLiveEventType =

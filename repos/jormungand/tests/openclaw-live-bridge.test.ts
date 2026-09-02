@@ -216,10 +216,33 @@ async function createFakeDocker(t: TestContext) {
       "  writeLine({",
       '    finalAssistantVisibleText: "Visible assistant answer",',
       '    finalAssistantRawText: "Raw assistant answer",',
-      '    finalPromptText: `Internal prompt envelope ${"x".repeat(10_000)}`,',
+      '    finalPromptText: `Internal prompt envelope ${"x".repeat(100_000)}`,',
       '    executionTrace: { winnerModel: "MiniMax-M2.7" },',
       '    toolSummary: { calls: 2, tools: ["memory_search"] }',
       "  })",
+      "}",
+      "",
+      "async function runLargeFinalAssistantEnvelope() {",
+      "  writeLine({",
+      '    finalAssistantRawText: "Raw assistant answer",',
+      '    finalPromptText: `Large internal prompt ${"x".repeat(5_000_000)}`,',
+      '    executionTrace: { winnerModel: "MiniMax-M2.7" },',
+      '    toolSummary: { calls: 2, tools: ["memory_search"] },',
+      '    finalAssistantVisibleText: "Visible assistant answer"',
+      "  })",
+      "}",
+      "",
+      "async function runPrettyFinalAssistantEnvelope() {",
+      "  const payload = {",
+      "    response: {",
+      '      finalAssistantRawText: "Raw assistant answer",',
+      '      finalPromptText: `Internal prompt envelope ${"x".repeat(10_000)}`,',
+      '      finalAssistantVisibleText: "Visible assistant answer"',
+      "    },",
+      '    executionTrace: { winnerModel: "MiniMax-M2.7" },',
+      '    toolSummary: { calls: 2, tools: ["memory_search"] }',
+      "  }",
+      '  writeStdout(`${JSON.stringify(payload, null, 2)}\\n`)',
       "}",
       "",
       "async function runAssistantFragmentsNoFinalPayload() {",
@@ -275,6 +298,16 @@ async function createFakeDocker(t: TestContext) {
       "",
       '  if (mode === "final-assistant-envelope") {',
       "    await runFinalAssistantEnvelope()",
+      "    return",
+      "  }",
+      "",
+      '  if (mode === "large-final-assistant-envelope") {',
+      "    await runLargeFinalAssistantEnvelope()",
+      "    return",
+      "  }",
+      "",
+      '  if (mode === "pretty-final-assistant-envelope") {',
+      "    await runPrettyFinalAssistantEnvelope()",
       "    return",
       "  }",
       "",
@@ -639,6 +672,53 @@ test("OpenClaw bridge keeps finalAssistantVisibleText as output and routes the r
   )
 })
 
+test("OpenClaw bridge extracts the visible text from a large final assistant envelope", { concurrency: false }, async (t) => {
+  const { commandDir, fixturePath } = await createFakeDocker(t)
+  const commandPath = `${commandDir};${process.env.Path ?? process.env.PATH ?? ""}`
+  const { baseUrl } = await startBridge(t, {
+    PATH: commandPath,
+    Path: commandPath,
+    FAKE_DOCKER_MODE: "large-final-assistant-envelope",
+    OPENCLAW_DOCKER_COMMAND: JSON.stringify([process.execPath, fixturePath])
+  })
+
+  const runResponse = await postRun(baseUrl, {
+    protocolVersion: "harness-agent-bridge/v0.3",
+    idempotencyKey: "large-final-assistant-envelope",
+    workflowRunId: "workflow-large-final-assistant-envelope",
+    executor: "openclaw.rowlet",
+    title: "Large final assistant envelope",
+    requirement: "Keep the final visible text separate from large provider metadata."
+  })
+
+  assert.equal(runResponse.status, 200)
+  const completedRun = await runResponse.json()
+  assert.equal(completedRun.output, "Visible assistant answer")
+})
+test("OpenClaw bridge extracts the visible text from a pretty-printed final assistant envelope", { concurrency: false }, async (t) => {
+  const { commandDir, fixturePath } = await createFakeDocker(t)
+  const commandPath = `${commandDir};${process.env.Path ?? process.env.PATH ?? ""}`
+  const { baseUrl } = await startBridge(t, {
+    PATH: commandPath,
+    Path: commandPath,
+    FAKE_DOCKER_MODE: "pretty-final-assistant-envelope",
+    OPENCLAW_DOCKER_COMMAND: JSON.stringify([process.execPath, fixturePath])
+  })
+
+  const runResponse = await postRun(baseUrl, {
+    protocolVersion: "harness-agent-bridge/v0.3",
+    idempotencyKey: "pretty-final-assistant-envelope",
+    workflowRunId: "workflow-pretty-final-assistant-envelope",
+    executor: "openclaw.rowlet",
+    title: "Pretty final assistant envelope",
+    requirement: "Keep the final visible text separate from pretty provider metadata."
+  })
+
+  assert.equal(runResponse.status, 200)
+  const completedRun = await runResponse.json()
+  assert.equal(completedRun.output, "Visible assistant answer")
+  assert.equal(completedRun.responseDetails.response.finalAssistantRawText, "Raw assistant answer")
+})
 test("OpenClaw bridge falls back to sanitized assistant fragments when structured records omit a final payload", { concurrency: false }, async (t) => {
   const { commandDir, fixturePath } = await createFakeDocker(t)
   const commandPath = `${commandDir};${process.env.Path ?? process.env.PATH ?? ""}`

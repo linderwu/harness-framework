@@ -53,8 +53,8 @@ const liveEventsPathTemplate = "/agent-runs/by-idempotency/:key/events/"
 const liveEventsPathPattern = createPathMatchPattern(liveEventsPathTemplate)
 const maxRunLiveEvents = 64
 const maxAgentLiveText = 8_000
-const maxAgentLiveDetailsChars = 64_000
-const maxParserBufferText = Math.max(maxAgentLiveText, maxAgentLiveDetailsChars)
+const maxAgentLiveDetailsChars = 512_000
+const maxParserBufferText = Math.max(maxAgentLiveText, maxAgentLiveDetailsChars * 32)
 const noFinalTextFallback = "OpenClaw completed without a final text response."
 const completedRunTtlMs = parseCompletedRunTtlMs(
   process.env.OPENCLAW_BRIDGE_COMPLETED_RUN_TTL_MS
@@ -958,7 +958,7 @@ function extractOpenClawText(raw, structuredRecords = [], assistantFragments = [
 
 function extractFinalAssistantVisibleText(raw, structuredRecords = []) {
   const record = findFinalAssistantEnvelope(raw, structuredRecords)
-  return normalizeBoundedStructuredText(record?.finalAssistantVisibleText)
+  return findFinalAssistantVisibleTextInValue(record)
 }
 
 function extractOpenClawResponseDetails(raw, structuredRecords = []) {
@@ -968,9 +968,9 @@ function extractOpenClawResponseDetails(raw, structuredRecords = []) {
     return undefined
   }
 
-  const details = { ...record }
-  delete details.finalAssistantVisibleText
-  return normalizeBoundedResponseDetails(details)
+  return normalizeBoundedResponseDetails(
+    removeFinalAssistantVisibleText(record)
+  )
 }
 
 function findFinalAssistantEnvelope(raw, structuredRecords = []) {
@@ -979,8 +979,58 @@ function findFinalAssistantEnvelope(raw, structuredRecords = []) {
   const candidates = [...structuredRecords, ...parsedRecords].reverse()
 
   return candidates.find((record) => {
-    return normalizeBoundedStructuredText(record?.finalAssistantVisibleText)
+    return !!findFinalAssistantVisibleTextInValue(record)
   })
+}
+
+function findFinalAssistantVisibleTextInValue(value) {
+  if (Array.isArray(value)) {
+    for (let index = value.length - 1; index >= 0; index -= 1) {
+      const text = findFinalAssistantVisibleTextInValue(value[index])
+      if (text) {
+        return text
+      }
+    }
+    return undefined
+  }
+
+  if (!value || typeof value !== "object") {
+    return undefined
+  }
+
+  const record = value
+  const directText = normalizeBoundedStructuredText(
+    record.finalAssistantVisibleText
+  )
+  if (directText) {
+    return directText
+  }
+
+  const values = Object.values(record)
+  for (let index = values.length - 1; index >= 0; index -= 1) {
+    const text = findFinalAssistantVisibleTextInValue(values[index])
+    if (text) {
+      return text
+    }
+  }
+
+  return undefined
+}
+
+function removeFinalAssistantVisibleText(value) {
+  if (Array.isArray(value)) {
+    return value.map(removeFinalAssistantVisibleText)
+  }
+
+  if (!value || typeof value !== "object") {
+    return value
+  }
+
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([key]) => key !== "finalAssistantVisibleText")
+      .map(([key, child]) => [key, removeFinalAssistantVisibleText(child)])
+  )
 }
 
 async function readJson(request) {
@@ -1203,6 +1253,13 @@ function createStructuredRecordParser(onRecord) {
       }
 
       const line = buffer.slice(0, newlineIndex).trim()
+      if (
+        (line.startsWith("{") && !line.endsWith("}")) ||
+        (line.startsWith("[") && !line.endsWith("]"))
+      ) {
+        return
+      }
+
       buffer = buffer.slice(newlineIndex + 1)
       if (!line) {
         continue
@@ -1319,8 +1376,8 @@ function extractStructuredTextValue(value) {
   const structuredValues = Array.isArray(parsed) ? parsed : [parsed]
 
   for (let index = structuredValues.length - 1; index >= 0; index -= 1) {
-    const finalAssistantVisibleText = normalizeBoundedStructuredText(
-      structuredValues[index]?.finalAssistantVisibleText
+    const finalAssistantVisibleText = findFinalAssistantVisibleTextInValue(
+      structuredValues[index]
     )
     if (finalAssistantVisibleText) {
       return finalAssistantVisibleText
