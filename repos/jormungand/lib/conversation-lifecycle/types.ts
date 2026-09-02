@@ -1,4 +1,6 @@
-import type { ConversationStatus } from "../hive-memory/types"
+import type { AgentKind } from "../types"
+import type { ConversationEntry, ConversationStatus } from "../hive-memory/types"
+import { legacyConversationId } from "../conversation-identity"
 
 export type TurnStatus = ConversationStatus
 
@@ -19,6 +21,26 @@ export interface TurnIdentity {
   responseEntryId: string
   jobId: string
   idempotencyKey: string
+}
+
+export interface TurnDispatchEnvelope extends TurnIdentity {
+  readonly leaseOwner: string
+  readonly leaseExpiresAt: string
+  readonly attemptCount: number
+  readonly targetAgent: AgentKind
+  readonly content: string
+  readonly userEntry: ConversationEntry
+  readonly responseEntry: ConversationEntry
+}
+
+export type TurnClaimResult = TurnDispatchEnvelope | {
+  readonly rejected: true
+  readonly jobId: string
+  readonly error: string
+}
+
+export function isLifecycleOwnedConversationId(conversationId: string) {
+  return conversationId.startsWith("conversation:") || conversationId === legacyConversationId
 }
 
 export type TransitionDecision =

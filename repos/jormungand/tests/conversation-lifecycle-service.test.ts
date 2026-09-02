@@ -146,3 +146,48 @@ test("SubmitTurn maps repository lifecycle errors without coupling to a broader 
     )
   }
 })
+
+test("ClaimNextTurn delegates its atomic claim and owner-checked renewal without accepting Runtime work", async () => {
+  const calls: unknown[] = []
+  const envelope = Object.freeze({
+    conversationId: "conversation:tx2",
+    userEntryId: "user-1",
+    responseEntryId: "response-1",
+    jobId: "job-1",
+    idempotencyKey: "turn-1",
+    leaseOwner: "worker-1",
+    leaseExpiresAt: "2026-01-01T00:01:00.000Z",
+    attemptCount: 1,
+    targetAgent: "codex" as const,
+    content: "content",
+    userEntry: entry("user-1"),
+    responseEntry: { ...entry("response-1"), role: "agent" as const, replyToId: "user-1" }
+  })
+  const repository = {
+    submitConversationTurn: async () => submittedTurn(),
+    claimNextConversationTurn: async (input: unknown) => {
+      calls.push(["claim", input])
+      return envelope
+    },
+    renewExecutionJobLease: async (input: unknown) => {
+      calls.push(["renew", input])
+      return { id: "job-1", leaseOwner: "worker-1" }
+    }
+  }
+  const service = new ConversationLifecycleService(repository)
+
+  assert.equal(await service.claimNextTurn({
+    conversationId: "conversation:tx2",
+    leaseOwner: "worker-1",
+    leaseDurationMs: 60_000
+  }), envelope)
+  await service.renewTurnLease({
+    jobId: "job-1",
+    leaseOwner: "worker-1",
+    leaseDurationMs: 120_000
+  })
+  assert.deepEqual(calls, [
+    ["claim", { conversationId: "conversation:tx2", leaseOwner: "worker-1", leaseDurationMs: 60_000 }],
+    ["renew", { id: "job-1", leaseOwner: "worker-1", leaseDurationMs: 120_000 }]
+  ])
+})

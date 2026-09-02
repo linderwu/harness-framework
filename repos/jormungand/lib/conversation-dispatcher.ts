@@ -2,6 +2,11 @@ import type { AgentKind } from "./types"
 import type { ConversationEntry } from "./hive-memory/types"
 import type { HiveMemoryRepository } from "./hive-memory/repository"
 import type { ExecutionJob } from "./hive-memory/types"
+import { ConversationLifecycleService } from "./conversation-lifecycle/service"
+import {
+  isLifecycleOwnedConversationId,
+  type TurnDispatchEnvelope
+} from "./conversation-lifecycle/types"
 
 export interface ConversationDispatchInput {
   conversationId: string
@@ -119,11 +124,14 @@ export class ConversationQueueService {
 export class ConversationDispatcher {
   private readonly activeDrains = new Map<string, Promise<void>>()
   private readonly leaseDurationMs = 5 * 60 * 1000
+  private readonly lifecycle: ConversationLifecycleService
 
   constructor(
     private readonly repository: HiveMemoryRepository,
     private readonly dispatch: (input: ConversationDispatchInput) => Promise<ConversationDispatchOutcome>
-  ) {}
+  ) {
+    this.lifecycle = new ConversationLifecycleService(repository)
+  }
 
   drain(conversationId: string): Promise<void> {
     const active = this.activeDrains.get(conversationId)
@@ -139,6 +147,27 @@ export class ConversationDispatcher {
   }
 
   private async runDrain(conversationId: string) {
+    if (isLifecycleOwnedConversationId(conversationId)) {
+      await this.runLifecycleDrain(conversationId)
+      return
+    }
+    await this.runLegacyDrain(conversationId)
+  }
+
+  private async runLifecycleDrain(conversationId: string) {
+    while (true) {
+      const claim = await this.lifecycle.claimNextTurn({
+        conversationId,
+        leaseOwner: this.leaseOwner(conversationId),
+        leaseDurationMs: this.leaseDurationMs
+      })
+      if (!claim) return
+      if ("rejected" in claim) continue
+      await this.runLifecycleJob(claim)
+    }
+  }
+
+  private async runLegacyDrain(conversationId: string) {
     while (true) {
       const job = await this.repository.claimNextConversationDispatch({
         conversationId,
@@ -146,11 +175,11 @@ export class ConversationDispatcher {
         leaseDurationMs: this.leaseDurationMs
       })
       if (!job) return
-      await this.runJob(job)
+      await this.runLegacyJob(job)
     }
   }
 
-  private async runJob(job: ExecutionJob) {
+  private async runLegacyJob(job: ExecutionJob) {
     let payload: ReturnType<typeof parseDispatchPayload>
     try {
       payload = parseDispatchPayload(job.payloadJson)
@@ -225,6 +254,49 @@ export class ConversationDispatcher {
       await this.repository.failExecutionJob({
         id: job.id,
         leaseOwner: job.leaseOwner!,
+        error: message
+      }).catch(() => undefined)
+    } finally {
+      if (renewalTimer) clearInterval(renewalTimer)
+    }
+  }
+
+  private async runLifecycleJob(envelope: TurnDispatchEnvelope) {
+    let renewalTimer: ReturnType<typeof setInterval> | undefined
+    try {
+      renewalTimer = setInterval(() => {
+        void this.lifecycle.renewTurnLease({
+          jobId: envelope.jobId,
+          leaseOwner: envelope.leaseOwner,
+          leaseDurationMs: this.leaseDurationMs
+        }).catch(() => undefined)
+      }, Math.max(1_000, this.leaseDurationMs / 2))
+      const result = await this.dispatch(envelope)
+      await this.repository.updateConversation({
+        id: envelope.userEntry.id,
+        status: result.status
+      })
+      await this.repository.updateConversation({
+        id: envelope.responseEntry.id,
+        content: result.body,
+        status: result.status
+      })
+      await this.repository.completeExecutionJob({
+        id: envelope.jobId,
+        leaseOwner: envelope.leaseOwner,
+        result: { status: result.status, responseEntryId: envelope.responseEntry.id }
+      })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      await this.repository.updateConversation({ id: envelope.userEntry.id, status: "failed" })
+      await this.repository.updateConversation({
+        id: envelope.responseEntry.id,
+        content: message,
+        status: "failed"
+      })
+      await this.repository.failExecutionJob({
+        id: envelope.jobId,
+        leaseOwner: envelope.leaseOwner,
         error: message
       }).catch(() => undefined)
     } finally {

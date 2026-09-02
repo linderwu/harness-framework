@@ -1,6 +1,7 @@
 import type { AgentKind } from "../types"
 import {
   ConversationTurnRepositoryError,
+  type ClaimNextConversationTurnInput,
   type SubmittedConversationTurn,
   type SubmitConversationTurnInput
 } from "../hive-memory/repository"
@@ -10,7 +11,7 @@ import type {
   ExecutionJobStatus
 } from "../hive-memory/types"
 import type { CodexReasoningIntensity } from "../types"
-import type { TurnIdentity } from "./types"
+import type { TurnClaimResult, TurnIdentity } from "./types"
 
 export interface SubmittedTurn extends TurnIdentity {
   readonly userEntry: ConversationEntry
@@ -170,9 +171,37 @@ export class ConversationLifecycleService {
       throw error
     }
   }
+
+  async claimNextTurn(input: ClaimNextConversationTurnInput): Promise<TurnClaimResult | undefined> {
+    if (!this.repository.claimNextConversationTurn) {
+      throw new Error("Conversation turn claiming is unavailable")
+    }
+    return await this.repository.claimNextConversationTurn(input)
+  }
+
+  async renewTurnLease(input: {
+    jobId: string
+    leaseOwner: string
+    leaseDurationMs: number
+  }) {
+    if (!this.repository.renewExecutionJobLease) {
+      throw new Error("Conversation turn lease renewal is unavailable")
+    }
+    await this.repository.renewExecutionJobLease({
+      id: input.jobId,
+      leaseOwner: input.leaseOwner,
+      leaseDurationMs: input.leaseDurationMs
+    })
+  }
 }
 
 interface ConversationLifecycleRepository extends ConversationTurnRepository {
+  claimNextConversationTurn?: (input: ClaimNextConversationTurnInput) => Promise<TurnClaimResult | undefined>
+  renewExecutionJobLease?: (input: {
+    id: string
+    leaseOwner: string
+    leaseDurationMs: number
+  }) => Promise<unknown>
   getConversationMetadata?: (conversationId: string) => ConversationMetadata | undefined
   createConversation?: (input: { id: string; title: string }) => Promise<ConversationMetadata>
   updateConversationProfile?: (input: {

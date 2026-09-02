@@ -57,6 +57,7 @@ import {
   requeueFailedExecutionJob
 } from "../execution-jobs"
 import { legacyConversationId } from "../conversation-identity"
+import type { TurnClaimResult, TurnDispatchEnvelope } from "../conversation-lifecycle/types"
 
 type MemoryRow = {
   id: string
@@ -271,6 +272,16 @@ type ExecutionJobRow = {
   completed_at: string | null
 }
 
+type ConversationTurnAggregate = {
+  userEntry: ConversationEntry
+  responseEntry: ConversationEntry
+  targetAgent: AgentKind
+}
+
+type ConversationTurnAggregateResult =
+  | { ok: true } & ConversationTurnAggregate
+  | { ok: false; error: string }
+
 export type ConversationTurnRepositoryErrorCode =
   | "conversation_not_found"
   | "conversation_not_active"
@@ -305,6 +316,13 @@ export interface SubmittedConversationTurn {
   responseEntry: ConversationEntry
   jobStatus: ExecutionJob["status"]
   duplicate: boolean
+}
+
+export interface ClaimNextConversationTurnInput {
+  conversationId: string
+  leaseOwner: string
+  leaseDurationMs: number
+  now?: string
 }
 
 export class HiveMemoryRepository {
@@ -1956,19 +1974,160 @@ export class HiveMemoryRepository {
     })
   }
 
+  async claimNextConversationTurn(
+    input: ClaimNextConversationTurnInput
+  ): Promise<TurnClaimResult | undefined> {
+    const now = input.now ?? new Date().toISOString()
+    return this.database.transaction((connection) => {
+      const expired = connection.prepare(`
+        SELECT * FROM execution_jobs
+        WHERE kind = 'conversation_dispatch'
+          AND workflow_run_id = ?
+          AND status = 'running'
+          AND lease_expires_at IS NOT NULL
+          AND lease_expires_at <= ?
+        ORDER BY created_at ASC, rowid ASC, id ASC
+      `).all(input.conversationId, now) as ExecutionJobRow[]
+      this.recoverExpiredExecutionJobsOnConnection(connection, {
+        now,
+        kind: "conversation_dispatch",
+        workflowRunId: input.conversationId
+      })
+      let recoveredRejection: TurnClaimResult | undefined
+      for (const row of expired) {
+        const recoveredRow = connection.prepare("SELECT * FROM execution_jobs WHERE id = ?")
+          .get(row.id) as ExecutionJobRow | undefined
+        if (!recoveredRow) continue
+        const recoveredJob = executionJobFromRow(recoveredRow)
+        const aggregate = this.conversationTurnAggregateOnConnection(
+          connection,
+          recoveredJob,
+          input.conversationId,
+          null
+        )
+        if (!aggregate.ok) {
+          const rejected = this.rejectConversationTurnClaim(
+            connection,
+            recoveredJob,
+            input,
+            now,
+            aggregate.error
+          )
+          recoveredRejection ??= rejected
+          continue
+        }
+        if (this.hasOnlyNonterminalConversationTurnEntries(aggregate)) {
+          this.restoreRecoveredConversationTurnEntries(connection, aggregate, now)
+          continue
+        }
+
+        const error = "Conversation dispatch lease expired after a terminal Entry was recorded."
+        this.failRecoveredConversationTurnEntries(connection, aggregate, error, now)
+        const rejected = this.rejectConversationTurnClaim(
+          connection,
+          recoveredJob,
+          input,
+          now,
+          error
+        )
+        recoveredRejection ??= rejected
+      }
+      if (recoveredRejection) return recoveredRejection
+
+      const running = connection.prepare(`
+        SELECT 1 AS present FROM execution_jobs
+        WHERE kind = 'conversation_dispatch'
+          AND workflow_run_id = ?
+          AND status = 'running'
+        LIMIT 1
+      `).get(input.conversationId) as { present: number } | undefined
+      if (running) return undefined
+
+      const row = connection.prepare(`
+        SELECT * FROM execution_jobs
+        WHERE kind = 'conversation_dispatch'
+          AND workflow_run_id = ?
+          AND status = 'queued'
+          AND available_at <= ?
+        ORDER BY created_at ASC, rowid ASC, id ASC
+        LIMIT 1
+      `).get(input.conversationId, now) as ExecutionJobRow | undefined
+      if (!row) return undefined
+
+      const job = executionJobFromRow(row)
+      const aggregate = this.conversationTurnAggregateOnConnection(connection, job, input.conversationId)
+      if (!aggregate.ok) {
+        return this.rejectConversationTurnClaim(connection, job, input, now, aggregate.error)
+      }
+
+      const next = claimQueuedExecutionJob(job, { ...input, now })
+      const result = connection.prepare(`
+        UPDATE execution_jobs SET
+          status = ?, attempt_count = ?, available_at = ?, lease_owner = ?,
+          lease_expires_at = ?, result_json = ?, last_error = ?, updated_at = ?
+        WHERE id = ? AND status = 'queued'
+      `).run(
+        next.status,
+        next.attemptCount,
+        next.availableAt,
+        next.leaseOwner ?? null,
+        next.leaseExpiresAt ?? null,
+        next.resultJson ?? null,
+        next.lastError ?? null,
+        next.updatedAt,
+        next.id
+      )
+      if (result.changes === 0) throw new Error(`Execution job ${next.id} was not claimable.`)
+
+      const userEntry = this.updateConversationOnConnection(
+        connection,
+        { id: aggregate.userEntry.id, status: "running" },
+        now
+      )
+      const responseEntry = this.updateConversationOnConnection(
+        connection,
+        { id: aggregate.responseEntry.id, status: "running" },
+        now
+      )
+      if (!userEntry || !responseEntry || !next.leaseOwner || !next.leaseExpiresAt) {
+        throw new Error(`Conversation dispatch ${next.id} could not be started.`)
+      }
+
+      return freezeTurnDispatchEnvelope({
+        conversationId: input.conversationId,
+        userEntryId: userEntry.id,
+        responseEntryId: responseEntry.id,
+        jobId: next.id,
+        idempotencyKey: next.idempotencyKey,
+        leaseOwner: next.leaseOwner,
+        leaseExpiresAt: next.leaseExpiresAt,
+        attemptCount: next.attemptCount,
+        targetAgent: aggregate.targetAgent,
+        content: userEntry.content,
+        userEntry,
+        responseEntry
+      })
+    })
+  }
+
   async renewExecutionJobLease(input: {
     id: string
     leaseOwner: string
     leaseDurationMs: number
   }) {
-    const now = new Date().toISOString()
-    const leaseExpiresAt = new Date(Date.now() + input.leaseDurationMs).toISOString()
+    const currentTime = new Date()
+    const now = currentTime.toISOString()
+    const leaseExpiresAt = new Date(currentTime.getTime() + input.leaseDurationMs).toISOString()
     await this.database.write((connection) => {
       const result = connection.prepare(`
         UPDATE execution_jobs
         SET lease_expires_at = ?, updated_at = ?
-        WHERE id = ? AND status = 'running' AND lease_owner = ?
-      `).run(leaseExpiresAt, now, input.id, input.leaseOwner)
+        WHERE id = ?
+          AND status = 'running'
+          AND lease_owner = ?
+          AND lease_expires_at IS NOT NULL
+          AND lease_expires_at > ?
+      `).run(leaseExpiresAt, now, input.id, input.leaseOwner, now)
       if (result.changes === 0) {
         throw new Error(`Execution job ${input.id} is not running under lease ${input.leaseOwner}.`)
       }
@@ -2353,6 +2512,106 @@ export class HiveMemoryRepository {
     return row ? conversationFromRow(row) : undefined
   }
 
+  private restoreRecoveredConversationTurnEntries(
+    connection: Database.Database,
+    aggregate: ConversationTurnAggregate,
+    now: string
+  ) {
+    this.updateConversationOnConnection(connection, { id: aggregate.userEntry.id, status: "queued" }, now)
+    this.updateConversationOnConnection(connection, { id: aggregate.responseEntry.id, status: "queued" }, now)
+  }
+
+  private hasOnlyNonterminalConversationTurnEntries(aggregate: ConversationTurnAggregate) {
+    return [aggregate.userEntry, aggregate.responseEntry]
+      .every((entry) => entry.status === "queued" || entry.status === "running")
+  }
+
+  private failRecoveredConversationTurnEntries(
+    connection: Database.Database,
+    aggregate: ConversationTurnAggregate,
+    error: string,
+    now: string
+  ) {
+    for (const entry of [aggregate.userEntry, aggregate.responseEntry]) {
+      if (entry.status !== "queued" && entry.status !== "running") continue
+      this.updateConversationOnConnection(
+        connection,
+        entry.role === "user"
+          ? { id: entry.id, status: "failed" }
+          : { id: entry.id, content: error, status: "failed" },
+        now
+      )
+    }
+  }
+
+  private conversationTurnAggregateOnConnection(
+    connection: Database.Database,
+    job: ExecutionJob,
+    conversationId: string,
+    allowedEntryStatuses: readonly ConversationStatus[] | null = ["queued"]
+  ): ConversationTurnAggregateResult {
+    const payload = parseConversationDispatchPayload(job.payloadJson)
+    if (!payload) return { ok: false, error: "Conversation dispatch payload is invalid." }
+    if (job.workflowRunId !== conversationId || payload.conversationId !== conversationId) {
+      return { ok: false, error: "Conversation dispatch identity is invalid." }
+    }
+
+    const userRow = connection.prepare("SELECT * FROM conversation_entries WHERE id = ?")
+      .get(payload.entryId) as ConversationRow | undefined
+    const responseRow = connection.prepare("SELECT * FROM conversation_entries WHERE id = ?")
+      .get(payload.responseEntryId) as ConversationRow | undefined
+    if (!userRow || !responseRow) {
+      return { ok: false, error: "Conversation dispatch entries are incomplete." }
+    }
+
+    const userEntry = conversationFromRow(userRow)
+    const responseEntry = conversationFromRow(responseRow)
+    if (
+      userEntry.workflowRunId !== conversationId ||
+      responseEntry.workflowRunId !== conversationId ||
+      userEntry.role !== "user" ||
+      (responseEntry.role !== "agent" && responseEntry.role !== "manager") ||
+      responseEntry.replyToId !== userEntry.id ||
+      (allowedEntryStatuses !== null && !allowedEntryStatuses.includes(userEntry.status)) ||
+      (allowedEntryStatuses !== null && !allowedEntryStatuses.includes(responseEntry.status)) ||
+      userEntry.agentId !== payload.targetAgent ||
+      responseEntry.agentId !== payload.targetAgent
+    ) {
+      return { ok: false, error: "Conversation dispatch entry linkage is invalid." }
+    }
+
+    return { ok: true, userEntry, responseEntry, targetAgent: payload.targetAgent }
+  }
+
+  private rejectConversationTurnClaim(
+    connection: Database.Database,
+    job: ExecutionJob,
+    input: ClaimNextConversationTurnInput,
+    now: string,
+    error: string
+  ): TurnClaimResult {
+    const claimed = claimQueuedExecutionJob(job, { ...input, now })
+    const failed = failRunningExecutionJob(claimed, {
+      id: claimed.id,
+      leaseOwner: input.leaseOwner,
+      error,
+      now
+    })
+    connection.prepare(`
+      UPDATE execution_jobs SET
+        status = ?, attempt_count = ?, lease_owner = NULL, lease_expires_at = NULL,
+        result_json = NULL, last_error = ?, completed_at = NULL, updated_at = ?
+      WHERE id = ? AND status = 'queued'
+    `).run(
+      failed.status,
+      failed.attemptCount,
+      failed.lastError ?? null,
+      failed.updatedAt,
+      failed.id
+    )
+    return Object.freeze({ rejected: true as const, jobId: job.id, error: failed.lastError ?? error })
+  }
+
   private requireMemoryFromConnection(connection: Database.Database, id: string) {
     const row = connection.prepare("SELECT * FROM memories WHERE id = ?").get(id) as MemoryRow | undefined
     if (!row) throw new Error(`Memory ${id} not found.`)
@@ -2711,6 +2970,55 @@ function submittedConversationTurnFromRecords(
     jobStatus: job.status,
     duplicate
   }
+}
+
+interface ConversationDispatchPayload {
+  conversationId: string
+  entryId: string
+  responseEntryId: string
+  targetAgent: AgentKind
+}
+
+function parseConversationDispatchPayload(raw: string): ConversationDispatchPayload | undefined {
+  try {
+    const value = JSON.parse(raw) as Record<string, unknown>
+    if (
+      !value ||
+      typeof value.conversationId !== "string" ||
+      typeof value.entryId !== "string" ||
+      typeof value.responseEntryId !== "string" ||
+      !isAgentKind(value.targetAgent)
+    ) {
+      return undefined
+    }
+    return {
+      conversationId: value.conversationId,
+      entryId: value.entryId,
+      responseEntryId: value.responseEntryId,
+      targetAgent: value.targetAgent
+    }
+  } catch {
+    return undefined
+  }
+}
+
+function isAgentKind(value: unknown): value is AgentKind {
+  return value === "codex" || value === "minimax" || value === "mavis" ||
+    value === "openclaw.rowlet" || value === "openclaw.roaringmoon" ||
+    value === "openclaw.charizard" || value === "openclaw.mrmime" || value === "openclaw.gengar"
+}
+
+function freezeTurnDispatchEnvelope(envelope: TurnDispatchEnvelope): TurnDispatchEnvelope {
+  const freezeEntry = (entry: ConversationEntry) => Object.freeze({
+    ...entry,
+    artifactIds: Object.freeze([...entry.artifactIds]),
+    memoryIds: Object.freeze([...entry.memoryIds])
+  }) as ConversationEntry
+  return Object.freeze({
+    ...envelope,
+    userEntry: freezeEntry(envelope.userEntry),
+    responseEntry: freezeEntry(envelope.responseEntry)
+  })
 }
 
 function conversationTurnRepositoryErrorMessage(

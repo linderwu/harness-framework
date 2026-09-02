@@ -18,6 +18,17 @@ async function repositoryFixture(t: test.TestContext) {
   return repository
 }
 
+async function tx2Fixture(t: test.TestContext) {
+  const dataDir = await mkdtemp(join(tmpdir(), "jormungand-conversation-tx2-"))
+  const database = openHiveDatabase({ dataDir })
+  const repository = createHiveMemoryRepository(database)
+  t.after(async () => {
+    database.close()
+    await rm(dataDir, { recursive: true, force: true })
+  })
+  return { database, repository }
+}
+
 function deferred<T>() {
   let resolve!: (value: T) => void
   const promise = new Promise<T>((nextResolve) => {
@@ -133,5 +144,135 @@ test("dispatcher processes the next message only after the active dispatch compl
   assert.deepEqual(
     repository.listConversation("conversation:dispatch-a").map((entry) => entry.status),
     ["completed", "completed", "completed", "completed"]
+  )
+})
+
+test("TX2 conversation dispatch rejects malformed aggregates before Runtime and continues draining", async (t) => {
+  const { database, repository } = await tx2Fixture(t)
+  const conversationId = "conversation:tx2-dispatch"
+  await repository.createConversation({ id: conversationId, title: "TX2 dispatch" })
+  const malformed = await repository.submitConversationTurn({
+    conversationId,
+    targetAgent: "codex",
+    content: "malformed",
+    idempotencyKey: "malformed",
+    responseRole: "agent"
+  })
+  await repository.submitConversationTurn({
+    conversationId,
+    targetAgent: "codex",
+    content: "valid",
+    idempotencyKey: "valid",
+    responseRole: "agent"
+  })
+  await database.write((connection) => connection.prepare(`
+    UPDATE execution_jobs SET payload_json = ? WHERE id = ?
+  `).run("{", malformed.jobId))
+
+  const claimInputs: unknown[] = []
+  const claimNextConversationTurn = repository.claimNextConversationTurn.bind(repository)
+  repository.claimNextConversationTurn = async (input) => {
+    claimInputs.push(input)
+    return await claimNextConversationTurn(input)
+  }
+  const started: string[] = []
+  const runtimeInputs: object[] = []
+  const dispatcher = new ConversationDispatcher(repository, async (input) => {
+    runtimeInputs.push(input)
+    started.push(input.content)
+    return { status: "completed", body: "valid reply" }
+  })
+
+  await dispatcher.drain(conversationId)
+
+  assert.deepEqual(started, ["valid"])
+  assert.equal(Object.isFrozen(runtimeInputs[0]), true)
+  assert.equal(claimInputs.length, 3)
+  assert.equal(repository.getExecutionJob(malformed.jobId)?.status, "failed")
+})
+
+test("TX2 conversation dispatch skips a missing Entry aggregate and invokes Runtime for the next Turn", async (t) => {
+  const { database, repository } = await tx2Fixture(t)
+  const conversationId = "conversation:tx2-missing-entry-dispatch"
+  await repository.createConversation({ id: conversationId, title: "TX2 missing entry dispatch" })
+  const missing = await repository.submitConversationTurn({
+    conversationId,
+    targetAgent: "codex",
+    content: "missing",
+    idempotencyKey: "missing",
+    responseRole: "agent"
+  })
+  await repository.submitConversationTurn({
+    conversationId,
+    targetAgent: "codex",
+    content: "valid",
+    idempotencyKey: "valid",
+    responseRole: "agent"
+  })
+  await database.write((connection) => connection.prepare(`
+    UPDATE execution_jobs SET payload_json = ? WHERE id = ?
+  `).run(JSON.stringify({
+    conversationId,
+    entryId: missing.userEntryId,
+    responseEntryId: "missing-response-entry",
+    targetAgent: "codex"
+  }), missing.jobId))
+
+  const started: string[] = []
+  const dispatcher = new ConversationDispatcher(repository, async (input) => {
+    started.push(input.content)
+    return { status: "completed", body: "valid reply" }
+  })
+
+  await dispatcher.drain(conversationId)
+
+  assert.deepEqual(started, ["valid"])
+  assert.equal(repository.getExecutionJob(missing.jobId)?.status, "failed")
+})
+
+test("TX2 conversation dispatch skips an expired mixed-terminal Turn without invoking Runtime", async (t) => {
+  const { database, repository } = await tx2Fixture(t)
+  const conversationId = "conversation:tx2-mixed-terminal-dispatch"
+  await repository.createConversation({ id: conversationId, title: "TX2 mixed terminal dispatch" })
+  const mixed = await repository.submitConversationTurn({
+    conversationId,
+    targetAgent: "codex",
+    content: "mixed",
+    idempotencyKey: "mixed",
+    responseRole: "agent"
+  })
+  await repository.submitConversationTurn({
+    conversationId,
+    targetAgent: "codex",
+    content: "valid",
+    idempotencyKey: "valid-after-mixed",
+    responseRole: "agent"
+  })
+  const claimed = await repository.claimNextConversationTurn({
+    conversationId,
+    leaseOwner: "tx2-mixed-terminal-worker",
+    leaseDurationMs: 60_000
+  })
+  assert.ok(claimed && !("rejected" in claimed))
+  await database.write((connection) => {
+    connection.prepare("UPDATE conversation_entries SET status = 'completed' WHERE id = ?")
+      .run(mixed.userEntryId)
+    connection.prepare("UPDATE execution_jobs SET lease_expires_at = ? WHERE id = ?")
+      .run("2000-01-01T00:00:00.000Z", mixed.jobId)
+  })
+
+  const started: string[] = []
+  const dispatcher = new ConversationDispatcher(repository, async (input) => {
+    started.push(input.content)
+    return { status: "completed", body: "valid reply" }
+  })
+
+  await dispatcher.drain(conversationId)
+
+  assert.deepEqual(started, ["valid"])
+  assert.equal(repository.getExecutionJob(mixed.jobId)?.status, "failed")
+  assert.deepEqual(
+    repository.listConversation(conversationId).map((entry) => entry.status),
+    ["completed", "failed", "completed", "completed"]
   )
 })
