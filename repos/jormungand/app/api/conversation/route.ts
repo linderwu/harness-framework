@@ -6,15 +6,11 @@ import {
   resolveConversationId,
   setConversationCookie
 } from "@/lib/conversation-identity"
-import {
-  getCodexConversationState
-} from "@/lib/codex-conversation"
+import { getCodexConversationState } from "@/lib/codex-conversation"
 import { getAgentPermissionMode } from "@/lib/agent-permissions"
 import { getDefaultHiveServices } from "@/lib/hive-services"
 import { agentProfiles } from "@/lib/agents"
 import type { AgentKind } from "@/lib/types"
-
-// postCodexConversationMessage remains available as a migration helper; new requests use the durable queue below.
 
 export async function GET(request?: Request) {
   const requestedConversationId = request ? new URL(request.url).searchParams.get("conversationId") : undefined
@@ -34,7 +30,8 @@ export async function GET(request?: Request) {
     : services.repository.getConversationMetadata(identity.conversationId)
   const codexState = await getCodexConversationState(
     services.repository,
-    identity.conversationId
+    identity.conversationId,
+    services.conversationLifecycle
   )
   const unboundConversation = await services.conversation.getUnboundConversation(
     identity.conversationId

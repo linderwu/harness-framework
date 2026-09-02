@@ -19,6 +19,7 @@ This matrix records the existing unbound-conversation behavior that Phase 1 must
 
 - Workflow-bound writers are deferred: Phase 1 owns only unbound `conversation:*` identities and the legacy unbound identity.
 - Native management side effects cannot be atomic with SQLite without an outbox/schema change. Phase 1 preserves the observed native-first management ordering and makes the crash gap explicit rather than claiming atomicity.
+- Provider-originated native history is the sole no-Execution-Job exception: `reconcileProviderEntry` idempotently imports only Codex-native user and agent items into an active unbound Conversation. It never fabricates a Job; Codex ledger persistence follows the core Entry commit so retries reuse the same Entry key.
 
 ## Phase 0 additions
 

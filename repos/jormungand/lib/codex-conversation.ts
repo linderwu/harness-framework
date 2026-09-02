@@ -1,12 +1,9 @@
-import { formatSharedConversationPrompt } from "./conversation-history"
-import { ConversationHistorySync } from "./conversation-history-sync"
 import { projectNativeThread, type NativeTurn } from "./codex-thread-sync"
+import type { ConversationLifecyclePort } from "./conversation-lifecycle/types"
 import type { HiveMemoryRepository } from "./hive-memory/repository"
 import type { ConversationEntry } from "./hive-memory/types"
 
 export const codexConversationId = "global:unbound-conversation"
-
-const codexConversationSync = new ConversationHistorySync()
 
 export interface CodexConversationEvent {
   id: string
@@ -70,6 +67,7 @@ interface BridgeThreadResponse extends BridgeSessionSnapshot {
 export async function getCodexConversationState(
   repository: HiveMemoryRepository,
   conversationId = codexConversationId,
+  lifecycle?: ConversationLifecyclePort,
   recoveryAttempt = false
 ): Promise<CodexConversationState> {
   const session = repository.getCodexSession(conversationId)
@@ -89,7 +87,7 @@ export async function getCodexConversationState(
     if (!recoveryAttempt) {
       try {
         await ensureCodexSession(repository, conversationId)
-        return getCodexConversationState(repository, conversationId, true)
+        return getCodexConversationState(repository, conversationId, lifecycle, true)
       } catch {
         // Preserve the durable mapping and expose the offline state below.
       }
@@ -110,12 +108,13 @@ export async function getCodexConversationState(
     }
   }
 
-  await syncConversation(repository, conversationId, bridgeState, session.bridgeSessionId)
   let bridgeThread: BridgeThreadResponse | undefined
+  let replacementPending = false
   try {
     bridgeThread = await readBridgeThread(session.bridgeSessionId)
   } catch (error) {
     if (error instanceof CodexConversationError && error.status === 404) {
+      replacementPending = true
       await repository.updateCodexSession({
         conversationId,
         bridgeSessionId: session.bridgeSessionId,
@@ -124,9 +123,12 @@ export async function getCodexConversationState(
       })
     }
   }
+  if (!replacementPending) {
+    await syncConversation(repository, lifecycle, conversationId, bridgeState, session.bridgeSessionId)
+  }
   if (bridgeThread?.thread?.turns) {
-    if (!hasActiveLifecycleCodexTurn(repository, conversationId)) {
-      await syncNativeThread(repository, conversationId, bridgeThread.thread)
+    if (lifecycle) {
+      await syncNativeThread(repository, lifecycle, conversationId, bridgeThread.thread)
     }
     await repository.updateCodexSession({
       conversationId,
@@ -161,211 +163,6 @@ export async function getCodexConversationState(
     events: bridgeState.events,
     nextCursor: effectiveCursor
   }
-}
-
-export async function postCodexConversationMessage(input: {
-  repository: HiveMemoryRepository
-  conversationId?: string
-  content: string
-  idempotencyKey: string
-}) {
-  const conversationId = input.conversationId ?? codexConversationId
-  const content = input.content.trim()
-  const storageIdempotencyKey = toConversationScopedIdempotencyKey(
-    conversationId,
-    input.idempotencyKey
-  )
-
-  if (!content) throw new CodexConversationError("content is required", 400)
-  if (!input.idempotencyKey.trim()) {
-    throw new CodexConversationError("idempotencyKey is required", 400)
-  }
-
-  const existing = input.repository.getConversationByIdempotencyKey(storageIdempotencyKey)
-  if (existing) {
-    return {
-      userEntry: existing,
-      responseEntry: input.repository.getConversationByIdempotencyKey(
-        `${storageIdempotencyKey}:response`
-      ),
-      duplicate: true,
-      ...(await getCodexConversationState(input.repository, conversationId))
-    }
-  }
-
-  const session = await ensureCodexSession(input.repository, conversationId)
-  const userInsert = await input.repository.insertConversation({
-    workflowRunId: conversationId,
-    role: "user",
-    agentId: "codex",
-    content,
-    importance: "normal",
-    status: "running",
-    artifactIds: [],
-    memoryIds: [],
-    idempotencyKey: storageIdempotencyKey
-  })
-  const userEntry = userInsert.entry
-  const sessionIdentity = `${session.bridgeSessionId}:${session.codexThreadId}`
-  const syncKey = `codex:${conversationId}`
-  const delta = codexConversationSync.getDelta({
-    key: syncKey,
-    sessionIdentity,
-    targetAgent: "codex",
-    entries: input.repository.listConversation(conversationId)
-  })
-  const requestContent = formatSharedConversationPrompt(delta.history)
-
-  try {
-    const turnResult = await bridgeRequest(`/sessions/${encodeURIComponent(session.bridgeSessionId)}/turns`, {
-      method: "POST",
-      body: JSON.stringify({ content: requestContent })
-    })
-    await recordHarnessTurnStart(
-      input.repository,
-      conversationId,
-      session,
-      userEntry,
-      turnResult,
-      requestContent
-    )
-    codexConversationSync.markDelivered({
-      key: syncKey,
-      sessionIdentity,
-      cursorEntryId: delta.cursorEntryId
-    })
-    await input.repository.updateCodexSession({
-      conversationId,
-      bridgeSessionId: session.bridgeSessionId,
-      status: "running",
-      turnStatus: "inProgress"
-    })
-  } catch (error) {
-    await input.repository.updateConversation({ id: userEntry.id, status: "failed" })
-    throw error
-  }
-
-  const responseInsert = await input.repository.insertConversation({
-    workflowRunId: conversationId,
-    role: "agent",
-    agentId: "codex",
-    content: "Codex is working...",
-    importance: "important",
-    status: "running",
-    replyToId: userEntry.id,
-    artifactIds: [],
-    memoryIds: [],
-    idempotencyKey: `${storageIdempotencyKey}:response`
-  })
-
-  return {
-    userEntry,
-    responseEntry: responseInsert.entry,
-    duplicate: false,
-    ...(await getCodexConversationState(input.repository, conversationId))
-  }
-}
-
-export async function dispatchCodexConversationEntry(input: {
-  repository: HiveMemoryRepository
-  conversationId: string
-  userEntryId: string
-  responseEntryId?: string
-  pollIntervalMs?: number
-  maxPollAttempts?: number
-}) {
-  const userEntry = input.repository.getConversationEntry(input.userEntryId)
-  if (!userEntry || userEntry.workflowRunId !== input.conversationId) {
-    throw new CodexConversationError("Conversation message could not be found", 404)
-  }
-  const responseEntry = input.responseEntryId
-    ? input.repository.getConversationEntry(input.responseEntryId)
-    : undefined
-  const lifecycleManagedTurn = isActiveLifecycleCodexTurn(
-    input.repository,
-    input.conversationId,
-    userEntry,
-    responseEntry
-  )
-  if (!lifecycleManagedTurn) {
-    await input.repository.updateConversation({ id: userEntry.id, status: "running" })
-    if (responseEntry) {
-      await input.repository.updateConversation({ id: responseEntry.id, status: "running" })
-    }
-  }
-
-  const session = await ensureCodexSession(input.repository, input.conversationId)
-  const entries = input.repository.listConversation(input.conversationId)
-  const userIndex = entries.findIndex((entry) => entry.id === userEntry.id)
-  const entriesThroughCurrent = userIndex === -1 ? [userEntry] : entries.slice(0, userIndex + 1)
-  const sessionIdentity = `${session.bridgeSessionId}:${session.codexThreadId}`
-  const syncKey = `codex:${input.conversationId}`
-  const delta = codexConversationSync.getDelta({
-    key: syncKey,
-    sessionIdentity,
-    targetAgent: "codex",
-    entries: entriesThroughCurrent
-  })
-  const requestContent = formatSharedConversationPrompt(delta.history)
-
-  const turnResult = await bridgeRequest(`/sessions/${encodeURIComponent(session.bridgeSessionId)}/turns`, {
-    method: "POST",
-    body: JSON.stringify({ content: requestContent })
-  })
-  await recordHarnessTurnStart(
-    input.repository,
-    input.conversationId,
-    session,
-    userEntry,
-    turnResult,
-    requestContent
-  )
-  codexConversationSync.markDelivered({
-    key: syncKey,
-    sessionIdentity,
-    cursorEntryId: delta.cursorEntryId
-  })
-  await input.repository.updateCodexSession({
-    conversationId: input.conversationId,
-    bridgeSessionId: session.bridgeSessionId,
-    status: "running",
-    turnStatus: "inProgress"
-  })
-
-  const pollIntervalMs = Math.max(1, input.pollIntervalMs ?? 1_000)
-  const maxPollAttempts = input.maxPollAttempts ?? 300
-  for (let attempt = 0; attempt < maxPollAttempts; attempt += 1) {
-    const state = await getCodexConversationState(input.repository, input.conversationId)
-    const turnStatus = state.session?.turnStatus
-    const isStopped = turnStatus === "stopped" || state.session?.status === "stopped"
-    const isTerminal = turnStatus === "completed" || turnStatus === "failed" || isStopped
-    if (isTerminal) {
-      const responseEntry = input.responseEntryId
-        ? input.repository.getConversationEntry(input.responseEntryId)
-        : [...state.entries].reverse().find(
-          (entry) =>
-            (entry.role === "agent" || entry.role === "manager") &&
-            entry.replyToId === input.userEntryId
-        )
-      const status = turnStatus === "completed"
-        ? "completed" as const
-        : turnStatus === "interrupted"
-          || isStopped
-          ? "interrupted" as const
-          : "failed" as const
-      return {
-        status,
-        body: (lifecycleManagedTurn
-          ? state.session?.finalText ?? state.session?.liveText
-          : responseEntry?.content ?? state.session?.finalText ?? state.session?.liveText)
-          ?? (status === "interrupted" ? "Codex response interrupted." : "Codex response failed."),
-        ...(isStopped ? { disposition: "stopped" as const } : {})
-      }
-    }
-    await delay(pollIntervalMs)
-  }
-
-  throw new CodexConversationError("Codex turn did not reach a terminal state.", 504)
 }
 
 export async function controlCodexConversation(
@@ -511,6 +308,7 @@ async function ensureCodexSession(
 
 async function syncConversation(
   repository: HiveMemoryRepository,
+  lifecycle: ConversationLifecyclePort | undefined,
   conversationId: string,
   bridgeState: BridgeEventsResponse,
   bridgeSessionId: string
@@ -521,9 +319,6 @@ async function syncConversation(
       (entry.role === "agent" || entry.role === "manager") &&
       entry.status === "running"
   )
-  const userEntry = responseEntry
-    ? entries.find((entry) => entry.id === responseEntry.replyToId)
-    : undefined
   const activityText = [...bridgeState.events]
     .reverse()
     .find((event) => event.message?.trim())?.message
@@ -535,27 +330,39 @@ async function syncConversation(
     bridgeState.status === "paused" || bridgeState.turnStatus === "interrupted"
   const isStopped =
     bridgeState.status === "stopped" || bridgeState.turnStatus === "stopped"
-  if (!isActiveLifecycleCodexTurn(repository, conversationId, userEntry, responseEntry)) {
-    const responseContent =
-      bridgeState.finalText?.trim() ||
-      bridgeState.liveText?.trim() ||
+  const activeTurn = findActiveLifecycleCodexTurnForResponse(
+    repository,
+    conversationId,
+    entries,
+    responseEntry
+  )
+  if (lifecycle && activeTurn) {
+    const body = bridgeState.finalText || bridgeState.liveText ||
       (isPaused
         ? "Codex paused. Choose Continue to resume this session."
         : isFailed
           ? activityText || "Codex failed to complete this turn."
           : activityText || "Codex is working...")
-
-    if (responseEntry) {
-      await repository.updateConversation({
-        id: responseEntry.id,
-        content: responseContent,
-        status: isCompleted ? "completed" : isFailed ? "failed" : isStopped ? "interrupted" : "running"
+    if (isCompleted || isFailed || isStopped) {
+      await lifecycle.settleTurn({
+        conversationId,
+        userEntryId: activeTurn.userEntry.id,
+        responseEntryId: activeTurn.responseEntry.id,
+        jobId: activeTurn.job.id,
+        idempotencyKey: activeTurn.job.idempotencyKey,
+        leaseOwner: activeTurn.job.leaseOwner!,
+        outcome: isCompleted
+          ? { kind: "completed", body, deliveryState: "confirmed" }
+          : isStopped
+            ? { kind: "interrupted", body, deliveryState: "confirmed", disposition: "stopped" }
+            : { kind: "failed", body, deliveryState: "confirmed" }
       })
-    }
-    if (userEntry) {
-      await repository.updateConversation({
-        id: userEntry.id,
-        status: isCompleted ? "completed" : isFailed ? "failed" : isStopped ? "interrupted" : "running"
+    } else if (!isPaused) {
+      await lifecycle.recordTurnProgress({
+        conversationId,
+        userEntryId: activeTurn.userEntry.id,
+        responseEntryId: activeTurn.responseEntry.id,
+        body
       })
     }
   }
@@ -569,24 +376,12 @@ async function syncConversation(
   })
 }
 
-function hasActiveLifecycleCodexTurn(
-  repository: HiveMemoryRepository,
-  conversationId: string
-) {
-  const entries = repository.listConversation(conversationId)
-  return entries.some((responseEntry) => {
-    if (responseEntry.role !== "agent" && responseEntry.role !== "manager") return false
-    const userEntry = entries.find((entry) => entry.id === responseEntry.replyToId)
-    return isActiveLifecycleCodexTurn(repository, conversationId, userEntry, responseEntry)
-  })
-}
-
-function isActiveLifecycleCodexTurn(
+function findActiveLifecycleCodexTurn(
   repository: HiveMemoryRepository,
   conversationId: string,
   userEntry: ConversationEntry | undefined,
   responseEntry: ConversationEntry | undefined
-) {
+): { userEntry: ConversationEntry; responseEntry: ConversationEntry; job: NonNullable<ReturnType<HiveMemoryRepository["getExecutionJobByIdempotencyKey"]>> } | undefined {
   if (
     !userEntry ||
     !responseEntry ||
@@ -599,7 +394,7 @@ function isActiveLifecycleCodexTurn(
     responseEntry.replyToId !== userEntry.id ||
     responseEntry.idempotencyKey !== `${userEntry.idempotencyKey}:response`
   ) {
-    return false
+    return undefined
   }
 
   const job = repository.getExecutionJobByIdempotencyKey(`${userEntry.idempotencyKey}:dispatch`)
@@ -612,29 +407,45 @@ function isActiveLifecycleCodexTurn(
     !job.leaseExpiresAt ||
     job.leaseExpiresAt <= new Date().toISOString()
   ) {
-    return false
+    return undefined
   }
 
   try {
     const payload = JSON.parse(job.payloadJson) as Record<string, unknown>
-    return payload.conversationId === conversationId &&
+    if (payload.conversationId === conversationId &&
       payload.entryId === userEntry.id &&
       payload.responseEntryId === responseEntry.id &&
-      payload.targetAgent === "codex"
+      payload.targetAgent === "codex") {
+      return { userEntry, responseEntry, job }
+    }
+    return undefined
   } catch {
-    return false
+    return undefined
   }
+}
+
+function findActiveLifecycleCodexTurnForResponse(
+  repository: HiveMemoryRepository,
+  conversationId: string,
+  entries: ConversationEntry[],
+  responseEntry: ConversationEntry | undefined
+) {
+  const userEntry = responseEntry
+    ? entries.find((entry) => entry.id === responseEntry.replyToId)
+    : undefined
+  return findActiveLifecycleCodexTurn(repository, conversationId, userEntry, responseEntry)
 }
 
 async function syncNativeThread(
   repository: HiveMemoryRepository,
+  lifecycle: ConversationLifecyclePort,
   conversationId: string,
   thread: NonNullable<BridgeThreadResponse["thread"]>
 ) {
   const ledgerItems = repository.listCodexSyncItems(conversationId)
   const harnessTurnIds = new Set(
     ledgerItems
-      .filter((item) => item.source === "harness")
+      .filter((item) => item.source === "harness" && item.nativeThreadId === thread.id)
       .map((item) => item.nativeTurnId)
   )
   const ledgerKeys = new Set(
@@ -649,62 +460,85 @@ async function syncNativeThread(
   })
   const nativeUserEntries = new Map(
     ledgerItems
-      .filter((item) => item.source === "harness" && item.conversationEntryId)
-      .map((item) => [item.nativeTurnId, item.conversationEntryId!] as const)
+      .filter((item) => item.kind === "userMessage" && item.conversationEntryId)
+      .map((item) => [
+        `${item.nativeThreadId}:${item.nativeTurnId}`,
+        item.conversationEntryId!
+      ] as const)
   )
 
   for (const projected of projection.entries) {
+    if (projected.source === "harness") continue
     let conversationEntryId: string
     const replyToId = projected.replyToNativeTurnId
-      ? nativeUserEntries.get(projected.replyToNativeTurnId)
+      ? nativeUserEntries.get(
+        `${projected.nativeThreadId}:${projected.replyToNativeTurnId}`
+      )
       : undefined
 
     if (projected.role === "user") {
-      const inserted = await repository.insertConversation({
-        workflowRunId: conversationId,
+      const entry = await lifecycle.reconcileProviderEntry({
+        conversationId,
         role: "user",
-        agentId: "codex",
         content: projected.content,
-        importance: "normal",
         status: projected.status,
-        artifactIds: [],
-        memoryIds: [],
         idempotencyKey: projected.idempotencyKey
       })
-      conversationEntryId = inserted.entry.id
-      nativeUserEntries.set(projected.nativeTurnId, conversationEntryId)
+      conversationEntryId = entry.id
+      nativeUserEntries.set(
+        `${projected.nativeThreadId}:${projected.nativeTurnId}`,
+        conversationEntryId
+      )
     } else {
       const conversationEntries = repository.listConversation(conversationId)
       const fallbackReplyToId = [...conversationEntries]
         .reverse()
         .find((entry) => entry.role === "user")?.id
       const responseReplyToId = replyToId ?? fallbackReplyToId
-      const existingResponse = responseReplyToId
+      const responseCandidates = responseReplyToId
         ? [...conversationEntries]
           .reverse()
-          .find((entry) => entry.role === "agent" && entry.replyToId === responseReplyToId && entry.agentId === "codex")
-        : undefined
+          .filter((entry) =>
+            (entry.role === "agent" || entry.role === "manager") &&
+            entry.replyToId === responseReplyToId &&
+            entry.agentId === "codex"
+          )
+        : []
+      const activeLifecycleTurn = responseCandidates
+        .map((entry) => findActiveLifecycleCodexTurnForResponse(
+          repository,
+          conversationId,
+          conversationEntries,
+          entry
+        ))
+        .find((turn) => turn !== undefined)
+      if (activeLifecycleTurn) continue
+
+      const existingResponse = responseCandidates.find((entry) =>
+        entry.role === "agent" &&
+        (entry.status === "queued" || entry.status === "running")
+      )
       if (existingResponse) {
-        await repository.updateConversation({
-          id: existingResponse.id,
-          content: projected.content,
-          status: projected.status
-        })
-        conversationEntryId = existingResponse.id
-      } else {
-        const inserted = await repository.insertConversation({
-          workflowRunId: conversationId,
+        const entry = await lifecycle.reconcileProviderEntry({
+          conversationId,
           role: "agent",
-          agentId: "codex",
           content: projected.content,
-          importance: "important",
+          status: projected.status,
+          idempotencyKey: projected.idempotencyKey,
+          replyToId: responseReplyToId,
+          replaceEntryId: existingResponse.id
+        })
+        conversationEntryId = entry.id
+      } else {
+        const entry = await lifecycle.reconcileProviderEntry({
+          conversationId,
+          role: "agent",
+          content: projected.content,
           status: projected.status,
           replyToId: responseReplyToId,
-          artifactIds: [],
-          memoryIds: [],
           idempotencyKey: projected.idempotencyKey
         })
-        conversationEntryId = inserted.entry.id
+        conversationEntryId = entry.id
       }
     }
 
@@ -720,11 +554,12 @@ async function syncNativeThread(
     })
   }
 
-  await coalesceNativeAgentDuplicates(repository, conversationId, thread)
+  await coalesceNativeAgentDuplicates(repository, lifecycle, conversationId, thread)
 }
 
 async function coalesceNativeAgentDuplicates(
   repository: HiveMemoryRepository,
+  lifecycle: ConversationLifecyclePort,
   conversationId: string,
   thread: NonNullable<BridgeThreadResponse["thread"]>
 ) {
@@ -770,7 +605,10 @@ async function coalesceNativeAgentDuplicates(
       const preferred = group.find((entry) => entry.idempotencyKey.endsWith(":response")) ?? group[0]
       for (const duplicate of group) {
         if (duplicate.id !== preferred.id) {
-          await repository.mergeConversationEntries(preferred.id, duplicate.id)
+          await lifecycle.coalesceProviderEntries({
+            preferredId: preferred.id,
+            duplicateId: duplicate.id
+          })
         }
       }
     }
@@ -880,44 +718,9 @@ function normalizeContent(value: string) {
   return value.trim().replace(/\s+/g, " ")
 }
 
-async function recordHarnessTurnStart(
-  repository: HiveMemoryRepository,
-  conversationId: string,
-  session: { codexThreadId: string },
-  userEntry: ConversationEntry,
-  turnResult: unknown,
-  requestContent: string
-) {
-  const turnId = (turnResult as { turn?: { id?: unknown } } | undefined)?.turn?.id
-  if (typeof turnId !== "string" || !turnId) return
-  await repository.recordCodexSyncItem({
-    conversationId,
-    nativeThreadId: session.codexThreadId,
-    nativeTurnId: turnId,
-    nativeItemId: `harness-user:${turnId}`,
-    source: "harness",
-    kind: "userMessage",
-    conversationEntryId: userEntry.id,
-    contentHash: requestContent
-  })
-}
-
 function codexThreadName(repository: HiveMemoryRepository, conversationId: string) {
   const title = repository.getConversationMetadata(conversationId)?.title?.trim()
   return title ? `Harness · ${title}` : undefined
-}
-
-function delay(milliseconds: number) {
-  return new Promise<void>((resolve) => {
-    setTimeout(resolve, milliseconds)
-  })
-}
-
-function toConversationScopedIdempotencyKey(
-  conversationId: string,
-  idempotencyKey: string
-) {
-  return `${conversationId}:${idempotencyKey.trim()}`
 }
 
 export class CodexConversationError extends Error {

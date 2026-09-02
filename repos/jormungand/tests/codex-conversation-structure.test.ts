@@ -9,11 +9,12 @@ const component = readFileSync("components/task-conversation.tsx", "utf8")
 const bridge = readFileSync("scripts/codex-bridge.mjs", "utf8")
 const appServerSession = readFileSync("scripts/codex-app-server-session.mjs", "utf8")
 
-test("Codex conversation persists an unbound session and idempotent entries", () => {
+test("Codex conversation keeps provider telemetry separate from lifecycle entries", () => {
   assert.match(conversation, /global:unbound-conversation/)
   assert.match(conversation, /getCodexSession\(/)
   assert.match(conversation, /upsertCodexSession\(/)
-  assert.match(conversation, /getConversationByIdempotencyKey\(/)
+  assert.match(conversation, /ConversationLifecyclePort/)
+  assert.match(conversation, /reconcileProviderEntry/)
   assert.match(conversation, /events\?after=/)
 })
 
@@ -21,7 +22,7 @@ test("Codex conversation exposes live controls and converges final text", () => 
   assert.match(conversation, /finalText/)
   assert.match(conversation, /turnStatus === "completed"/)
   assert.match(conversation, /action: "interrupt" \| "resume" \| "stop"/)
-  assert.match(route, /postCodexConversationMessage/)
+  assert.match(route, /services\.conversationLifecycle/)
   assert.match(controlRoute, /controlCodexConversation/)
   assert.match(controlRoute, /interrupt, resume, or stop/)
 })

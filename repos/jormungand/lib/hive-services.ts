@@ -215,7 +215,11 @@ export function createHiveServices(options: HiveServicesOptions = {}) {
   })
   const codexSyncWorker = createCodexSyncWorker({
     repository,
-    syncConversation: (conversationId) => getCodexConversationState(repository, conversationId)
+    syncConversation: (conversationId) => getCodexConversationState(
+      repository,
+      conversationId,
+      conversationLifecycle
+    )
   })
   if (options.startCodexSyncWorker) codexSyncWorker.start()
   return {

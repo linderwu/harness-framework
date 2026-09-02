@@ -46,6 +46,45 @@ export interface SettledTurnAggregate extends TurnIdentity {
   readonly job: ExecutionJob
 }
 
+export interface TurnSnapshot {
+  readonly userEntry: ConversationEntry
+  readonly responseEntry: ConversationEntry
+}
+
+export interface RecordTurnProgressInput {
+  readonly conversationId: string
+  readonly userEntryId: string
+  readonly responseEntryId: string
+  readonly body: string
+}
+
+export interface ReconcileProviderEntryInput {
+  readonly conversationId: string
+  readonly role: "user" | "agent"
+  readonly content: string
+  readonly status: ConversationStatus
+  readonly idempotencyKey: string
+  readonly replyToId?: string
+  readonly replaceEntryId?: string
+}
+
+/**
+ * Runtime-neutral authority for core Conversation Entry mutations.
+ *
+ * `reconcileProviderEntry` is intentionally the sole no-Execution-Job path:
+ * it imports idempotent provider-originated native history into an active,
+ * unbound Conversation and must never fabricate a dispatch job.
+ */
+export interface ConversationLifecyclePort {
+  recordTurnProgress(input: RecordTurnProgressInput): Promise<TurnSnapshot>
+  settleTurn(input: SettleTurnInput): Promise<SettledTurnAggregate>
+  reconcileProviderEntry(input: ReconcileProviderEntryInput): Promise<ConversationEntry>
+  coalesceProviderEntries(input: {
+    preferredId: string
+    duplicateId: string
+  }): Promise<void>
+}
+
 export type TurnClaimResult = TurnDispatchEnvelope | {
   readonly rejected: true
   readonly jobId: string

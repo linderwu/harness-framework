@@ -22,8 +22,7 @@ import {
   sharedConversationHistoryLimit
 } from "../lib/conversation-history"
 import {
-  getCodexConversationState,
-  postCodexConversationMessage
+  getCodexConversationState
 } from "../lib/codex-conversation"
 import {
   createHiveServices,
@@ -961,62 +960,20 @@ test("conversation service exposes an explicit new-conversation command", async 
   assert.deepEqual(repository.listConversation(String(newConversationId)), [])
 })
 
-test("posting a Codex message stores entries under the requested conversation id", async (t) => {
+test("lifecycle submission stores a Codex turn under the requested conversation id", async (t) => {
   const { repository } = await repositoryFixture(t)
-  restoreEnv(t, "CODEX_BRIDGE_URL")
-  restoreEnv(t, "CODEX_BRIDGE_TOKEN")
-  process.env.CODEX_BRIDGE_URL = "http://codex.test"
-  installFetchMock(t, async (input) => {
-    const url = String(input)
-    if (url === "http://codex.test/sessions") {
-      return jsonResponse({
-        id: "bridge-session-a",
-        threadId: "thread-a",
-        status: "idle",
-        turnStatus: "completed",
-        cursor: 0
-      })
-    }
-    if (url === "http://codex.test/sessions/bridge-session-a/turns") {
-      return jsonResponse({ ok: true })
-    }
-    if (url === "http://codex.test/sessions/bridge-session-a/events?after=0") {
-      return jsonResponse({
-        id: "bridge-session-a",
-        threadId: "thread-a",
-        status: "idle",
-        turnStatus: "completed",
-        cursor: 0,
-        events: [],
-        nextCursor: 0
-      })
-    }
-    throw new Error(`Unexpected fetch: ${url}`)
-  })
-
-  const result = await (
-    postCodexConversationMessage as unknown as (input: {
-      repository: unknown
-      conversationId: string
-      content: string
-      idempotencyKey: string
-    }) => Promise<{
-      userEntry: ConversationEntry
-      responseEntry?: ConversationEntry
-    }>
-  )({
-    repository,
-    conversationId: "conversation-a",
+  const lifecycle = new ConversationLifecycleService(repository)
+  await lifecycle.openConversation({ conversationId: "conversation:a", title: "Conversation A" })
+  const result = await lifecycle.submitTurn({
+    conversationId: "conversation:a",
+    targetAgent: "codex",
     content: "Inspect the harness",
     idempotencyKey: "codex-message-a"
   })
 
-  assert.equal(result.userEntry.workflowRunId, "conversation-a")
-  assert.equal(repository.listConversation("conversation-a").length, 2)
-  assert.equal(
-    repository.getCodexSession("conversation-a")?.bridgeSessionId,
-    "bridge-session-a"
-  )
+  assert.equal(result.userEntry.workflowRunId, "conversation:a")
+  assert.equal(repository.listConversation("conversation:a").length, 2)
+  assert.equal(repository.getExecutionJob(result.jobId)?.status, "queued")
 })
 
 test("reading Codex conversation state uses the requested conversation id session", async (t) => {
@@ -1107,7 +1064,11 @@ test("Codex cursor updates stay monotonic and state exposes the persisted effect
     })
   })
 
-  const state = await getCodexConversationState(repository, "conversation-cursor")
+  const state = await getCodexConversationState(
+    repository,
+    "conversation-cursor",
+    new ConversationLifecycleService(repository)
+  )
   assert.equal(state.session?.cursor, 7)
   assert.equal(state.nextCursor, 7)
 })

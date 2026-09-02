@@ -58,6 +58,8 @@ import {
 } from "../execution-jobs"
 import { legacyConversationId } from "../conversation-identity"
 import {
+  type RecordTurnProgressInput,
+  type ReconcileProviderEntryInput,
   type SettleTurnInput,
   type SettledTurnAggregate,
   type TurnClaimResult,
@@ -1335,6 +1337,139 @@ export class HiveMemoryRepository {
       this.updateConversationOnConnection(connection, input)
     })
     return this.getConversationEntry(input.id)
+  }
+
+  async recordConversationTurnProgress(input: RecordTurnProgressInput) {
+    return await this.database.transaction((connection) => {
+      const userRow = connection.prepare(
+        "SELECT * FROM conversation_entries WHERE id = ?"
+      ).get(input.userEntryId) as ConversationRow | undefined
+      const responseRow = connection.prepare(
+        "SELECT * FROM conversation_entries WHERE id = ?"
+      ).get(input.responseEntryId) as ConversationRow | undefined
+      const userEntry = userRow ? conversationFromRow(userRow) : undefined
+      const responseEntry = responseRow ? conversationFromRow(responseRow) : undefined
+      if (
+        !userEntry ||
+        !responseEntry ||
+        userEntry.workflowRunId !== input.conversationId ||
+        responseEntry.workflowRunId !== input.conversationId ||
+        userEntry.role !== "user" ||
+        (responseEntry.role !== "agent" && responseEntry.role !== "manager") ||
+        responseEntry.replyToId !== userEntry.id ||
+        userEntry.status !== "running" ||
+        responseEntry.status !== "running"
+      ) {
+        throw new Error("Conversation turn progress does not match a running conversation turn.")
+      }
+      const now = new Date().toISOString()
+      const updatedUserEntry = this.updateConversationOnConnection(
+        connection,
+        { id: input.userEntryId, status: "running" },
+        now
+      )
+      const updatedResponseEntry = this.updateConversationOnConnection(
+        connection,
+        { id: input.responseEntryId, content: input.body, status: "running" },
+        now
+      )
+      if (!updatedUserEntry || !updatedResponseEntry) {
+        throw new Error("Conversation turn progress entries could not be updated.")
+      }
+      return { userEntry: updatedUserEntry, responseEntry: updatedResponseEntry }
+    })
+  }
+
+  async reconcileProviderConversationEntry(input: ReconcileProviderEntryInput): Promise<ConversationEntry> {
+    return await this.database.transaction((connection) => {
+      const existing = connection.prepare(
+        "SELECT * FROM conversation_entries WHERE idempotency_key = ?"
+      ).get(input.idempotencyKey) as ConversationRow | undefined
+      if (existing) {
+        const entry = conversationFromRow(existing)
+        if (entry.workflowRunId !== input.conversationId) {
+          throw new Error("Provider entry idempotency key belongs to a different conversation.")
+        }
+        return entry
+      }
+
+      const replyTarget = input.replyToId
+        ? connection.prepare(
+          "SELECT * FROM conversation_entries WHERE id = ?"
+        ).get(input.replyToId) as ConversationRow | undefined
+        : undefined
+      if (input.role === "user") {
+        if (input.replyToId !== undefined) {
+          throw new Error("Provider entry user imports cannot have a reply target.")
+        }
+      } else if (
+        !replyTarget ||
+        replyTarget.workflow_run_id !== input.conversationId ||
+        replyTarget.role !== "user"
+      ) {
+        throw new Error("Provider entry agent imports must reply to a user in the requested conversation.")
+      }
+
+      if (input.replaceEntryId) {
+        const replacementRow = connection.prepare(
+          "SELECT * FROM conversation_entries WHERE id = ?"
+        ).get(input.replaceEntryId) as ConversationRow | undefined
+        const existingReplacement = replacementRow ? conversationFromRow(replacementRow) : undefined
+        if (!existingReplacement || existingReplacement.workflowRunId !== input.conversationId) {
+          throw new Error("Provider entry replacement does not match the requested conversation.")
+        }
+        if (existingReplacement.role !== input.role || existingReplacement.agentId !== "codex") {
+          throw new Error("Provider entry replacement role or agent is invalid.")
+        }
+        if (
+          (input.role === "agent" && existingReplacement.replyToId !== input.replyToId) ||
+          (input.role === "user" && existingReplacement.replyToId !== undefined)
+        ) {
+          throw new Error("Provider entry replacement reply relationship is invalid.")
+        }
+        if (
+          existingReplacement.status !== "queued" &&
+          existingReplacement.status !== "running"
+        ) {
+          throw new Error("Provider entry replacement cannot rewrite a terminal entry.")
+        }
+        if (!(existingReplacement.status === "queued" && input.status === "completed")) {
+          try {
+            decideTurnTransition(existingReplacement.status, input.status)
+          } catch {
+            throw new Error("Provider entry replacement status transition is invalid.")
+          }
+        }
+        const replaced = this.updateConversationOnConnection(
+          connection,
+          { id: input.replaceEntryId, content: input.content, status: input.status },
+          new Date().toISOString()
+        )
+        if (!replaced) {
+          throw new Error("Provider entry replacement does not match the requested conversation.")
+        }
+        return replaced
+      }
+
+      const entry: ConversationEntry = {
+        id: crypto.randomUUID(),
+        workflowRunId: input.conversationId,
+        role: input.role,
+        agentId: "codex",
+        content: input.content,
+        importance: input.role === "user" ? "normal" : "important",
+        status: input.status,
+        replyToId: input.replyToId,
+        artifactIds: [],
+        memoryIds: [],
+        idempotencyKey: input.idempotencyKey,
+        createdAt: new Date().toISOString()
+      }
+      if (!this.insertConversationOnConnection(connection, entry)) {
+        throw new Error("Provider entry could not be inserted.")
+      }
+      return entry
+    })
   }
 
   async mergeConversationEntries(preferredId: string, duplicateId: string) {

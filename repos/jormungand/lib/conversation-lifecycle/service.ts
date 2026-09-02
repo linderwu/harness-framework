@@ -12,11 +12,15 @@ import type {
 } from "../hive-memory/types"
 import type { CodexReasoningIntensity } from "../types"
 import type {
+  ConversationLifecyclePort,
+  RecordTurnProgressInput,
+  ReconcileProviderEntryInput,
   SettleTurnInput,
   SettledTurnAggregate,
   TurnClaimResult,
   TurnIdentity
 } from "./types"
+import { isLifecycleOwnedConversationId } from "./types"
 
 export interface SubmittedTurn extends TurnIdentity {
   readonly userEntry: ConversationEntry
@@ -56,7 +60,7 @@ export class ConversationLifecycleCommandError extends Error {
   }
 }
 
-export class ConversationLifecycleService {
+export class ConversationLifecycleService implements ConversationLifecyclePort {
   constructor(private readonly repository: ConversationLifecycleRepository) {}
 
   async openConversation(input: {
@@ -206,6 +210,42 @@ export class ConversationLifecycleService {
     return await this.repository.settleConversationTurn(input)
   }
 
+  async recordTurnProgress(input: RecordTurnProgressInput) {
+    if (!this.repository.recordConversationTurnProgress) {
+      throw new Error("Conversation turn progress recording is unavailable")
+    }
+    return await this.repository.recordConversationTurnProgress(input)
+  }
+
+  async reconcileProviderEntry(input: ReconcileProviderEntryInput): Promise<ConversationEntry> {
+    const metadata = this.repository.getConversationMetadata?.(input.conversationId)
+    if (!metadata) {
+      throw new ConversationLifecycleCommandError(
+        "conversation_not_found",
+        404,
+        `Conversation ${input.conversationId} was not found.`
+      )
+    }
+    if (!isLifecycleOwnedConversationId(input.conversationId) || metadata.state !== "active") {
+      throw new ConversationLifecycleCommandError(
+        "conversation_not_active",
+        409,
+        `Conversation ${input.conversationId} is not an active unbound conversation.`
+      )
+    }
+    if (!this.repository.reconcileProviderConversationEntry) {
+      throw new Error("Provider entry reconciliation is unavailable")
+    }
+    return await this.repository.reconcileProviderConversationEntry(input)
+  }
+
+  async coalesceProviderEntries(input: { preferredId: string; duplicateId: string }): Promise<void> {
+    if (!this.repository.mergeConversationEntries) {
+      throw new Error("Provider entry coalescing is unavailable")
+    }
+    await this.repository.mergeConversationEntries(input.preferredId, input.duplicateId)
+  }
+
   async cancelPendingTurns(conversationId: string) {
     if (!this.repository.cancelQueuedConversationDispatches) {
       throw new Error("Conversation turn cancellation is unavailable")
@@ -229,6 +269,12 @@ interface ConversationLifecycleRepository extends ConversationTurnRepository {
     leaseDurationMs: number
   }) => Promise<unknown>
   settleConversationTurn?: (input: SettleTurnInput) => Promise<SettledTurnAggregate>
+  recordConversationTurnProgress?: (input: RecordTurnProgressInput) => Promise<{
+    userEntry: ConversationEntry
+    responseEntry: ConversationEntry
+  }>
+  reconcileProviderConversationEntry?: (input: ReconcileProviderEntryInput) => Promise<ConversationEntry>
+  mergeConversationEntries?: (preferredId: string, duplicateId: string) => Promise<void>
   cancelQueuedConversationDispatches?: (conversationId: string) => Promise<number>
   stopConversationTurn?: (conversationId: string) => Promise<SettledTurnAggregate | undefined>
   getConversationMetadata?: (conversationId: string) => ConversationMetadata | undefined
