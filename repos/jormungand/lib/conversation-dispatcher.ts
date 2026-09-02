@@ -5,6 +5,8 @@ import type { ExecutionJob } from "./hive-memory/types"
 import { ConversationLifecycleService } from "./conversation-lifecycle/service"
 import {
   isLifecycleOwnedConversationId,
+  type ProviderOutcome,
+  type SettledTurnAggregate,
   type TurnDispatchEnvelope
 } from "./conversation-lifecycle/types"
 
@@ -19,7 +21,10 @@ export interface ConversationDispatchInput {
 export interface ConversationDispatchOutcome {
   status: "completed" | "interrupted" | "failed"
   body: string
+  deliveryState?: "confirmed" | "unknown"
 }
+
+export type ConversationTurnPublication = (settled: SettledTurnAggregate) => Promise<unknown> | unknown
 
 export interface ConversationQueueResult {
   userEntry: ConversationEntry
@@ -128,7 +133,8 @@ export class ConversationDispatcher {
 
   constructor(
     private readonly repository: HiveMemoryRepository,
-    private readonly dispatch: (input: ConversationDispatchInput) => Promise<ConversationDispatchOutcome>
+    private readonly dispatch: (input: ConversationDispatchInput) => Promise<ConversationDispatchOutcome>,
+    private readonly publishSettledTurn: ConversationTurnPublication = () => undefined
   ) {
     this.lifecycle = new ConversationLifecycleService(repository)
   }
@@ -163,7 +169,12 @@ export class ConversationDispatcher {
       })
       if (!claim) return
       if ("rejected" in claim) continue
-      await this.runLifecycleJob(claim)
+      try {
+        await this.runLifecycleJob(claim)
+      } catch (error) {
+        if (this.settlementLeaseWasLost(claim)) continue
+        throw error
+      }
     }
   }
 
@@ -263,6 +274,7 @@ export class ConversationDispatcher {
 
   private async runLifecycleJob(envelope: TurnDispatchEnvelope) {
     let renewalTimer: ReturnType<typeof setInterval> | undefined
+    let outcome: ProviderOutcome
     try {
       renewalTimer = setInterval(() => {
         void this.lifecycle.renewTurnLease({
@@ -272,40 +284,53 @@ export class ConversationDispatcher {
         }).catch(() => undefined)
       }, Math.max(1_000, this.leaseDurationMs / 2))
       const result = await this.dispatch(envelope)
-      await this.repository.updateConversation({
-        id: envelope.userEntry.id,
-        status: result.status
-      })
-      await this.repository.updateConversation({
-        id: envelope.responseEntry.id,
-        content: result.body,
-        status: result.status
-      })
-      await this.repository.completeExecutionJob({
-        id: envelope.jobId,
-        leaseOwner: envelope.leaseOwner,
-        result: { status: result.status, responseEntryId: envelope.responseEntry.id }
-      })
+      outcome = providerOutcomeFromDispatch(result)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      await this.repository.updateConversation({ id: envelope.userEntry.id, status: "failed" })
-      await this.repository.updateConversation({
-        id: envelope.responseEntry.id,
-        content: message,
-        status: "failed"
-      })
-      await this.repository.failExecutionJob({
-        id: envelope.jobId,
-        leaseOwner: envelope.leaseOwner,
-        error: message
-      }).catch(() => undefined)
+      outcome = { kind: "failed", body: message, deliveryState: "confirmed" }
     } finally {
       if (renewalTimer) clearInterval(renewalTimer)
+    }
+    const settled = await this.lifecycle.settleTurn({
+      conversationId: envelope.conversationId,
+      userEntryId: envelope.userEntryId,
+      responseEntryId: envelope.responseEntryId,
+      jobId: envelope.jobId,
+      idempotencyKey: envelope.idempotencyKey,
+      leaseOwner: envelope.leaseOwner,
+      outcome
+    })
+    if (settled.applied) {
+      await Promise.resolve(this.publishSettledTurn(settled)).catch(() => undefined)
     }
   }
 
   private leaseOwner(conversationId: string) {
     return `conversation:${conversationId}:${process.pid}`
+  }
+
+  private settlementLeaseWasLost(envelope: TurnDispatchEnvelope) {
+    const job = this.repository.getExecutionJob(envelope.jobId)
+    if (!job || job.status === "completed" || job.status === "failed" || job.status === "canceled") {
+      return true
+    }
+    if (job.status !== "running" || job.leaseOwner !== envelope.leaseOwner) return true
+    return !job.leaseExpiresAt || job.leaseExpiresAt <= new Date().toISOString()
+  }
+}
+
+function providerOutcomeFromDispatch(result: ConversationDispatchOutcome): ProviderOutcome {
+  if (result.status === "failed") {
+    return {
+      kind: "failed",
+      body: result.body,
+      deliveryState: result.deliveryState ?? "confirmed"
+    }
+  }
+  return {
+    kind: result.status,
+    body: result.body,
+    deliveryState: "confirmed"
   }
 }
 

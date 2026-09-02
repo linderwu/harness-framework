@@ -125,7 +125,9 @@ export async function getCodexConversationState(
     }
   }
   if (bridgeThread?.thread?.turns) {
-    await syncNativeThread(repository, conversationId, bridgeThread.thread)
+    if (!hasActiveLifecycleCodexTurn(repository, conversationId)) {
+      await syncNativeThread(repository, conversationId, bridgeThread.thread)
+    }
     await repository.updateCodexSession({
       conversationId,
       bridgeSessionId: session.bridgeSessionId,
@@ -279,9 +281,17 @@ export async function dispatchCodexConversationEntry(input: {
   const responseEntry = input.responseEntryId
     ? input.repository.getConversationEntry(input.responseEntryId)
     : undefined
-  await input.repository.updateConversation({ id: userEntry.id, status: "running" })
-  if (responseEntry) {
-    await input.repository.updateConversation({ id: responseEntry.id, status: "running" })
+  const lifecycleManagedTurn = isActiveLifecycleCodexTurn(
+    input.repository,
+    input.conversationId,
+    userEntry,
+    responseEntry
+  )
+  if (!lifecycleManagedTurn) {
+    await input.repository.updateConversation({ id: userEntry.id, status: "running" })
+    if (responseEntry) {
+      await input.repository.updateConversation({ id: responseEntry.id, status: "running" })
+    }
   }
 
   const session = await ensureCodexSession(input.repository, input.conversationId)
@@ -331,7 +341,9 @@ export async function dispatchCodexConversationEntry(input: {
       const responseEntry = input.responseEntryId
         ? input.repository.getConversationEntry(input.responseEntryId)
         : [...state.entries].reverse().find(
-          (entry) => entry.role === "agent" && entry.replyToId === input.userEntryId
+          (entry) =>
+            (entry.role === "agent" || entry.role === "manager") &&
+            entry.replyToId === input.userEntryId
         )
       const status = turnStatus === "completed"
         ? "completed" as const
@@ -343,9 +355,9 @@ export async function dispatchCodexConversationEntry(input: {
           : "failed" as const
       return {
         status,
-        body: responseEntry?.content
-          ?? state.session?.finalText
-          ?? state.session?.liveText
+        body: (lifecycleManagedTurn
+          ? state.session?.finalText ?? state.session?.liveText
+          : responseEntry?.content ?? state.session?.finalText ?? state.session?.liveText)
           ?? (status === "interrupted" ? "Codex response interrupted." : "Codex response failed.")
       }
     }
@@ -504,7 +516,9 @@ async function syncConversation(
 ) {
   const entries = repository.listConversation(conversationId)
   const responseEntry = [...entries].reverse().find(
-    (entry) => entry.role === "agent" && entry.status === "running"
+    (entry) =>
+      (entry.role === "agent" || entry.role === "manager") &&
+      entry.status === "running"
   )
   const userEntry = responseEntry
     ? entries.find((entry) => entry.id === responseEntry.replyToId)
@@ -518,27 +532,29 @@ async function syncConversation(
     bridgeState.status === "failed" || bridgeState.turnStatus === "failed"
   const isPaused =
     bridgeState.status === "paused" || bridgeState.turnStatus === "interrupted"
-  const responseContent =
-    bridgeState.finalText?.trim() ||
-    bridgeState.liveText?.trim() ||
-    (isPaused
-      ? "Codex paused. Choose Continue to resume this session."
-      : isFailed
-        ? activityText || "Codex failed to complete this turn."
-        : activityText || "Codex is working...")
+  if (!isActiveLifecycleCodexTurn(repository, conversationId, userEntry, responseEntry)) {
+    const responseContent =
+      bridgeState.finalText?.trim() ||
+      bridgeState.liveText?.trim() ||
+      (isPaused
+        ? "Codex paused. Choose Continue to resume this session."
+        : isFailed
+          ? activityText || "Codex failed to complete this turn."
+          : activityText || "Codex is working...")
 
-  if (responseEntry) {
-    await repository.updateConversation({
-      id: responseEntry.id,
-      content: responseContent,
-      status: isCompleted ? "completed" : isFailed ? "failed" : "running"
-    })
-  }
-  if (userEntry) {
-    await repository.updateConversation({
-      id: userEntry.id,
-      status: isCompleted ? "completed" : isFailed ? "failed" : "running"
-    })
+    if (responseEntry) {
+      await repository.updateConversation({
+        id: responseEntry.id,
+        content: responseContent,
+        status: isCompleted ? "completed" : isFailed ? "failed" : "running"
+      })
+    }
+    if (userEntry) {
+      await repository.updateConversation({
+        id: userEntry.id,
+        status: isCompleted ? "completed" : isFailed ? "failed" : "running"
+      })
+    }
   }
   await repository.updateCodexSession({
     conversationId,
@@ -548,6 +564,63 @@ async function syncConversation(
     currentTurnId: bridgeState.currentTurnId,
     cursor: bridgeState.nextCursor
   })
+}
+
+function hasActiveLifecycleCodexTurn(
+  repository: HiveMemoryRepository,
+  conversationId: string
+) {
+  const entries = repository.listConversation(conversationId)
+  return entries.some((responseEntry) => {
+    if (responseEntry.role !== "agent" && responseEntry.role !== "manager") return false
+    const userEntry = entries.find((entry) => entry.id === responseEntry.replyToId)
+    return isActiveLifecycleCodexTurn(repository, conversationId, userEntry, responseEntry)
+  })
+}
+
+function isActiveLifecycleCodexTurn(
+  repository: HiveMemoryRepository,
+  conversationId: string,
+  userEntry: ConversationEntry | undefined,
+  responseEntry: ConversationEntry | undefined
+) {
+  if (
+    !userEntry ||
+    !responseEntry ||
+    userEntry.workflowRunId !== conversationId ||
+    responseEntry.workflowRunId !== conversationId ||
+    userEntry.role !== "user" ||
+    (responseEntry.role !== "agent" && responseEntry.role !== "manager") ||
+    userEntry.agentId !== "codex" ||
+    responseEntry.agentId !== "codex" ||
+    responseEntry.replyToId !== userEntry.id ||
+    responseEntry.idempotencyKey !== `${userEntry.idempotencyKey}:response`
+  ) {
+    return false
+  }
+
+  const job = repository.getExecutionJobByIdempotencyKey(`${userEntry.idempotencyKey}:dispatch`)
+  if (
+    !job ||
+    job.kind !== "conversation_dispatch" ||
+    job.workflowRunId !== conversationId ||
+    job.status !== "running" ||
+    !job.leaseOwner ||
+    !job.leaseExpiresAt ||
+    job.leaseExpiresAt <= new Date().toISOString()
+  ) {
+    return false
+  }
+
+  try {
+    const payload = JSON.parse(job.payloadJson) as Record<string, unknown>
+    return payload.conversationId === conversationId &&
+      payload.entryId === userEntry.id &&
+      payload.responseEntryId === responseEntry.id &&
+      payload.targetAgent === "codex"
+  } catch {
+    return false
+  }
 }
 
 async function syncNativeThread(

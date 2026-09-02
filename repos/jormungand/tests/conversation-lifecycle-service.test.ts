@@ -5,7 +5,8 @@ import {
   ConversationLifecycleService
 } from "../lib/conversation-lifecycle/service"
 import { ConversationTurnRepositoryError } from "../lib/hive-memory/repository"
-import type { ConversationEntry, ExecutionJobStatus } from "../lib/hive-memory/types"
+import type { ConversationEntry, ExecutionJob, ExecutionJobStatus } from "../lib/hive-memory/types"
+import type { ProviderOutcome } from "../lib/conversation-lifecycle/types"
 
 function entry(id: string): ConversationEntry {
   return {
@@ -34,6 +35,35 @@ function submittedTurn() {
     responseEntry: { ...entry("response-1"), role: "agent" as const, replyToId: "user-1" },
     jobStatus: "queued" as ExecutionJobStatus,
     duplicate: false
+  }
+}
+
+function settledTurn() {
+  const submitted = submittedTurn()
+  const job: ExecutionJob = {
+    id: submitted.jobId,
+    kind: "conversation_dispatch",
+    workflowRunId: submitted.conversationId,
+    payloadJson: "{}",
+    idempotencyKey: `${submitted.idempotencyKey}:dispatch`,
+    status: "completed",
+    attemptCount: 1,
+    availableAt: "2026-01-01T00:00:00.000Z",
+    resultJson: "{}",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+    completedAt: "2026-01-01T00:00:00.000Z"
+  }
+  return {
+    applied: true,
+    conversationId: submitted.conversationId,
+    userEntryId: submitted.userEntryId,
+    responseEntryId: submitted.responseEntryId,
+    jobId: submitted.jobId,
+    idempotencyKey: submitted.idempotencyKey,
+    userEntry: { ...submitted.userEntry, status: "completed" as const },
+    responseEntry: { ...submitted.responseEntry, status: "completed" as const },
+    job
   }
 }
 
@@ -190,4 +220,41 @@ test("ClaimNextTurn delegates its atomic claim and owner-checked renewal without
     ["claim", { conversationId: "conversation:tx2", leaseOwner: "worker-1", leaseDurationMs: 60_000 }],
     ["renew", { id: "job-1", leaseOwner: "worker-1", leaseDurationMs: 120_000 }]
   ])
+})
+
+test("SettleTurn delegates one ProviderOutcome to TX3 without accepting Runtime work", async () => {
+  const calls: unknown[] = []
+  const outcome: ProviderOutcome = {
+    kind: "completed",
+    body: "  exact response whitespace  ",
+    deliveryState: "confirmed"
+  }
+  const service = new ConversationLifecycleService({
+    submitConversationTurn: async () => submittedTurn(),
+    settleConversationTurn: async (input: unknown) => {
+      calls.push(input)
+      return settledTurn()
+    }
+  })
+
+  const result = await service.settleTurn({
+    conversationId: "conversation:tx3",
+    userEntryId: "user-1",
+    responseEntryId: "response-1",
+    jobId: "job-1",
+    idempotencyKey: "turn-1",
+    leaseOwner: "worker-1",
+    outcome
+  })
+
+  assert.equal(result.applied, true)
+  assert.deepEqual(calls, [{
+    conversationId: "conversation:tx3",
+    userEntryId: "user-1",
+    responseEntryId: "response-1",
+    jobId: "job-1",
+    idempotencyKey: "turn-1",
+    leaseOwner: "worker-1",
+    outcome
+  }])
 })

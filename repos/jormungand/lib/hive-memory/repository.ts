@@ -57,7 +57,13 @@ import {
   requeueFailedExecutionJob
 } from "../execution-jobs"
 import { legacyConversationId } from "../conversation-identity"
-import type { TurnClaimResult, TurnDispatchEnvelope } from "../conversation-lifecycle/types"
+import {
+  type SettleTurnInput,
+  type SettledTurnAggregate,
+  type TurnClaimResult,
+  type TurnDispatchEnvelope
+} from "../conversation-lifecycle/types"
+import { decideTurnTransition } from "../conversation-lifecycle/transitions"
 
 type MemoryRow = {
   id: string
@@ -2110,6 +2116,162 @@ export class HiveMemoryRepository {
     })
   }
 
+  async settleConversationTurn(input: SettleTurnInput): Promise<SettledTurnAggregate> {
+    const now = input.now ?? new Date().toISOString()
+    return this.database.transaction((connection) => {
+      const row = connection.prepare("SELECT * FROM execution_jobs WHERE id = ?")
+        .get(input.jobId) as ExecutionJobRow | undefined
+      if (!row) throw new Error(`Conversation dispatch ${input.jobId} was not found.`)
+      const job = executionJobFromRow(row)
+      const aggregate = this.conversationTurnAggregateOnConnection(
+        connection,
+        job,
+        input.conversationId,
+        null
+      )
+      if (!aggregate.ok) throw new Error(aggregate.error)
+      if (
+        input.userEntryId !== aggregate.userEntry.id ||
+        input.responseEntryId !== aggregate.responseEntry.id ||
+        input.idempotencyKey !== job.idempotencyKey
+      ) {
+        throw new Error("Conversation dispatch settlement identity is invalid.")
+      }
+
+      if (isTerminalConversationTurnSettlement(job)) {
+        return freezeSettledTurnAggregate({
+          applied: false,
+          conversationId: input.conversationId,
+          userEntryId: aggregate.userEntry.id,
+          responseEntryId: aggregate.responseEntry.id,
+          jobId: job.id,
+          idempotencyKey: job.idempotencyKey,
+          userEntry: aggregate.userEntry,
+          responseEntry: aggregate.responseEntry,
+          job
+        })
+      }
+
+      if (job.status !== "running") {
+        throw new Error(`Conversation dispatch ${job.id} is not running.`)
+      }
+      if (job.leaseOwner !== input.leaseOwner) {
+        throw new Error(`Conversation dispatch ${job.id} is leased to another owner.`)
+      }
+      if (!job.leaseExpiresAt || job.leaseExpiresAt <= now) {
+        throw new Error(`Conversation dispatch ${job.id} lease expired.`)
+      }
+
+      const updateRunningJob = (status: ExecutionJob["status"], result: string, lastError: string | null) => {
+        const jobUpdate = connection.prepare(`
+        UPDATE execution_jobs SET
+          status = ?, lease_owner = NULL, lease_expires_at = NULL,
+          result_json = ?, last_error = ?, completed_at = ?, updated_at = ?
+        WHERE id = ? AND status = 'running' AND lease_owner = ?
+        `).run(status, result, lastError, now, now, job.id, input.leaseOwner)
+        if (jobUpdate.changes === 0) {
+          throw new Error(`Conversation dispatch ${job.id} is not running under lease ${input.leaseOwner}.`)
+        }
+        const settledJobRow = connection.prepare("SELECT * FROM execution_jobs WHERE id = ?")
+          .get(job.id) as ExecutionJobRow | undefined
+        if (!settledJobRow) throw new Error(`Conversation dispatch ${job.id} disappeared during settlement.`)
+        return executionJobFromRow(settledJobRow)
+      }
+
+      const userFailureDecision = decideTurnTransition(aggregate.userEntry.status, "failed")
+      const responseFailureDecision = decideTurnTransition(aggregate.responseEntry.status, "failed")
+      if (userFailureDecision.kind === "noop" || responseFailureDecision.kind === "noop") {
+        const userEntry = userFailureDecision.kind === "apply"
+          ? this.updateConversationOnConnection(
+              connection,
+              { id: aggregate.userEntry.id, status: userFailureDecision.next },
+              now
+            )
+          : aggregate.userEntry
+        const responseEntry = responseFailureDecision.kind === "apply"
+          ? this.updateConversationOnConnection(
+              connection,
+              { id: aggregate.responseEntry.id, status: responseFailureDecision.next },
+              now
+            )
+          : aggregate.responseEntry
+        if (!userEntry || !responseEntry) {
+          throw new Error(`Conversation dispatch ${job.id} entries could not be settled.`)
+        }
+        const diagnostic = "Conversation dispatch has terminal Entry state before TX3 settlement."
+        const settledJob = updateRunningJob("failed", JSON.stringify({
+          status: "failed",
+          responseEntryId: responseEntry.id,
+          reason: "entry_state_inconsistent",
+          providerOutcome: input.outcome.kind
+        }), diagnostic)
+
+        return freezeSettledTurnAggregate({
+          applied: true,
+          conversationId: input.conversationId,
+          userEntryId: userEntry.id,
+          responseEntryId: responseEntry.id,
+          jobId: job.id,
+          idempotencyKey: job.idempotencyKey,
+          userEntry,
+          responseEntry,
+          job: settledJob
+        })
+      }
+
+      const userDecision = decideTurnTransition(aggregate.userEntry.status, input.outcome.kind)
+      const responseDecision = decideTurnTransition(aggregate.responseEntry.status, input.outcome.kind)
+      const userEntry = userDecision.kind === "apply"
+        ? this.updateConversationOnConnection(
+            connection,
+            { id: aggregate.userEntry.id, status: userDecision.next },
+            now
+          )
+        : aggregate.userEntry
+      const responseEntry = responseDecision.kind === "apply"
+        ? this.updateConversationOnConnection(
+            connection,
+            {
+              id: aggregate.responseEntry.id,
+              content: input.outcome.body,
+              status: responseDecision.next
+            },
+            now
+          )
+        : aggregate.responseEntry
+      if (!userEntry || !responseEntry) {
+        throw new Error(`Conversation dispatch ${job.id} entries could not be settled.`)
+      }
+
+      const jobStatus = input.outcome.kind === "interrupted" ? "completed" : input.outcome.kind
+      const result = JSON.stringify({
+        status: input.outcome.kind,
+        responseEntryId: responseEntry.id,
+        ...(input.outcome.kind === "failed" && input.outcome.deliveryState === "unknown"
+          ? { deliveryState: "unknown" }
+          : {})
+      })
+      const lastError = input.outcome.kind !== "failed"
+        ? null
+        : input.outcome.deliveryState === "unknown"
+          ? `Delivery state unknown: ${input.outcome.body}`
+          : input.outcome.body
+      const settledJob = updateRunningJob(jobStatus, result, lastError)
+
+      return freezeSettledTurnAggregate({
+        applied: true,
+        conversationId: input.conversationId,
+        userEntryId: userEntry.id,
+        responseEntryId: responseEntry.id,
+        jobId: job.id,
+        idempotencyKey: job.idempotencyKey,
+        userEntry,
+        responseEntry,
+        job: settledJob
+      })
+    })
+  }
+
   async renewExecutionJobLease(input: {
     id: string
     leaseOwner: string
@@ -3018,6 +3180,24 @@ function freezeTurnDispatchEnvelope(envelope: TurnDispatchEnvelope): TurnDispatc
     ...envelope,
     userEntry: freezeEntry(envelope.userEntry),
     responseEntry: freezeEntry(envelope.responseEntry)
+  })
+}
+
+function isTerminalConversationTurnSettlement(job: ExecutionJob) {
+  return job.status === "completed" || job.status === "failed" || job.status === "canceled"
+}
+
+function freezeSettledTurnAggregate(aggregate: SettledTurnAggregate): SettledTurnAggregate {
+  const freezeEntry = (entry: ConversationEntry) => Object.freeze({
+    ...entry,
+    artifactIds: Object.freeze([...entry.artifactIds]),
+    memoryIds: Object.freeze([...entry.memoryIds])
+  }) as ConversationEntry
+  return Object.freeze({
+    ...aggregate,
+    userEntry: freezeEntry(aggregate.userEntry),
+    responseEntry: freezeEntry(aggregate.responseEntry),
+    job: Object.freeze({ ...aggregate.job })
   })
 }
 

@@ -1,5 +1,5 @@
 import type { AgentKind } from "../types"
-import type { ConversationEntry, ConversationStatus } from "../hive-memory/types"
+import type { ConversationEntry, ConversationStatus, ExecutionJob } from "../hive-memory/types"
 import { legacyConversationId } from "../conversation-identity"
 
 export type TurnStatus = ConversationStatus
@@ -31,6 +31,19 @@ export interface TurnDispatchEnvelope extends TurnIdentity {
   readonly content: string
   readonly userEntry: ConversationEntry
   readonly responseEntry: ConversationEntry
+}
+
+export interface SettleTurnInput extends TurnIdentity {
+  readonly leaseOwner: string
+  readonly outcome: ProviderOutcome
+  readonly now?: string
+}
+
+export interface SettledTurnAggregate extends TurnIdentity {
+  readonly applied: boolean
+  readonly userEntry: ConversationEntry
+  readonly responseEntry: ConversationEntry
+  readonly job: ExecutionJob
 }
 
 export type TurnClaimResult = TurnDispatchEnvelope | {

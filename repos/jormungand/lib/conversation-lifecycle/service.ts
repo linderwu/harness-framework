@@ -11,7 +11,12 @@ import type {
   ExecutionJobStatus
 } from "../hive-memory/types"
 import type { CodexReasoningIntensity } from "../types"
-import type { TurnClaimResult, TurnIdentity } from "./types"
+import type {
+  SettleTurnInput,
+  SettledTurnAggregate,
+  TurnClaimResult,
+  TurnIdentity
+} from "./types"
 
 export interface SubmittedTurn extends TurnIdentity {
   readonly userEntry: ConversationEntry
@@ -193,6 +198,13 @@ export class ConversationLifecycleService {
       leaseDurationMs: input.leaseDurationMs
     })
   }
+
+  async settleTurn(input: SettleTurnInput): Promise<SettledTurnAggregate> {
+    if (!this.repository.settleConversationTurn) {
+      throw new Error("Conversation turn settlement is unavailable")
+    }
+    return await this.repository.settleConversationTurn(input)
+  }
 }
 
 interface ConversationLifecycleRepository extends ConversationTurnRepository {
@@ -202,6 +214,7 @@ interface ConversationLifecycleRepository extends ConversationTurnRepository {
     leaseOwner: string
     leaseDurationMs: number
   }) => Promise<unknown>
+  settleConversationTurn?: (input: SettleTurnInput) => Promise<SettledTurnAggregate>
   getConversationMetadata?: (conversationId: string) => ConversationMetadata | undefined
   createConversation?: (input: { id: string; title: string }) => Promise<ConversationMetadata>
   updateConversationProfile?: (input: {

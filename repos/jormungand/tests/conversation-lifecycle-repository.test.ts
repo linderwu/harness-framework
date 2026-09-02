@@ -9,6 +9,7 @@ import {
   type SubmittedConversationTurn
 } from "../lib/hive-memory/repository"
 import { openHiveDatabase } from "../lib/hive-memory/database"
+import type { TurnDispatchEnvelope } from "../lib/conversation-lifecycle/types"
 
 async function tx1Fixture(t: test.TestContext) {
   const dataDir = await mkdtemp(join(tmpdir(), "jormungand-conversation-tx1-"))
@@ -626,4 +627,265 @@ test("TX2 ClaimNextTurn rejects a missing Entry aggregate and leaves the next Tu
   })
   assert.ok(next && !("rejected" in next))
   assert.equal(next.jobId, valid.jobId)
+})
+
+test("TX3 SettleTurn completes both Entries and the Job in one durable aggregate", async (t) => {
+  const { repository, conversationId } = await tx1Fixture(t)
+  const submitted = await repository.submitConversationTurn(turnInput(conversationId, "tx3-completed"))
+  const claim = await repository.claimNextConversationTurn({
+    conversationId,
+    leaseOwner: "tx3-completed-worker",
+    leaseDurationMs: 60_000
+  })
+  assert.ok(claim && !("rejected" in claim))
+  const envelope = claim as TurnDispatchEnvelope
+
+  const settled = await repository.settleConversationTurn({
+    conversationId,
+    userEntryId: submitted.userEntryId,
+    responseEntryId: submitted.responseEntryId,
+    jobId: submitted.jobId,
+    idempotencyKey: envelope.idempotencyKey,
+    leaseOwner: envelope.leaseOwner,
+    outcome: {
+      kind: "completed",
+      body: "  exact response whitespace  ",
+      deliveryState: "confirmed"
+    }
+  })
+
+  assert.equal(settled.applied, true)
+  assert.deepEqual(
+    repository.listConversation(conversationId).map((entry) => [entry.status, entry.content]),
+    [
+      ["completed", "  Preserve this exact user content.  "],
+      ["completed", "  exact response whitespace  "]
+    ]
+  )
+  assert.equal(repository.getExecutionJob(submitted.jobId)?.status, "completed")
+})
+
+async function claimedTx3Turn(t: test.TestContext, idempotencyKey: string) {
+  const fixture = await tx1Fixture(t)
+  const submitted = await fixture.repository.submitConversationTurn(
+    turnInput(fixture.conversationId, idempotencyKey)
+  )
+  const claim = await fixture.repository.claimNextConversationTurn({
+    conversationId: fixture.conversationId,
+    leaseOwner: `${idempotencyKey}-worker`,
+    leaseDurationMs: 60_000
+  })
+  assert.ok(claim && !("rejected" in claim))
+  return { ...fixture, submitted, envelope: claim as TurnDispatchEnvelope }
+}
+
+function settlementInput(
+  fixture: Awaited<ReturnType<typeof claimedTx3Turn>>,
+  outcome: import("../lib/conversation-lifecycle/types").ProviderOutcome
+) {
+  return {
+    conversationId: fixture.conversationId,
+    userEntryId: fixture.submitted.userEntryId,
+    responseEntryId: fixture.submitted.responseEntryId,
+    jobId: fixture.submitted.jobId,
+    idempotencyKey: fixture.envelope.idempotencyKey,
+    leaseOwner: fixture.envelope.leaseOwner,
+    outcome
+  }
+}
+
+test("TX3 SettleTurn persists confirmed failure, interruption, and unknown delivery outcomes", async (t) => {
+  const cases = [
+    {
+      key: "tx3-failed-confirmed",
+      outcome: { kind: "failed", body: "confirmed failure", deliveryState: "confirmed" } as const,
+      entryStatus: "failed",
+      jobStatus: "failed",
+      result: { status: "failed" }
+    },
+    {
+      key: "tx3-interrupted",
+      outcome: { kind: "interrupted", body: "interrupted body", deliveryState: "confirmed" } as const,
+      entryStatus: "interrupted",
+      jobStatus: "completed",
+      result: { status: "interrupted" }
+    },
+    {
+      key: "tx3-delivery-unknown",
+      outcome: { kind: "failed", body: "delivery uncertain", deliveryState: "unknown" } as const,
+      entryStatus: "failed",
+      jobStatus: "failed",
+      result: { status: "failed", deliveryState: "unknown" }
+    }
+  ] as const
+
+  for (const item of cases) {
+    const fixture = await claimedTx3Turn(t, item.key)
+    const settled = await fixture.repository.settleConversationTurn(
+      settlementInput(fixture, item.outcome)
+    )
+    const job = fixture.repository.getExecutionJob(fixture.submitted.jobId)
+
+    assert.equal(settled.applied, true, item.key)
+    assert.deepEqual(
+      fixture.repository.listConversation(fixture.conversationId).map((entry) => entry.status),
+      [item.entryStatus, item.entryStatus],
+      item.key
+    )
+    assert.equal(job?.status, item.jobStatus, item.key)
+    assert.equal(JSON.parse(job?.resultJson ?? "{}").status, item.result.status, item.key)
+    assert.equal(
+      JSON.parse(job?.resultJson ?? "{}").deliveryState,
+      "deliveryState" in item.result ? item.result.deliveryState : undefined,
+      item.key
+    )
+    if (item.outcome.deliveryState === "unknown") {
+      assert.match(job?.lastError ?? "", /delivery state unknown/i)
+      assert.equal(await fixture.repository.claimNextConversationTurn({
+        conversationId: fixture.conversationId,
+        leaseOwner: "another-worker",
+        leaseDurationMs: 60_000
+      }), undefined)
+    }
+  }
+})
+
+test("TX3 SettleTurn fails a running Job with pre-terminal Entries without overwriting them", async (t) => {
+  const cases = [
+    {
+      key: "terminal-user",
+      user: { status: "completed", content: "preserved user terminal" },
+      response: { status: "running", content: "response placeholder" },
+      expected: [
+        { status: "completed", content: "preserved user terminal" },
+        { status: "failed", content: "response placeholder" }
+      ]
+    },
+    {
+      key: "terminal-response",
+      user: { status: "running", content: "user still running" },
+      response: { status: "interrupted", content: "preserved response terminal" },
+      expected: [
+        { status: "failed", content: "user still running" },
+        { status: "interrupted", content: "preserved response terminal" }
+      ]
+    },
+    {
+      key: "both-terminal",
+      user: { status: "completed", content: "preserved completed user" },
+      response: { status: "failed", content: "preserved failed response" },
+      expected: [
+        { status: "completed", content: "preserved completed user" },
+        { status: "failed", content: "preserved failed response" }
+      ]
+    }
+  ] as const
+
+  for (const item of cases) {
+    const fixture = await claimedTx3Turn(t, `tx3-inconsistent-${item.key}`)
+    await fixture.database.write((connection) => {
+      connection.prepare("UPDATE conversation_entries SET status = ?, content = ? WHERE id = ?")
+        .run(item.user.status, item.user.content, fixture.submitted.userEntryId)
+      connection.prepare("UPDATE conversation_entries SET status = ?, content = ? WHERE id = ?")
+        .run(item.response.status, item.response.content, fixture.submitted.responseEntryId)
+    })
+
+    const settled = await fixture.repository.settleConversationTurn(settlementInput(fixture, {
+      kind: "completed",
+      body: "must never overwrite preserved Entry content",
+      deliveryState: "confirmed"
+    }))
+    const job = fixture.repository.getExecutionJob(fixture.submitted.jobId)
+
+    assert.equal(settled.applied, true, item.key)
+    assert.equal(Object.isFrozen(settled), true, item.key)
+    assert.deepEqual(
+      fixture.repository.listConversation(fixture.conversationId).map(({ status, content }) => ({ status, content })),
+      item.expected,
+      item.key
+    )
+    assert.equal(job?.status, "failed", item.key)
+    assert.equal(JSON.parse(job?.resultJson ?? "{}").status, "failed", item.key)
+    assert.equal(JSON.parse(job?.resultJson ?? "{}").reason, "entry_state_inconsistent", item.key)
+    assert.match(job?.lastError ?? "", /terminal Entry/i, item.key)
+  }
+})
+
+test("TX3 SettleTurn rejects a wrong owner or expired lease without writes", async (t) => {
+  const fixture = await claimedTx3Turn(t, "tx3-lease")
+  const input = settlementInput(fixture, {
+    kind: "completed",
+    body: "should not persist",
+    deliveryState: "confirmed"
+  })
+  const before = durableTurnRows(fixture.database, fixture.conversationId)
+
+  await assert.rejects(
+    () => fixture.repository.settleConversationTurn({ ...input, leaseOwner: "other-worker" }),
+    /another owner/
+  )
+  await assert.rejects(
+    () => fixture.repository.settleConversationTurn({
+      ...input,
+      now: fixture.envelope.leaseExpiresAt
+    }),
+    /lease expired/
+  )
+  assert.deepEqual(durableTurnRows(fixture.database, fixture.conversationId), before)
+})
+
+test("TX3 SettleTurn rolls back every write when response or Job updates fail", async (t) => {
+  for (const target of ["response", "job"] as const) {
+    const fixture = await claimedTx3Turn(t, `tx3-rollback-${target}`)
+    const trigger = `fail_tx3_${target}`
+    const table = target === "response" ? "conversation_entries" : "execution_jobs"
+    const id = target === "response"
+      ? fixture.submitted.responseEntryId
+      : fixture.submitted.jobId
+    await fixture.database.write((connection) => connection.exec(`
+      CREATE TEMP TRIGGER ${trigger}
+      BEFORE UPDATE ON ${table}
+      WHEN NEW.id = '${id}'
+      BEGIN
+        SELECT RAISE(ABORT, 'injected ${target} settlement failure');
+      END;
+    `))
+    try {
+      const before = durableTurnRows(fixture.database, fixture.conversationId)
+      await assert.rejects(
+        () => fixture.repository.settleConversationTurn(settlementInput(fixture, {
+          kind: "completed",
+          body: "must roll back",
+          deliveryState: "confirmed"
+        })),
+        new RegExp(`injected ${target} settlement failure`)
+      )
+      assert.deepEqual(durableTurnRows(fixture.database, fixture.conversationId), before)
+    } finally {
+      await fixture.database.write((connection) => connection.exec(`DROP TRIGGER IF EXISTS ${trigger}`))
+    }
+  }
+})
+
+test("TX3 SettleTurn ignores duplicate and different late terminal outcomes", async (t) => {
+  const fixture = await claimedTx3Turn(t, "tx3-terminal-once")
+  const completed = settlementInput(fixture, {
+    kind: "completed",
+    body: "first result",
+    deliveryState: "confirmed"
+  })
+  await fixture.repository.settleConversationTurn(completed)
+  const before = durableTurnRows(fixture.database, fixture.conversationId)
+
+  for (const outcome of [completed.outcome, {
+    kind: "failed",
+    body: "late failure",
+    deliveryState: "confirmed"
+  }] as const) {
+    const settled = await fixture.repository.settleConversationTurn({ ...completed, outcome })
+    assert.equal(settled.applied, false)
+    assert.equal(Object.isFrozen(settled), true)
+    assert.equal(Object.isFrozen(settled.job), true)
+  }
+  assert.deepEqual(durableTurnRows(fixture.database, fixture.conversationId), before)
 })

@@ -276,3 +276,205 @@ test("TX2 conversation dispatch skips an expired mixed-terminal Turn without inv
     ["completed", "failed", "completed", "completed"]
   )
 })
+
+test("dispatcher settles a Runtime throw through TX3 before a failed post-commit publication", async (t) => {
+  const { repository } = await tx2Fixture(t)
+  const conversationId = "conversation:tx3-runtime-throw"
+  await repository.createConversation({ id: conversationId, title: "TX3 runtime throw" })
+  const submitted = await repository.submitConversationTurn({
+    conversationId,
+    targetAgent: "codex",
+    content: "invoke runtime",
+    idempotencyKey: "runtime-throw",
+    responseRole: "agent"
+  })
+  const publications: unknown[] = []
+  const dispatcher = new ConversationDispatcher(
+    repository,
+    async () => {
+      throw new Error("Runtime exploded")
+    },
+    async (settled) => {
+      publications.push(settled)
+      throw new Error("publication exploded")
+    }
+  )
+
+  await dispatcher.drain(conversationId)
+
+  assert.deepEqual(
+    repository.listConversation(conversationId).map((entry) => [entry.status, entry.content]),
+    [
+      ["failed", "invoke runtime"],
+      ["failed", "Runtime exploded"]
+    ]
+  )
+  const job = repository.getExecutionJob(submitted.jobId)
+  assert.equal(job?.status, "failed")
+  assert.deepEqual(JSON.parse(job?.resultJson ?? "{}"), {
+    status: "failed",
+    responseEntryId: submitted.responseEntryId
+  })
+  assert.equal(publications.length, 1)
+})
+
+test("dispatcher returns safely when settlement loses its live lease to another owner", async (t) => {
+  const { database, repository } = await tx2Fixture(t)
+  const conversationId = "conversation:tx3-settlement-lost-owner"
+  await repository.createConversation({ id: conversationId, title: "TX3 lost owner" })
+  const first = await repository.submitConversationTurn({
+    conversationId,
+    targetAgent: "codex",
+    content: "first",
+    idempotencyKey: "lost-owner-first",
+    responseRole: "agent"
+  })
+  const second = await repository.submitConversationTurn({
+    conversationId,
+    targetAgent: "codex",
+    content: "second",
+    idempotencyKey: "lost-owner-second",
+    responseRole: "agent"
+  })
+  const started: string[] = []
+  const dispatcher = new ConversationDispatcher(repository, async (input) => {
+    started.push(input.content)
+    if (input.content === "first") {
+      await database.write((connection) => connection.prepare(`
+        UPDATE execution_jobs SET lease_owner = ?, lease_expires_at = ? WHERE id = ?
+      `).run("other-live-worker", new Date(Date.now() + 60_000).toISOString(), first.jobId))
+    }
+    return { status: "completed", body: `${input.content} result` }
+  })
+
+  await dispatcher.drain(conversationId)
+
+  assert.deepEqual(started, ["first"])
+  assert.equal(repository.getExecutionJob(first.jobId)?.status, "running")
+  assert.equal(repository.getExecutionJob(first.jobId)?.leaseOwner, "other-live-worker")
+  assert.equal(repository.getExecutionJob(second.jobId)?.status, "queued")
+})
+
+test("dispatcher recovers an expired settlement lease and continues FIFO draining", async (t) => {
+  const { database, repository } = await tx2Fixture(t)
+  const conversationId = "conversation:tx3-settlement-expired-lease"
+  await repository.createConversation({ id: conversationId, title: "TX3 expired lease" })
+  const first = await repository.submitConversationTurn({
+    conversationId,
+    targetAgent: "codex",
+    content: "first",
+    idempotencyKey: "expired-lease-first",
+    responseRole: "agent"
+  })
+  const second = await repository.submitConversationTurn({
+    conversationId,
+    targetAgent: "codex",
+    content: "second",
+    idempotencyKey: "expired-lease-second",
+    responseRole: "agent"
+  })
+  let expireFirstSettlement = true
+  const started: string[] = []
+  const dispatcher = new ConversationDispatcher(repository, async (input) => {
+    started.push(input.content)
+    if (input.content === "first" && expireFirstSettlement) {
+      expireFirstSettlement = false
+      await database.write((connection) => connection.prepare(`
+        UPDATE execution_jobs SET lease_expires_at = ? WHERE id = ?
+      `).run("2000-01-01T00:00:00.000Z", first.jobId))
+    }
+    return { status: "completed", body: `${input.content} result` }
+  })
+
+  await dispatcher.drain(conversationId)
+
+  assert.deepEqual(started, ["first", "first", "second"])
+  assert.deepEqual(
+    repository.listConversation(conversationId).map((entry) => [entry.status, entry.content]),
+    [
+      ["completed", "first"],
+      ["completed", "first result"],
+      ["completed", "second"],
+      ["completed", "second result"]
+    ]
+  )
+  assert.equal(repository.getExecutionJob(first.jobId)?.status, "completed")
+  assert.equal(repository.getExecutionJob(second.jobId)?.status, "completed")
+})
+
+test("dispatcher rethrows a durable settlement fault while its own lease remains live", async (t) => {
+  const { repository } = await tx2Fixture(t)
+  const conversationId = "conversation:tx3-settlement-durable-fault"
+  await repository.createConversation({ id: conversationId, title: "TX3 durable fault" })
+  await repository.submitConversationTurn({
+    conversationId,
+    targetAgent: "codex",
+    content: "invoke runtime",
+    idempotencyKey: "durable-fault",
+    responseRole: "agent"
+  })
+  const settleConversationTurn = repository.settleConversationTurn.bind(repository)
+  repository.settleConversationTurn = async () => {
+    throw new Error("injected durable settlement fault")
+  }
+  const dispatcher = new ConversationDispatcher(repository, async () => ({
+    status: "completed",
+    body: "uncommitted result"
+  }))
+
+  try {
+    await assert.rejects(
+      () => dispatcher.drain(conversationId),
+      /injected durable settlement fault/
+    )
+  } finally {
+    repository.settleConversationTurn = settleConversationTurn
+  }
+})
+
+test("dispatcher transaction spans neither pending Runtime nor concurrent conversation access", async (t) => {
+  const { repository } = await tx2Fixture(t)
+  const conversationId = "conversation:tx3-runtime-outside-transaction"
+  await repository.createConversation({ id: conversationId, title: "TX3 outside transaction" })
+  const submitted = await repository.submitConversationTurn({
+    conversationId,
+    targetAgent: "codex",
+    content: "pending runtime",
+    idempotencyKey: "outside-transaction",
+    responseRole: "agent"
+  })
+  const runtimeStarted = deferred<void>()
+  const runtimeResult = deferred<{ status: "completed"; body: string }>()
+  const dispatcher = new ConversationDispatcher(repository, async () => {
+    runtimeStarted.resolve()
+    return runtimeResult.promise
+  })
+  const drain = dispatcher.drain(conversationId)
+  await runtimeStarted.promise
+
+  let timeout: ReturnType<typeof setTimeout> | undefined
+  try {
+    await Promise.race([
+      Promise.all([
+        Promise.resolve(repository.getExecutionJob(submitted.jobId)),
+        repository.updateConversationProfile({
+          id: conversationId,
+          selectedModelId: "gpt-5.4"
+        })
+      ]),
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(() => reject(new Error("Runtime held the database transaction.")), 1_000)
+      })
+    ])
+  } finally {
+    if (timeout) clearTimeout(timeout)
+  }
+
+  runtimeResult.resolve({ status: "completed", body: "committed after Runtime" })
+  await drain
+  assert.deepEqual(
+    repository.listConversation(conversationId).map((entry) => entry.status),
+    ["completed", "completed"]
+  )
+  assert.equal(repository.getExecutionJob(submitted.jobId)?.status, "completed")
+})
