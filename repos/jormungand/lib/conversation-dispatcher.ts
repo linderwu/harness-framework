@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto"
 import type { AgentKind } from "./types"
 import type { ConversationEntry } from "./hive-memory/types"
 import type { HiveMemoryRepository } from "./hive-memory/repository"
@@ -129,6 +130,7 @@ export class ConversationQueueService {
 
 export class ConversationDispatcher {
   private readonly activeDrains = new Map<string, Promise<void>>()
+  private readonly instanceId = randomUUID()
   private readonly leaseDurationMs = 5 * 60 * 1000
   private readonly lifecycle: ConversationLifecycleService
 
@@ -307,7 +309,7 @@ export class ConversationDispatcher {
   }
 
   private leaseOwner(conversationId: string) {
-    return `conversation:${conversationId}:${process.pid}`
+    return `conversation:${conversationId}:${process.pid}:${this.instanceId}`
   }
 
   private settlementLeaseWasLost(envelope: TurnDispatchEnvelope) {

@@ -450,6 +450,115 @@ test("dispatcher recovers an expired settlement lease and continues FIFO drainin
   assert.equal(repository.getExecutionJob(second.jobId)?.status, "completed")
 })
 
+test("dispatcher does not let a stale same-PID Runtime outcome settle a reclaimed Turn", async (t) => {
+  const { database, repository } = await tx2Fixture(t)
+  const conversationId = "conversation:123e4567-e89b-42d3-a456-426614174000"
+  await repository.createConversation({ id: conversationId, title: "TX3 same-PID reclaim" })
+  const first = await repository.submitConversationTurn({
+    conversationId,
+    targetAgent: "codex",
+    content: "first",
+    idempotencyKey: "same-pid-first",
+    responseRole: "agent"
+  })
+  const second = await repository.submitConversationTurn({
+    conversationId,
+    targetAgent: "codex",
+    content: "second",
+    idempotencyKey: "same-pid-second",
+    responseRole: "agent"
+  })
+  const observedLeaseOwners: string[] = []
+  const claimNextConversationTurn = repository.claimNextConversationTurn.bind(repository)
+  repository.claimNextConversationTurn = async (input) => {
+    observedLeaseOwners.push(input.leaseOwner)
+    return await claimNextConversationTurn(input)
+  }
+
+  const firstRuntimeStarted = deferred<void>()
+  const reclaimedRuntimeStarted = deferred<void>()
+  const releaseFirst = deferred<{ status: "completed"; body: string }>()
+  const releaseReclaimed = deferred<{ status: "completed"; body: string }>()
+  const startedByA: string[] = []
+  const startedByB: string[] = []
+  const activeDrains: Promise<void>[] = []
+  t.after(async () => {
+    releaseFirst.resolve({ status: "completed", body: "test cleanup" })
+    releaseReclaimed.resolve({ status: "completed", body: "test cleanup" })
+    await Promise.allSettled(activeDrains)
+  })
+  const dispatcherA = new ConversationDispatcher(repository, async (input) => {
+    startedByA.push(input.content)
+    firstRuntimeStarted.resolve()
+    return releaseFirst.promise
+  })
+  const dispatcherB = new ConversationDispatcher(repository, async (input) => {
+    startedByB.push(input.content)
+    if (input.content === "first") {
+      reclaimedRuntimeStarted.resolve()
+      return releaseReclaimed.promise
+    }
+    return { status: "completed", body: "second result" }
+  })
+
+  const drainA = dispatcherA.drain(conversationId)
+  activeDrains.push(drainA)
+  await firstRuntimeStarted.promise
+  const firstLeaseOwner = repository.getExecutionJob(first.jobId)?.leaseOwner
+  assert.ok(firstLeaseOwner)
+  await database.write((connection) => connection.prepare(`
+    UPDATE execution_jobs SET lease_expires_at = ? WHERE id = ?
+  `).run("2000-01-01T00:00:00.000Z", first.jobId))
+
+  const drainB = dispatcherB.drain(conversationId)
+  activeDrains.push(drainB)
+  await reclaimedRuntimeStarted.promise
+  const reclaimedLeaseOwner = repository.getExecutionJob(first.jobId)?.leaseOwner
+  assert.ok(reclaimedLeaseOwner)
+  assert.notEqual(firstLeaseOwner, reclaimedLeaseOwner)
+  assert.notEqual(observedLeaseOwners[0], observedLeaseOwners[1])
+
+  releaseFirst.resolve({ status: "completed", body: "stale result" })
+  await drainA
+
+  assert.deepEqual(startedByA, ["first"])
+  assert.deepEqual(startedByB, ["first"])
+  assert.equal(repository.getExecutionJob(first.jobId)?.status, "running")
+  assert.equal(repository.getExecutionJob(first.jobId)?.leaseOwner, reclaimedLeaseOwner)
+  assert.equal(repository.getExecutionJob(second.jobId)?.status, "queued")
+  assert.deepEqual(
+    repository.listConversation(conversationId).map((entry) => [entry.status, entry.content]),
+    [
+      ["running", "first"],
+      ["running", "Queued for agent response..."],
+      ["queued", "second"],
+      ["queued", "Queued for agent response..."]
+    ]
+  )
+
+  releaseReclaimed.resolve({ status: "completed", body: "fresh result" })
+  await drainB
+
+  assert.deepEqual(startedByB, ["first", "second"])
+  assert.deepEqual(
+    repository.listConversation(conversationId).map((entry) => [entry.status, entry.content]),
+    [
+      ["completed", "first"],
+      ["completed", "fresh result"],
+      ["completed", "second"],
+      ["completed", "second result"]
+    ]
+  )
+  assert.deepEqual(JSON.parse(repository.getExecutionJob(first.jobId)?.resultJson ?? "{}"), {
+    status: "completed",
+    responseEntryId: first.responseEntryId
+  })
+  assert.deepEqual(JSON.parse(repository.getExecutionJob(second.jobId)?.resultJson ?? "{}"), {
+    status: "completed",
+    responseEntryId: second.responseEntryId
+  })
+})
+
 test("dispatcher rethrows a durable settlement fault while its own lease remains live", async (t) => {
   const { repository } = await tx2Fixture(t)
   const conversationId = "conversation:tx3-settlement-durable-fault"
