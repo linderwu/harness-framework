@@ -181,7 +181,11 @@ export function createHiveServices(options: HiveServicesOptions = {}) {
         },
         conversationId
       })
-      return { status: result.status, body: result.body }
+      return {
+        status: result.status,
+        body: result.body,
+        ...(result.deliveryState ? { deliveryState: result.deliveryState } : {})
+      }
     },
     enqueueConversation: (input) => conversationQueue.enqueue(input),
     persistRawArtifact: async ({ run, targetAgent, body }) => {
@@ -345,7 +349,8 @@ export async function routeUnboundConversation(input: {
 
   return {
     status: result.status === "failed" ? "failed" as const : "completed" as const,
-    body: result.body
+    body: result.body,
+    ...(result.deliveryState ? { deliveryState: result.deliveryState } : {})
   }
 }
 

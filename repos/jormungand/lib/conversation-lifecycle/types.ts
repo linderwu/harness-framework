@@ -15,6 +15,8 @@ export type ProviderOutcome =
   | { kind: "interrupted"; body: string; deliveryState: "confirmed"; disposition?: "stopped" }
   | { kind: "failed"; body: string; deliveryState: "confirmed" | "unknown" }
 
+export type ProviderDeliveryState = ProviderOutcome["deliveryState"]
+
 export interface TurnIdentity {
   conversationId: string
   userEntryId: string

@@ -4,6 +4,7 @@ import {
   legacyConversationId
 } from "./conversation-identity"
 import { ConversationLifecycleService } from "./conversation-lifecycle/service"
+import type { ProviderDeliveryState } from "./conversation-lifecycle/types"
 import type { ContextPack } from "./context-builder"
 import type {
   ConversationDispatchOutcome,
@@ -66,7 +67,11 @@ interface ConversationDependencies {
     contextPack?: ContextPack
     managerRouting: boolean
     conversationId?: string
-  }) => Promise<{ status: "completed" | "failed"; body: string }>
+  }) => Promise<{
+    status: "completed" | "failed"
+    body: string
+    deliveryState?: ProviderDeliveryState
+  }>
   persistRawArtifact: (input: {
     run: WorkflowRun
     targetAgent: AgentKind
@@ -95,6 +100,7 @@ interface ConversationDependencies {
   }) => Promise<{
     status: "completed" | "failed"
     body: string
+    deliveryState?: ProviderDeliveryState
     binding?: ConversationBinding
   }>
 }
@@ -393,7 +399,11 @@ export class ConversationService {
       if (targetAgent === "codex" && decision.binding) {
         await this.dependencies.repository.moveConversation(conversationId, decision.binding.workflowRunId)
       }
-      return { status: decision.status, body: decision.body }
+      return {
+        status: decision.status,
+        body: decision.body,
+        ...(decision.deliveryState ? { deliveryState: decision.deliveryState } : {})
+      }
     }
 
     const managerRouting = run.projectType === "hive_mission" && targetAgent === "codex"
@@ -440,7 +450,11 @@ export class ConversationService {
         idempotencyKey: `conversation-wake:${userEntry.idempotencyKey}`
       })
     }
-    return { status: result.status, body: compactAgentResultBody(result.body) }
+    return {
+      status: result.status,
+      body: compactAgentResultBody(result.body),
+      ...(result.deliveryState ? { deliveryState: result.deliveryState } : {})
+    }
   }
 
   private async requireRun(id: string) {

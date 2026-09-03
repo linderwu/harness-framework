@@ -114,6 +114,154 @@ async function submitUnboundAndDrain(
   }
 }
 
+test("Lucky Runtime outcome reaches lifecycle settlement without changing ingress", async (t) => {
+  const { database, repository } = await repositoryFixture(t)
+  const settledOutcomes: unknown[] = []
+  const settleConversationTurn = repository.settleConversationTurn.bind(repository)
+  repository.settleConversationTurn = async (input) => {
+    settledOutcomes.push(input.outcome)
+    return await settleConversationTurn(input)
+  }
+  const ingressInputs: AgentInvocationInput[] = []
+  const outcomes = [
+    {
+      runtime: { status: "completed" as const, body: "runtime response" },
+      expected: { kind: "completed", body: "runtime response", deliveryState: "confirmed" }
+    },
+    {
+      runtime: { status: "failed" as const, body: "confirmed runtime failure \n", deliveryState: "confirmed" as const },
+      expected: { kind: "failed", body: "confirmed runtime failure \n", deliveryState: "confirmed" }
+    },
+    {
+      runtime: { status: "failed" as const, body: " unknown runtime delivery\n", deliveryState: "unknown" as const },
+      expected: { kind: "failed", body: " unknown runtime delivery\n", deliveryState: "unknown" }
+    }
+  ] as const
+  let attempt = 0
+  const services = createHiveServices({
+    database,
+    repository,
+    startCodexSyncWorker: false,
+    invokeAgent: async (input) => {
+      ingressInputs.push(input)
+      return { source: "simulated" as const, ...outcomes[attempt++]!.runtime }
+    }
+  })
+  let codexSyncReadCount = 0
+  const getCodexSession = repository.getCodexSession.bind(repository)
+  const listCodexSessions = repository.listCodexSessions.bind(repository)
+  repository.getCodexSession = (...args) => {
+    codexSyncReadCount += 1
+    return getCodexSession(...args)
+  }
+  repository.listCodexSessions = () => {
+    codexSyncReadCount += 1
+    return listCodexSessions()
+  }
+
+  for (const [index, expected] of outcomes.entries()) {
+    await submitUnboundAndDrain(services, {
+      conversationId: `conversation:lucky-runtime-outcome-${index}`,
+      targetAgent: "mavis",
+      content: `Lucky Runtime outcome ${index}`,
+      idempotencyKey: `lucky-runtime-outcome-${index}`
+    })
+    assert.deepEqual(settledOutcomes[index], expected.expected)
+  }
+
+  assert.equal(ingressInputs.length, outcomes.length)
+  assert.equal(codexSyncReadCount, 0)
+  for (const [index, input] of ingressInputs.entries()) {
+    assert.equal(input.executor, "mavis")
+    assert.equal(input.run.selectedAgent, "mavis")
+    assert.deepEqual(
+      {
+        stage: input.stage,
+        artifactType: input.artifactType,
+        title: input.title,
+        fallbackBody: input.fallbackBody,
+        conversationId: input.conversationId,
+        idempotencyKey: input.idempotencyKey,
+        conversationHistory: input.conversationHistory,
+        skill: input.skill
+      },
+      {
+        stage: "intake",
+        artifactType: "log",
+        title: "Direct conversation execution",
+        fallbackBody: `Lucky Runtime outcome ${index}`,
+        conversationId: `conversation:lucky-runtime-outcome-${index}`,
+        idempotencyKey: `conversation:lucky-runtime-outcome-${index}:lucky-runtime-outcome-${index}`,
+        conversationHistory: [{ role: "user", content: "[mavis] Lucky Runtime outcome " + index }],
+        skill: {
+          id: "conversation.direct_execution",
+          eventType: "requirement_intake",
+          stage: "intake",
+          name: "Direct conversation execution",
+          purpose: "Execute the authenticated operator request directly without requiring project or workflow binding.",
+          trigger: "The operator posted to the persistent unbound conversation.",
+          allowedActors: ["mavis"],
+          inputs: ["shareable conversation history", "latest operator message"],
+          outputs: ["agent response and requested execution results"],
+          constraints: ["Report tool results, side effects, and blockers accurately."],
+          gates: ["Server authentication and bridge authorization remain required."],
+          knowledgeSources: ["persisted conversation transcript"],
+          verificationRules: ["Preserve the conversation identity and return the direct response."]
+        }
+      }
+    )
+  }
+})
+
+test("Lucky Runtime outcome carries unknown delivery through a bound queued Turn", async (t) => {
+  const { database, repository } = await repositoryFixture(t)
+  let persistedRun = {
+    ...createRun("development"),
+    id: "conversation:lucky-runtime-bound"
+  } satisfies WorkflowRun
+  await repository.createConversation({
+    id: persistedRun.id,
+    title: "Bound Lucky Runtime carrier"
+  })
+  const settledOutcomes: unknown[] = []
+  const settleConversationTurn = repository.settleConversationTurn.bind(repository)
+  repository.settleConversationTurn = async (input) => {
+    settledOutcomes.push(input.outcome)
+    return await settleConversationTurn(input)
+  }
+  const exactBody = "  bound runtime failure \n"
+  const services = createHiveServices({
+    database,
+    repository,
+    startCodexSyncWorker: false,
+    getRun: async (id) => (id === persistedRun.id ? persistedRun : undefined),
+    saveRun: async (run) => {
+      persistedRun = run
+      return run
+    },
+    invokeAgent: async () => ({
+      status: "failed",
+      source: "simulated",
+      body: exactBody,
+      deliveryState: "unknown"
+    })
+  })
+
+  await services.conversation.enqueueMessage({
+    workflowRunId: persistedRun.id,
+    targetAgent: "mavis",
+    content: "Carry this bound delivery result.",
+    idempotencyKey: "lucky-runtime-bound-carrier"
+  })
+  await services.conversationDispatcher.drain(persistedRun.id)
+
+  assert.deepEqual(settledOutcomes, [{
+    kind: "failed",
+    body: exactBody,
+    deliveryState: "unknown"
+  }])
+})
+
 function installFetchMock(
   t: test.TestContext,
   handler: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>
