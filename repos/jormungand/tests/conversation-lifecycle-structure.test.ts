@@ -11,7 +11,6 @@ import type { AgentInvocationInput } from "../lib/agent-bridge"
 import type { AgentKind, WorkflowEventSkill } from "../lib/types"
 import {
   createConversationService,
-  type ConversationBinding,
   unboundConversationId
 } from "../lib/conversation"
 import { ConversationHistorySync } from "../lib/conversation-history-sync"
@@ -98,7 +97,7 @@ async function conversationFixture(t: test.TestContext) {
       ({
         status: "completed",
         body: "Still unbound"
-      }) satisfies { status: "completed"; body: string; binding?: ConversationBinding }
+      }) satisfies { status: "completed"; body: string }
   })
   return { repository, run, service }
 }

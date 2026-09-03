@@ -5,8 +5,7 @@ import { join } from "node:path"
 import test from "node:test"
 import {
   createConversationService,
-  listAllowedAgents,
-  parseUnboundManagerDecision
+  listAllowedAgents
 } from "../lib/conversation"
 import type { AgentInvocationInput } from "../lib/agent-bridge"
 import {
@@ -54,12 +53,9 @@ async function fixture(t: test.TestContext, options: {
     },
     persistRawArtifact: async () => "artifact-1",
     enqueueManagerWake: (input) => repository.enqueueManagerWake(input),
-    routeUnbound: async ({ targetAgent }) => ({
+    routeUnbound: async () => ({
       status: "completed",
-      body: "This belongs to Mission.",
-      binding: targetAgent === "codex"
-        ? { projectId: run.projectId, workflowRunId: run.id, projectName: run.projectName }
-        : undefined
+      body: "This remains unbound."
     })
   })
   t.after(async () => {
@@ -243,7 +239,7 @@ test("context failures retain the committed user entry as failed", async (t) => 
   assert.equal(repository.listConversation(run.id)[0]?.status, "failed")
 })
 
-test("unbound conversation is persisted and moved intact after manager binding", async (t) => {
+test("unbound conversation remains isolated after direct dispatch", async (t) => {
   const { repository, run, service } = await fixture(t)
   const conversationId = "conversation:33333333-3333-4333-8333-333333333333"
   assert.deepEqual((await service.getUnboundConversation(conversationId)).entries, [])
@@ -255,17 +251,8 @@ test("unbound conversation is persisted and moved intact after manager binding",
   })
 
   assert.equal(result.outcome.status, "completed")
-  assert.equal(repository.listConversation(conversationId).length, 0)
-  const movedEntries = repository.listConversation(run.id)
-  assert.equal(movedEntries.filter((entry) => entry.role === "user").length, 1)
-  assert.equal(movedEntries.filter((entry) => entry.role === "agent").length, 1)
-  const movedUser = movedEntries.find((entry) => entry.role === "user")
-  const movedAgent = movedEntries.find((entry) => entry.role === "agent")
-  assert.ok(movedUser)
-  assert.ok(movedAgent)
-  assert.equal(movedUser.workflowRunId, run.id)
-  assert.equal(movedAgent.workflowRunId, run.id)
-  assert.equal(movedAgent.replyToId, movedUser.id)
+  assert.equal(repository.listConversation(conversationId).length, 2)
+  assert.deepEqual(repository.listConversation(run.id), [])
 })
 
 test("unbound conversation exposes the registered roster and preserves its OpenClaw target", async (t) => {
@@ -507,15 +494,4 @@ test("createHiveServices retains the queued unbound model through the Codex brid
   assert.equal(repository.getConversationMetadata(conversationId)?.selectedModelId, "gpt-5.6-sol")
   await services.conversationDispatcher.drain(conversationId)
   assert.equal((observedRun as WorkflowRun | undefined)?.selectedModelId, "gpt-5.6-sol")
-})
-
-test("manager binding parser keeps ambiguous messages unbound and rejects invented targets", () => {
-  const run = createRun()
-  assert.deepEqual(
-    parseUnboundManagerDecision(JSON.stringify({ reply: "Which project do you mean?", projectId: null, workflowRunId: null }), [run]),
-    { body: "Which project do you mean?" }
-  )
-  assert.throws(() => parseUnboundManagerDecision(JSON.stringify({
-    reply: "Bound.", projectId: run.projectId, workflowRunId: "invented"
-  }), [run]), /invalid project or workflow run/)
 })

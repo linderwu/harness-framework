@@ -61,7 +61,7 @@ export function createHiveServices(options: HiveServicesOptions = {}) {
   const saveRun = options.saveRun ?? ((run) => upsertWorkflowRun(run, { expectedVersion: run.version }))
   const invokeAgent = options.invokeAgent ?? invokeConfiguredAgent
   const invokeManager = options.invokeManager ?? invokeConfiguredHiveManager
-  const dispatchWorker: NonNullable<ManagerSchedulerDependencies["dispatchWorker"]> = async ({ run, task, agentId }) => {
+  const dispatchWorker: NonNullable<ManagerSchedulerDependencies["dispatchWorker"]> = async function dispatchWorker({ run, task, agentId }) {
     const result = await invokeAgent({
       run,
       executor: agentId,

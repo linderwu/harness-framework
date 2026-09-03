@@ -101,7 +101,6 @@ interface ConversationDependencies {
     status: "completed" | "failed"
     body: string
     deliveryState?: ProviderDeliveryState
-    binding?: ConversationBinding
   }>
 }
 
@@ -380,37 +379,65 @@ export class ConversationService {
       : allEntries.slice(0, userIndex + 1)
     const run = await this.dependencies.getRun(conversationId)
     if (!run) {
-      if (!this.dependencies.routeUnbound) {
-        throw new ConversationError("Conversation manager is unavailable", 503)
-      }
-      const decision = await this.dependencies.routeUnbound({
+      return this.dispatchUnboundQueuedEntry({
         conversationId,
         targetAgent,
-        content: userEntry.content,
         entries: entriesThroughCurrent,
-        idempotencyKey: userEntry.idempotencyKey,
-        selectedModelId: targetAgent === "codex"
-          ? this.dependencies.repository.getConversationMetadata(conversationId)?.selectedModelId
-          : undefined,
-        selectedReasoningIntensity: targetAgent === "codex"
-          ? this.dependencies.repository.getConversationMetadata(conversationId)?.selectedReasoningIntensity
-          : undefined
+        userEntry
       })
-      if (targetAgent === "codex" && decision.binding) {
-        await this.dependencies.repository.moveConversation(conversationId, decision.binding.workflowRunId)
-      }
-      return {
-        status: decision.status,
-        body: decision.body,
-        ...(decision.deliveryState ? { deliveryState: decision.deliveryState } : {})
-      }
     }
 
+    return this.dispatchBoundQueuedEntry({
+      run,
+      targetAgent,
+      userEntry,
+      responseEntry,
+      entries: entriesThroughCurrent
+    })
+  }
+
+  private async dispatchUnboundQueuedEntry(input: {
+    conversationId: string
+    targetAgent: AgentKind
+    userEntry: ConversationEntry
+    entries: ConversationEntry[]
+  }): Promise<ConversationDispatchOutcome> {
+    if (!this.dependencies.routeUnbound) {
+      throw new ConversationError("Conversation manager is unavailable", 503)
+    }
+    const decision = await this.dependencies.routeUnbound({
+      conversationId: input.conversationId,
+      targetAgent: input.targetAgent,
+      content: input.userEntry.content,
+      entries: input.entries,
+      idempotencyKey: input.userEntry.idempotencyKey,
+      selectedModelId: input.targetAgent === "codex"
+        ? this.dependencies.repository.getConversationMetadata(input.conversationId)?.selectedModelId
+        : undefined,
+      selectedReasoningIntensity: input.targetAgent === "codex"
+        ? this.dependencies.repository.getConversationMetadata(input.conversationId)?.selectedReasoningIntensity
+        : undefined
+    })
+    return {
+      status: decision.status,
+      body: decision.body,
+      ...(decision.deliveryState ? { deliveryState: decision.deliveryState } : {})
+    }
+  }
+
+  private async dispatchBoundQueuedEntry(input: {
+    run: WorkflowRun
+    targetAgent: AgentKind
+    userEntry: ConversationEntry
+    responseEntry?: ConversationEntry
+    entries: ConversationEntry[]
+  }): Promise<ConversationDispatchOutcome> {
+    const { run, targetAgent, userEntry, responseEntry, entries } = input
     const managerRouting = run.projectType === "hive_mission" && targetAgent === "codex"
     const contextPack = await this.dependencies.buildContext({
       run,
       targetAgent,
-      entries: entriesThroughCurrent,
+      entries,
       content: userEntry.content
     })
     await this.dependencies.repository.updateConversation({
@@ -475,34 +502,6 @@ export class ConversationService {
 
 export function createConversationService(dependencies: ConversationDependencies) {
   return new ConversationService(dependencies)
-}
-
-export function parseUnboundManagerDecision(raw: string, runs: WorkflowRun[]) {
-  let value: unknown
-  try {
-    value = JSON.parse(raw)
-  } catch {
-    throw new Error("Conversation manager response must be one valid JSON object.")
-  }
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error("Conversation manager response must be one valid JSON object.")
-  }
-  const decision = value as Record<string, unknown>
-  if (typeof decision.reply !== "string" || !decision.reply.trim()) {
-    throw new Error("Conversation manager response requires a reply.")
-  }
-  const projectId = typeof decision.projectId === "string" ? decision.projectId : undefined
-  const workflowRunId = typeof decision.workflowRunId === "string" ? decision.workflowRunId : undefined
-  if (!projectId && !workflowRunId) return { body: decision.reply.trim() }
-  if (!projectId || !workflowRunId) {
-    throw new Error("Conversation manager must provide both projectId and workflowRunId when binding.")
-  }
-  const run = runs.find((candidate) => candidate.id === workflowRunId && candidate.projectId === projectId)
-  if (!run) throw new Error("Conversation manager selected an invalid project or workflow run.")
-  return {
-    body: decision.reply.trim(),
-    binding: { projectId: run.projectId, workflowRunId: run.id, projectName: run.projectName }
-  }
 }
 
 function parseUnboundSelectedModelId(value: unknown): string | null | undefined {
