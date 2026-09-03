@@ -243,6 +243,23 @@ test("Agent Card route declares protocolVersion 0.3, JSON-RPC endpoint, auth req
   })
 })
 
+test("Agent Card advertises the forwarded public origin behind a reverse proxy", async () => {
+  const routeModule = await importAgentCardRoute()
+  const handlers = routeModule.createAgentCardRouteHandlers?.() ?? routeModule
+  const response = await handlers.GET(
+    new Request("http://localhost:8080/.well-known/agent-card.json", {
+      headers: {
+        "x-forwarded-host": "jormungand.zeabur.app",
+        "x-forwarded-proto": "https"
+      }
+    })
+  )
+  const body = await readJson(response)
+
+  assert.equal(response.status, 200)
+  assert.equal(body.jsonrpcEndpoint, "https://jormungand.zeabur.app/api/a2a")
+})
+
 test("A2A routes require a matching bearer token when JORMUNGAND_A2A_TOKEN is set and ignore query-string tokens", async (t) => {
   restoreEnv(t, "JORMUNGAND_A2A_TOKEN")
   process.env.JORMUNGAND_A2A_TOKEN = "top-secret-a2a-token"

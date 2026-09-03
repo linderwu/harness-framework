@@ -53,7 +53,7 @@ const sharedContexts = new WeakMap<HiveMemoryRepository, A2ASharedContext>()
 export function createAgentCardRouteHandlers() {
   return {
     GET: async (request: Request) => {
-      const origin = new URL(request.url).origin
+      const origin = resolvePublicRequestOrigin(request)
       return NextResponse.json({
         protocolVersion: "0.3",
         jsonrpcEndpoint: `${origin}/api/a2a`,
@@ -83,6 +83,38 @@ export function createAgentCardRouteHandlers() {
       })
     }
   }
+}
+
+function resolvePublicRequestOrigin(request: Request) {
+  const fallback = new URL(request.url)
+  const forwardedHost = firstForwardedValue(request.headers.get("x-forwarded-host"))
+  if (!forwardedHost) return fallback.origin
+
+  const forwardedProtocol = firstForwardedValue(request.headers.get("x-forwarded-proto"))?.toLowerCase()
+  const protocol = forwardedProtocol === "http" || forwardedProtocol === "https"
+    ? forwardedProtocol
+    : fallback.protocol.slice(0, -1)
+
+  try {
+    const forwarded = new URL(`${protocol}://${forwardedHost}`)
+    if (
+      forwarded.username
+      || forwarded.password
+      || forwarded.pathname !== "/"
+      || forwarded.search
+      || forwarded.hash
+    ) {
+      return fallback.origin
+    }
+    return forwarded.origin
+  } catch {
+    return fallback.origin
+  }
+}
+
+function firstForwardedValue(value: string | null) {
+  const first = value?.split(",", 1)[0]?.trim()
+  return first || undefined
 }
 
 export function createA2ARouteHandlers(dependencies: A2ARouteDependencies = {}) {
