@@ -3,6 +3,7 @@ import test from "node:test"
 
 import {
   extractReasoningText,
+  MAX_AGENT_LIVE_DETAILS_CHARS,
   MAX_AGENT_LIVE_TEXT,
   normalizeAgentLiveEvent
 } from "../lib/agent-live-events"
@@ -88,7 +89,7 @@ test("keeps bounded OpenClaw response details without returning the final visibl
     conversationId: "conversation-1",
     agentId: "openclaw.rowlet",
     type: "completed",
-    details: { oversized: "x".repeat(70_000) }
+    details: { oversized: "x".repeat(MAX_AGENT_LIVE_DETAILS_CHARS + 1) }
   })
   const boundedDetails = (boundedEvent as typeof boundedEvent & {
     details?: Record<string, unknown>
