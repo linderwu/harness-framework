@@ -126,7 +126,7 @@ function installLiveHooks(t: TestContext) {
   return bus
 }
 
-test("publishes started reasoning and completed before the final OpenClaw POST resolves", { concurrency: false }, async (t) => {
+test("OpenClaw outcome publishes live terminal events outside TX3 before the final POST resolves", { concurrency: false }, async (t) => {
   restoreEnv(t, "OPENCLAW_BRIDGE_URL")
   process.env.OPENCLAW_BRIDGE_URL = "http://openclaw.test"
 

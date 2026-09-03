@@ -469,7 +469,11 @@ async function routeDirectOpenClawConversation(input: {
       bootstrapDelivered: persistedRuntime?.bootstrapDelivered ?? false,
       lastDeliveredEntryId: persistedRuntime?.lastDeliveredEntryId
     })
-    return { status: "failed" as const, body: result.body }
+    return {
+      status: "failed" as const,
+      body: result.body,
+      deliveryState: result.deliveryState
+    }
   }
 
   if (result.status === "failed") {
@@ -482,7 +486,11 @@ async function routeDirectOpenClawConversation(input: {
       bootstrapDelivered: persistedRuntime?.bootstrapDelivered ?? false,
       lastDeliveredEntryId: persistedRuntime?.lastDeliveredEntryId
     })
-    return { status: "failed" as const, body: result.body }
+    return {
+      status: "failed" as const,
+      body: result.body,
+      ...(result.deliveryState ? { deliveryState: result.deliveryState } : {})
+    }
   }
 
   await input.repository.upsertOpenClawRuntimeSession({
@@ -495,5 +503,9 @@ async function routeDirectOpenClawConversation(input: {
     lastDeliveredEntryId: currentUserEntryId
   })
 
-  return { status: "completed" as const, body: result.body }
+  return {
+    status: "completed" as const,
+    body: result.body,
+    ...(result.deliveryState ? { deliveryState: result.deliveryState } : {})
+  }
 }

@@ -262,6 +262,67 @@ test("Lucky Runtime outcome carries unknown delivery through a bound queued Turn
   }])
 })
 
+test("OpenClaw outcomes reach TX3 settlement after session and recovery decisions", async (t) => {
+  const { database, repository } = await repositoryFixture(t)
+  const settledOutcomes: unknown[] = []
+  const settleConversationTurn = repository.settleConversationTurn.bind(repository)
+  repository.settleConversationTurn = async (input) => {
+    settledOutcomes.push(input.outcome)
+    return await settleConversationTurn(input)
+  }
+  const outcomes = [
+    {
+      runtime: { status: "completed" as const, body: "confirmed OpenClaw completion" },
+      expected: { kind: "completed", body: "confirmed OpenClaw completion", deliveryState: "confirmed" }
+    },
+    {
+      runtime: {
+        status: "failed" as const,
+        body: "confirmed OpenClaw Runtime failure \n",
+        deliveryState: "confirmed" as const
+      },
+      expected: {
+        kind: "failed",
+        body: "confirmed OpenClaw Runtime failure \n",
+        deliveryState: "confirmed"
+      }
+    },
+    {
+      runtime: {
+        status: "failed" as const,
+        body: " ambiguous OpenClaw delivery\n",
+        deliveryState: "unknown" as const
+      },
+      expected: {
+        kind: "failed",
+        body: " ambiguous OpenClaw delivery\n",
+        deliveryState: "unknown"
+      }
+    }
+  ] as const
+  let attempt = 0
+  const services = createHiveServices({
+    database,
+    repository,
+    startCodexSyncWorker: false,
+    invokeAgent: async () => ({ source: "simulated" as const, ...outcomes[attempt++]!.runtime })
+  })
+
+  for (const [index, outcome] of outcomes.entries()) {
+    const submitted = await submitUnboundAndDrain(services, {
+      conversationId: `conversation:openclaw-outcome-${index}`,
+      targetAgent: "openclaw.gengar",
+      content: `OpenClaw outcome ${index}`,
+      idempotencyKey: `openclaw-outcome-${index}`
+    })
+    assert.equal(submitted.userEntry.status, outcome.expected.kind)
+    assert.equal(submitted.responseEntry.status, outcome.expected.kind)
+    assert.equal(services.repository.getExecutionJob(submitted.jobId)?.status, outcome.expected.kind)
+  }
+
+  assert.deepEqual(settledOutcomes, outcomes.map((outcome) => outcome.expected))
+})
+
 function installFetchMock(
   t: test.TestContext,
   handler: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>
@@ -1700,7 +1761,7 @@ test("unbound OpenClaw direct routing keeps bootstrap pending after failed first
   assert.equal(afterRetry?.lastDeliveredEntryId, retriedTurn.userEntry.id)
 })
 
-test("unbound OpenClaw direct routing records ambiguous first delivery without retrying it", async (t) => {
+test("unbound OpenClaw direct routing records ambiguous delivery on the first attempt without retrying it", async (t) => {
   const { database, repository } = await repositoryFixture(t)
   const capturedInputs: AgentInvocationInput[] = []
   const services = createHiveServices({
@@ -1730,6 +1791,7 @@ test("unbound OpenClaw direct routing records ambiguous first delivery without r
     content: "The first request may have been accepted.",
     idempotencyKey: "conversation:ambiguous-first:request"
   })
+  const job = repository.getExecutionJob(first.jobId)
   const runtime = repository.getOpenClawRuntimeSession(
     "conversation:ambiguous-first",
     "openclaw.gengar"
@@ -1737,13 +1799,21 @@ test("unbound OpenClaw direct routing records ambiguous first delivery without r
 
   assert.equal(first.userEntry.status, "failed")
   assert.equal(duplicate.userEntry.id, first.userEntry.id)
+  assert.equal(duplicate.responseEntry.id, first.responseEntry.id)
+  assert.equal(duplicate.jobId, first.jobId)
+  assert.equal(job?.status, "failed")
+  assert.deepEqual(JSON.parse(job?.resultJson ?? "{}"), {
+    status: "failed",
+    responseEntryId: first.responseEntry.id,
+    deliveryState: "unknown"
+  })
   assert.equal(capturedInputs.length, 1)
   assert.equal(runtime?.state, "delivery_unknown")
   assert.equal(runtime?.bootstrapDelivered, false)
   assert.equal(runtime?.lastDeliveredEntryId, undefined)
 })
 
-test("unbound OpenClaw direct routing preserves the cursor after ambiguous later delivery", async (t) => {
+test("unbound OpenClaw direct routing preserves the cursor after ambiguous delivery on a later attempt", async (t) => {
   const { database, repository } = await repositoryFixture(t)
   const capturedInputs: AgentInvocationInput[] = []
   let attempt = 0

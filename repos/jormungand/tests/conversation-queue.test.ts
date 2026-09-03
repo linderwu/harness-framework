@@ -318,6 +318,54 @@ test("dispatcher settles a Runtime throw through TX3 before a failed post-commit
   assert.equal(publications.length, 1)
 })
 
+test("ambiguous delivery settles terminally before its post-TX3 publication", async (t) => {
+  const { repository } = await tx2Fixture(t)
+  const conversationId = "conversation:tx3-ambiguous-delivery"
+  await repository.createConversation({ id: conversationId, title: "TX3 ambiguous delivery" })
+  const submitted = await repository.submitConversationTurn({
+    conversationId,
+    targetAgent: "openclaw.gengar",
+    content: "OpenClaw may have accepted this request.",
+    idempotencyKey: "ambiguous-delivery",
+    responseRole: "agent"
+  })
+  const publishedJobStates: string[] = []
+  let invocationCount = 0
+  const dispatcher = new ConversationDispatcher(
+    repository,
+    async () => {
+      invocationCount += 1
+      return {
+        status: "failed" as const,
+        body: "OpenClaw delivery is ambiguous.",
+        deliveryState: "unknown" as const
+      }
+    },
+    (settled) => {
+      publishedJobStates.push(repository.getExecutionJob(settled.jobId)?.status ?? "missing")
+    }
+  )
+
+  await dispatcher.drain(conversationId)
+  await dispatcher.drain(conversationId)
+
+  assert.equal(invocationCount, 1)
+  assert.deepEqual(
+    repository.listConversation(conversationId).map((entry) => [entry.status, entry.content]),
+    [
+      ["failed", "OpenClaw may have accepted this request."],
+      ["failed", "OpenClaw delivery is ambiguous."]
+    ]
+  )
+  assert.equal(repository.getExecutionJob(submitted.jobId)?.status, "failed")
+  assert.deepEqual(JSON.parse(repository.getExecutionJob(submitted.jobId)?.resultJson ?? "{}"), {
+    status: "failed",
+    responseEntryId: submitted.responseEntryId,
+    deliveryState: "unknown"
+  })
+  assert.deepEqual(publishedJobStates, ["failed"])
+})
+
 test("dispatcher returns safely when settlement loses its live lease to another owner", async (t) => {
   const { database, repository } = await tx2Fixture(t)
   const conversationId = "conversation:tx3-settlement-lost-owner"
