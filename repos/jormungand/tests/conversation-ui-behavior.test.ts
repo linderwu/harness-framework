@@ -230,6 +230,90 @@ test("conversation manager helpers use the list, new, rename, and archive routes
   assert.equal(restored.state, "active")
 })
 
+test("conversation requests preserve the browser receiver for native fetch", async () => {
+  const taskConversationModule = await loadTaskConversationModule()
+  const requestConversationSummaries = Reflect.get(taskConversationModule, "requestConversationSummaries") as
+    | ((fetchImpl: typeof fetch) => Promise<unknown>)
+    | undefined
+  const runConversationHydration = Reflect.get(taskConversationModule, "runConversationHydration") as
+    | ((input: Record<string, unknown>) => Promise<unknown>)
+    | undefined
+  const runConversationControl = Reflect.get(taskConversationModule, "runConversationControl") as
+    | ((input: Record<string, unknown>) => Promise<void>)
+    | undefined
+  const requestConversationDeletion = Reflect.get(taskConversationModule, "requestConversationDeletion") as
+    | ((fetchImpl: typeof fetch, conversationId: string) => Promise<void>)
+    | undefined
+
+  assert.equal(typeof requestConversationSummaries, "function")
+  assert.equal(typeof runConversationHydration, "function")
+  assert.equal(typeof runConversationControl, "function")
+  assert.equal(typeof requestConversationDeletion, "function")
+  if (!requestConversationSummaries || !runConversationHydration || !runConversationControl || !requestConversationDeletion) {
+    throw new Error("Conversation request helpers were not exported")
+  }
+
+  const receivers: unknown[] = []
+  const strictBrowserFetch = async function (
+    this: unknown,
+    input: RequestInfo | URL,
+    init?: RequestInit
+  ) {
+    receivers.push(this)
+    if (this !== globalThis) throw new TypeError("Illegal invocation")
+
+    const path = String(input)
+    if (path === "/api/conversations") {
+      return jsonResponse({ conversations: [] })
+    }
+    if (path === "/api/conversation") {
+      return jsonResponse({ conversationId: "conversation:receiver", entries: [] })
+    }
+    if (path === "/api/conversation/control") {
+      return jsonResponse({ conversationId: "conversation:receiver", entries: [], events: [] })
+    }
+    if (path === "/api/conversations/conversation:receiver" && init?.method === "DELETE") {
+      return new Response(null, { status: 204 })
+    }
+    throw new Error(`Unexpected fetch: ${path}`)
+  } as typeof fetch
+
+  await requestConversationSummaries(strictBrowserFetch)
+
+  let entries: ConversationEntry[] = []
+  const commitEntries = (reconcile: (current: ConversationEntry[]) => ConversationEntry[]) => {
+    entries = reconcile(entries)
+    return entries
+  }
+  await runConversationHydration({
+    path: "/api/conversation",
+    requireConversationId: true,
+    generation: 1,
+    getCurrentGeneration: () => 1,
+    commitEntries,
+    fetchImpl: strictBrowserFetch,
+    onEntriesChanged: () => undefined
+  })
+  await runConversationControl({
+    action: "stop",
+    conversationId: "conversation:receiver",
+    commitEntries,
+    generation: 1,
+    getCurrentGeneration: () => 1,
+    fetchImpl: strictBrowserFetch,
+    setConversationId: () => undefined,
+    setSession: () => undefined,
+    setEvents: () => undefined,
+    setError: () => undefined,
+    setStatusMessage: () => undefined,
+    onEntriesChanged: () => undefined
+  })
+  await requestConversationDeletion(strictBrowserFetch, "conversation:receiver")
+
+  assert.equal(receivers.length, 4)
+  assert.equal(receivers.every((receiver) => receiver === globalThis), true)
+})
+
 test("unbound Codex model persistence targets the current conversation", async () => {
   const taskConversationModule = await loadTaskConversationModule()
   const requestConversationModel = Reflect.get(taskConversationModule, "requestConversationModel") as

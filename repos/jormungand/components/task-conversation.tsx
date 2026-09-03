@@ -268,7 +268,7 @@ export async function runConversationControl(input: ConversationControlInput) {
   input.setStatusMessage(undefined)
 
   try {
-    const response = await input.fetchImpl("/api/conversation/control", {
+    const response = await callFetch(input.fetchImpl, "/api/conversation/control", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action: input.action, conversationId: input.conversationId })
@@ -304,7 +304,7 @@ export async function runConversationControl(input: ConversationControlInput) {
 }
 
 export async function runConversationHydration(input: ConversationHydrationInput) {
-  const response = await input.fetchImpl(input.path, { cache: "no-store" })
+  const response = await callFetch(input.fetchImpl, input.path, { cache: "no-store" })
   const data = await response.json() as ConversationLoadResult
   if (!response.ok) throw new Error(data.error ?? "Conversation could not be loaded")
   if (input.requireConversationId && !data.conversationId) {
@@ -1650,7 +1650,7 @@ export async function requestConversationDeletion(
   fetchImpl: typeof fetch,
   conversationId: string
 ) {
-  const response = await fetchImpl(`/api/conversations/${conversationId}`, {
+  const response = await callFetch(fetchImpl, `/api/conversations/${conversationId}`, {
     method: "DELETE",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ confirm: true })
@@ -1726,10 +1726,18 @@ async function requestJson<T, TResult = T>(
   fallbackError: string,
   select?: (result: T, response: Response) => TResult
 ): Promise<TResult> {
-  const response = await fetchImpl(input, init)
+  const response = await callFetch(fetchImpl, input, init)
   const result = await response.json().catch(() => ({})) as T & { error?: string }
   if (!response.ok) {
     throw new Error(result.error ?? fallbackError)
   }
   return select ? select(result, response) : result as unknown as TResult
+}
+
+function callFetch(
+  fetchImpl: typeof fetch,
+  input: RequestInfo | URL,
+  init?: RequestInit
+) {
+  return fetchImpl.call(globalThis, input, init)
 }
