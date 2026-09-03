@@ -37,6 +37,8 @@ import { createWorkflowRun } from "../lib/workflow"
 
 const openClawBridgeSource = readFileSync("scripts/openclaw-bridge.mjs", "utf8")
 const agentBridgeSource = readFileSync("lib/agent-bridge.ts", "utf8")
+const conversationsRouteSource = readFileSync("app/api/conversations/route.ts", "utf8")
+const conversationDetailRouteSource = readFileSync("app/api/conversations/[id]/route.ts", "utf8")
 
 interface ConversationSummary {
   conversationId: string
@@ -446,6 +448,15 @@ async function loadOpenClawSessionHelper() {
 }
 
 describe("conversation route contracts", { concurrency: false }, () => {
+  test("conversation management route factories inject the shared lifecycle", () => {
+    for (const routeSource of [conversationsRouteSource, conversationDetailRouteSource]) {
+      assert.match(
+        routeSource,
+        /repository: services\.repository,\s+lifecycle: services\.conversationLifecycle,/s
+      )
+    }
+  })
+
   test("conversation GET returns a conversation id for durable client continuity", async (t) => {
     const { GET: getConversationRoute } = await importRouteWithIsolatedDataDir<{
       GET: () => Promise<Response>
@@ -705,6 +716,21 @@ describe("conversation route contracts", { concurrency: false }, () => {
     assert.equal(newResponse.status, 400)
     assert.equal(collectionResponse.status, 400)
     assert.deepEqual(newBody, collectionBody)
+  })
+
+  test("conversations collection POST rejects an explicit null title with the established JSON", async (t) => {
+    const { POST } = await importRouteWithIsolatedDataDir<{
+      POST: (request: Request) => Promise<Response>
+    }>(t, "../app/api/conversations/route")
+
+    const response = await POST(new Request("http://localhost/api/conversations", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title: null })
+    }))
+
+    assert.equal(response.status, 400)
+    assert.deepEqual(await response.json(), { error: "title must be a string." })
   })
 
   test("queued POST and duplicate submission retain stable response identities", async (t) => {

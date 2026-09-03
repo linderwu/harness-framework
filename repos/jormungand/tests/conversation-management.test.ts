@@ -4,7 +4,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
 import { setTimeout as delay } from "node:timers/promises"
-import type {} from "../lib/conversation-management"
+import { ConversationLifecycleService } from "../lib/conversation-lifecycle/service"
 import { CodexConversationError } from "../lib/codex-conversation"
 import { legacyConversationId } from "../lib/conversation-identity"
 import { openHiveDatabase } from "../lib/hive-memory/database"
@@ -84,6 +84,8 @@ interface ConversationManagementService {
     conversationId: string
     title?: unknown
     state?: unknown
+    selectedModelId?: unknown
+    selectedReasoningIntensity?: unknown
   }): Promise<ConversationSummary>
   deleteConversation(input: {
     conversationId: string
@@ -116,10 +118,31 @@ async function loadConversationManagementModule() {
   return await import("../lib/conversation-management") as {
     createConversationManagementService?: (dependencies: {
       repository: ConversationManagementRepository
+      lifecycle: ConversationManagementLifecycle
       stopSession: (conversationId: string) => Promise<void>
       renameNativeThread?: (conversationId: string, title: string) => Promise<void>
+      setNativeThreadState?: (conversationId: string, state: ConversationState) => Promise<void>
+      deleteNativeThread?: (conversationId: string) => Promise<void>
     }) => ConversationManagementService
   }
+}
+
+interface ConversationManagementLifecycle {
+  createConversation(input: { conversationId: string; title: string }): Promise<ConversationMetadata>
+  validateConversationTitle(value: unknown): string
+  updateConversationSettings(input: {
+    conversationId: string
+    selectedModelId?: string | null
+    selectedReasoningIntensity?: ConversationMetadata["selectedReasoningIntensity"] | null
+  }): Promise<ConversationMetadata>
+  renameConversation(input: { conversationId: string; title: string }): Promise<ConversationMetadata>
+  setConversationState(input: {
+    conversationId: string
+    state: ConversationState
+  }): Promise<ConversationMetadata>
+  validateConversationState(value: unknown): ConversationState
+  cancelPendingTurns(conversationId: string): Promise<number>
+  deleteConversation(input: { conversationId: string }): Promise<void>
 }
 
 test("conversation metadata can be created, listed, renamed, archived, and restored", async (t) => {
@@ -475,6 +498,7 @@ test("conversation management service validates updates, allows running state ch
   )
   const service = conversationManagementModule.createConversationManagementService!({
     repository,
+    lifecycle: new ConversationLifecycleService(repository),
     stopSession: async () => undefined
   })
   const conversationId = "conversation:77777777-7777-4777-8777-777777777777"
@@ -534,6 +558,150 @@ test("conversation management service validates updates, allows running state ch
   )
 })
 
+test("conversation management lifecycle commands own every local management write", async () => {
+  const conversationId = "conversation:dddddddd-dddd-4ddd-8ddd-dddddddddddd"
+  let metadata: ConversationMetadata = {
+    conversationId,
+    title: "Managed conversation",
+    state: "active",
+    createdAt: "2026-09-02T00:00:00.000Z",
+    updatedAt: "2026-09-02T00:00:00.000Z"
+  }
+  let summary: ConversationSummary = {
+    conversationId,
+    title: metadata.title,
+    state: metadata.state,
+    messageCount: 0
+  }
+  const events: string[] = []
+  const lifecycle: ConversationManagementLifecycle = {
+    createConversation: async ({ conversationId: createdConversationId, title }) => {
+      events.push("lifecycle:create")
+      return {
+        ...metadata,
+        conversationId: createdConversationId,
+        title
+      }
+    },
+    validateConversationTitle: (value) => {
+      events.push("lifecycle:validate-title")
+      assert.equal(value, "Renamed")
+      return "Renamed"
+    },
+    updateConversationSettings: async (input) => {
+      events.push("lifecycle:settings")
+      metadata = {
+        ...metadata,
+        ...(input.selectedModelId === undefined
+          ? {}
+          : { selectedModelId: input.selectedModelId ?? undefined }),
+        ...(input.selectedReasoningIntensity === undefined
+          ? {}
+          : { selectedReasoningIntensity: input.selectedReasoningIntensity ?? undefined })
+      }
+      summary = { ...summary, ...metadata }
+      return metadata
+    },
+    renameConversation: async ({ title }) => {
+      events.push("lifecycle:rename")
+      metadata = { ...metadata, title }
+      summary = { ...summary, title }
+      return metadata
+    },
+    validateConversationState: (value) => {
+      assert.ok(value === "active" || value === "archived")
+      events.push(`lifecycle:validate-state:${value}`)
+      return value
+    },
+    setConversationState: async ({ state }) => {
+      events.push(`lifecycle:state:${state}`)
+      metadata = { ...metadata, state }
+      summary = { ...summary, state }
+      return metadata
+    },
+    cancelPendingTurns: async () => {
+      events.push("lifecycle:cancel")
+      return 0
+    },
+    deleteConversation: async () => {
+      events.push("lifecycle:delete")
+    }
+  }
+  const coreWrites = new Set([
+    "createConversation",
+    "updateConversationProfile",
+    "renameConversation",
+    "setConversationState",
+    "deleteConversation",
+    "cancelQueuedConversationDispatches"
+  ])
+  const repository = new Proxy({
+    getConversationMetadata: () => {
+      events.push("validate")
+      return metadata
+    },
+    getCodexSession: () => ({ conversationId }),
+    listConversationSummaries: () => [summary]
+  }, {
+    get(target, property, receiver) {
+      if (typeof property === "string" && coreWrites.has(property)) {
+        return () => {
+          throw new Error(`management bypassed lifecycle through ${property}`)
+        }
+      }
+      return Reflect.get(target, property, receiver)
+    }
+  }) as unknown as ConversationManagementRepository
+  const { createConversationManagementService } = await loadConversationManagementModule()
+  assert.equal(typeof createConversationManagementService, "function")
+  const service = createConversationManagementService!({
+    repository,
+    lifecycle,
+    stopSession: async () => {
+      events.push("native:stop")
+    },
+    renameNativeThread: async () => {
+      events.push("native:rename")
+    },
+    setNativeThreadState: async (_conversationId, state) => {
+      events.push(`native:state:${state}`)
+    },
+    deleteNativeThread: async () => {
+      events.push("native:delete")
+    }
+  })
+
+  await service.createConversation({ title: "New managed conversation" })
+  await service.updateConversation({ conversationId, selectedModelId: "gpt-5.6-sol" })
+  await service.updateConversation({ conversationId, title: "Renamed" })
+  await service.updateConversation({ conversationId, state: "archived" })
+  await service.updateConversation({ conversationId, state: "active" })
+  await service.deleteConversation({ conversationId, confirm: true })
+
+  assert.deepEqual(events, [
+    "lifecycle:create",
+    "validate",
+    "lifecycle:settings",
+    "validate",
+    "lifecycle:validate-title",
+    "native:rename",
+    "lifecycle:rename",
+    "validate",
+    "lifecycle:validate-state:archived",
+    "native:state:archived",
+    "lifecycle:state:archived",
+    "validate",
+    "lifecycle:validate-state:active",
+    "native:state:active",
+    "lifecycle:state:active",
+    "validate",
+    "lifecycle:cancel",
+    "native:delete",
+    "native:stop",
+    "lifecycle:delete"
+  ])
+})
+
 test("native rename succeeds before local failure and native failure stops local rename", async (t) => {
   const repository = await createRepositoryFixture(t)
   const conversationManagementModule = await loadConversationManagementModule()
@@ -552,6 +720,7 @@ test("native rename succeeds before local failure and native failure stops local
   }
   const localFailureService = conversationManagementModule.createConversationManagementService!({
     repository,
+    lifecycle: new ConversationLifecycleService(repository),
     stopSession: async () => undefined,
     renameNativeThread: async (conversationId, title) => {
       nativeRenameCalls += 1
@@ -582,6 +751,7 @@ test("native rename succeeds before local failure and native failure stops local
   }
   const nativeFailureService = conversationManagementModule.createConversationManagementService!({
     repository,
+    lifecycle: new ConversationLifecycleService(repository),
     stopSession: async () => undefined,
     renameNativeThread: async () => {
       throw new Error("native rename failed")
@@ -612,6 +782,7 @@ test("conversation management service does not delete rows when stopSession fail
   )
   const service = conversationManagementModule.createConversationManagementService!({
     repository,
+    lifecycle: new ConversationLifecycleService(repository),
     stopSession: async () => {
       throw new Error("bridge stop refused")
     }
@@ -640,11 +811,10 @@ test("conversation management service does not delete rows when stopSession fail
   await assert.rejects(
     service.deleteConversation({ conversationId, confirm: true }),
     (error: unknown) =>
-      typeof error === "object" &&
-      error !== null &&
+      error instanceof Error &&
       "status" in error &&
-      typeof (error as { status?: number }).status === "number" &&
-      (error as { status: number }).status >= 500
+      (error as Error & { status?: number }).status === 502 &&
+      error.message === "Conversation session could not be stopped."
   )
   assert.ok(repository.getConversationMetadata(conversationId))
   assert.equal(repository.listConversation(conversationId).length, 1)
@@ -661,6 +831,7 @@ test("conversation management service preserves known Codex stop errors", async 
   )
   const service = conversationManagementModule.createConversationManagementService!({
     repository,
+    lifecycle: new ConversationLifecycleService(repository),
     stopSession: async () => {
       throw new CodexConversationError("Codex bridge is unavailable.", 503)
     }
@@ -696,5 +867,43 @@ test("conversation management service preserves known Codex stop errors", async 
   )
   assert.ok(repository.getConversationMetadata(conversationId))
   assert.equal(repository.listConversation(conversationId).length, 1)
+  assert.ok(repository.getCodexSession(conversationId))
+})
+
+test("conversation management service preserves status-bearing stop errors across module boundaries", async (t) => {
+  const repository = await createRepositoryFixture(t)
+  const conversationManagementModule = await loadConversationManagementModule()
+  assert.equal(
+    typeof conversationManagementModule.createConversationManagementService,
+    "function",
+    "lib/conversation-management.ts must export createConversationManagementService()."
+  )
+  const service = conversationManagementModule.createConversationManagementService!({
+    repository,
+    lifecycle: new ConversationLifecycleService(repository),
+    stopSession: async () => {
+      throw Object.assign(new Error("dynamic bridge outage"), { status: 503 })
+    }
+  })
+  const conversationId = "conversation:99999999-9999-4999-8999-999999999997"
+
+  await repository.createConversation({ id: conversationId, title: "Preserve dynamic stop error" })
+  await repository.upsertCodexSession({
+    conversationId,
+    bridgeSessionId: "bridge-delete-dynamic-error",
+    codexThreadId: "thread-delete-dynamic-error",
+    status: "idle",
+    turnStatus: "completed"
+  })
+
+  await assert.rejects(
+    service.deleteConversation({ conversationId, confirm: true }),
+    (error: unknown) =>
+      error instanceof Error &&
+      "status" in error &&
+      (error as Error & { status?: number }).status === 503 &&
+      error.message === "dynamic bridge outage"
+  )
+  assert.ok(repository.getConversationMetadata(conversationId))
   assert.ok(repository.getCodexSession(conversationId))
 })

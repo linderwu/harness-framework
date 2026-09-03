@@ -58,6 +58,7 @@ function getConversationManagementService() {
   const services = getDefaultHiveServices()
   return createConversationManagementService({
     repository: services.repository,
+    lifecycle: services.conversationLifecycle,
     stopSession: (conversationId) =>
       stopCodexConversationSession(services.repository, conversationId),
     renameNativeThread: (conversationId, title) =>
@@ -65,9 +66,7 @@ function getConversationManagementService() {
     setNativeThreadState: (conversationId, state) =>
       setCodexConversationThreadState(services.repository, conversationId, state),
     deleteNativeThread: (conversationId) =>
-      deleteCodexConversationThread(services.repository, conversationId),
-    cancelQueuedMessages: (conversationId) =>
-      services.conversationQueue.cancelPending(conversationId)
+      deleteCodexConversationThread(services.repository, conversationId)
   })
 }
 

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
 import { createConversationManagementService } from "../lib/conversation-management"
+import { ConversationLifecycleService } from "../lib/conversation-lifecycle/service"
 import { openHiveDatabase } from "../lib/hive-memory/database"
 import { createHiveMemoryRepository } from "../lib/hive-memory/repository"
 
@@ -23,6 +24,7 @@ test("conversation lifecycle mirrors rename, archive, and delete to native Codex
   const calls: string[] = []
   const service = createConversationManagementService({
     repository,
+    lifecycle: new ConversationLifecycleService(repository),
     stopSession: async () => { calls.push("stop") },
     renameNativeThread: async (id: string, title: string) => { calls.push(`rename:${id}:${title}`) },
     setNativeThreadState: async (id: string, state: "active" | "archived") => { calls.push(`state:${id}:${state}`) },

@@ -8,6 +8,7 @@ import {
 import type {
   ConversationEntry,
   ConversationMetadata,
+  ConversationState,
   ExecutionJobStatus
 } from "../hive-memory/types"
 import type { CodexReasoningIntensity } from "../types"
@@ -48,6 +49,10 @@ export type ConversationLifecycleCommandErrorCode =
   | "conversation_not_active"
   | "incomplete_turn_record"
   | "conversation_settings_required"
+  | "invalid_conversation_title"
+  | "invalid_conversation_state"
+  | "invalid_selected_model_id"
+  | "invalid_selected_reasoning_intensity"
 
 export class ConversationLifecycleCommandError extends Error {
   constructor(
@@ -63,25 +68,62 @@ export class ConversationLifecycleCommandError extends Error {
 export class ConversationLifecycleService implements ConversationLifecyclePort {
   constructor(private readonly repository: ConversationLifecycleRepository) {}
 
+  validateConversationTitle(value: unknown): string {
+    if (typeof value !== "string") {
+      throw new ConversationLifecycleCommandError(
+        "invalid_conversation_title",
+        400,
+        "title must be a string."
+      )
+    }
+    const title = value.trim().replaceAll(/\s+/g, " ")
+    if (!title || title.length > 80) {
+      throw new ConversationLifecycleCommandError(
+        "invalid_conversation_title",
+        400,
+        "title must be between 1 and 80 characters."
+      )
+    }
+    return title
+  }
+
+  validateConversationState(value: unknown): ConversationState {
+    if (value !== "active" && value !== "archived") {
+      throw new ConversationLifecycleCommandError(
+        "invalid_conversation_state",
+        400,
+        "state must be active or archived."
+      )
+    }
+    return value
+  }
+
+  async createConversation(input: {
+    conversationId: string
+    title: unknown
+  }): Promise<ConversationMetadata> {
+    if (!this.repository.createConversation) {
+      throw new Error("Conversation creation is unavailable")
+    }
+    return await this.repository.createConversation({
+      id: input.conversationId,
+      title: this.validateConversationTitle(input.title)
+    })
+  }
+
   async openConversation(input: {
     conversationId: string
     title: string
   }): Promise<ConversationMetadata> {
     const existing = this.repository.getConversationMetadata?.(input.conversationId)
     if (existing) return existing
-    if (!this.repository.createConversation) {
-      throw new Error("Conversation creation is unavailable")
-    }
-    return await this.repository.createConversation({
-      id: input.conversationId,
-      title: input.title
-    })
+    return await this.createConversation(input)
   }
 
   async updateConversationSettings(input: {
     conversationId: string
-    selectedModelId?: string | null
-    selectedReasoningIntensity?: CodexReasoningIntensity | null
+    selectedModelId?: unknown
+    selectedReasoningIntensity?: unknown
   }): Promise<ConversationMetadata> {
     const metadata = this.repository.getConversationMetadata?.(input.conversationId)
     if (!metadata) {
@@ -110,9 +152,49 @@ export class ConversationLifecycleService implements ConversationLifecyclePort {
     }
     return await this.repository.updateConversationProfile({
       id: input.conversationId,
-      selectedModelId: input.selectedModelId,
-      selectedReasoningIntensity: input.selectedReasoningIntensity
+      selectedModelId: input.selectedModelId === undefined
+        ? undefined
+        : parseSelectedModelId(input.selectedModelId),
+      selectedReasoningIntensity: input.selectedReasoningIntensity === undefined
+        ? undefined
+        : parseSelectedReasoningIntensity(input.selectedReasoningIntensity)
     })
+  }
+
+  async renameConversation(input: {
+    conversationId: string
+    title: unknown
+  }): Promise<ConversationMetadata> {
+    this.requireConversation(input.conversationId)
+    if (!this.repository.renameConversation) {
+      throw new Error("Conversation renaming is unavailable")
+    }
+    return await this.repository.renameConversation(
+      input.conversationId,
+      this.validateConversationTitle(input.title)
+    )
+  }
+
+  async setConversationState(input: {
+    conversationId: string
+    state: unknown
+  }): Promise<ConversationMetadata> {
+    this.requireConversation(input.conversationId)
+    if (!this.repository.setConversationState) {
+      throw new Error("Conversation state updates are unavailable")
+    }
+    return await this.repository.setConversationState(
+      input.conversationId,
+      this.validateConversationState(input.state)
+    )
+  }
+
+  async deleteConversation(input: { conversationId: string }): Promise<void> {
+    this.requireConversation(input.conversationId)
+    if (!this.repository.deleteConversation) {
+      throw new Error("Conversation deletion is unavailable")
+    }
+    await this.repository.deleteConversation(input.conversationId)
   }
 
   validateSubmitTurn(input: {
@@ -259,6 +341,18 @@ export class ConversationLifecycleService implements ConversationLifecyclePort {
     }
     return await this.repository.stopConversationTurn(conversationId)
   }
+
+  private requireConversation(conversationId: string): ConversationMetadata {
+    const metadata = this.repository.getConversationMetadata?.(conversationId)
+    if (!metadata) {
+      throw new ConversationLifecycleCommandError(
+        "conversation_not_found",
+        404,
+        `Conversation ${conversationId} was not found.`
+      )
+    }
+    return metadata
+  }
 }
 
 interface ConversationLifecycleRepository extends ConversationTurnRepository {
@@ -284,6 +378,9 @@ interface ConversationLifecycleRepository extends ConversationTurnRepository {
     selectedModelId?: string | null
     selectedReasoningIntensity?: CodexReasoningIntensity | null
   }) => Promise<ConversationMetadata>
+  renameConversation?: (id: string, title: string) => Promise<ConversationMetadata>
+  setConversationState?: (id: string, state: ConversationState) => Promise<ConversationMetadata>
+  deleteConversation?: (id: string) => Promise<void>
 }
 
 function commandErrorFromRepository(
@@ -316,4 +413,28 @@ function isWellFormedUtf16(value: string) {
     }
   }
   return true
+}
+
+function parseSelectedModelId(value: unknown): string | null {
+  if (value === null) return null
+  if (typeof value !== "string" || value.trim().length > 120) {
+    throw new ConversationLifecycleCommandError(
+      "invalid_selected_model_id",
+      400,
+      "selectedModelId must be null or a string up to 120 characters."
+    )
+  }
+  return value.trim() || null
+}
+
+function parseSelectedReasoningIntensity(value: unknown): CodexReasoningIntensity | null {
+  if (value === null) return null
+  if (value !== "auto" && value !== "low" && value !== "medium" && value !== "high") {
+    throw new ConversationLifecycleCommandError(
+      "invalid_selected_reasoning_intensity",
+      400,
+      "selectedReasoningIntensity must be null, auto, low, medium, or high."
+    )
+  }
+  return value
 }

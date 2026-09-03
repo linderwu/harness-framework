@@ -1,6 +1,8 @@
 import { createConversationId } from "./conversation-identity"
-import type { CodexReasoningIntensity } from "./types"
-import { CodexConversationError } from "./codex-conversation"
+import {
+  ConversationLifecycleCommandError,
+  type ConversationLifecycleService
+} from "./conversation-lifecycle/service"
 import type { HiveMemoryRepository } from "./hive-memory/repository"
 import type {
   ConversationMetadata,
@@ -10,12 +12,24 @@ import type {
 
 export interface ConversationManagementDependencies {
   repository: HiveMemoryRepository
+  lifecycle: ConversationManagementLifecycle
   stopSession: (conversationId: string) => Promise<void>
-  cancelQueuedMessages?: (conversationId: string) => Promise<unknown>
   renameNativeThread?: (conversationId: string, title: string) => Promise<void>
   setNativeThreadState?: (conversationId: string, state: ConversationState) => Promise<void>
   deleteNativeThread?: (conversationId: string) => Promise<void>
 }
+
+export type ConversationManagementLifecycle = Pick<
+  ConversationLifecycleService,
+  | "validateConversationTitle"
+  | "validateConversationState"
+  | "createConversation"
+  | "updateConversationSettings"
+  | "renameConversation"
+  | "setConversationState"
+  | "cancelPendingTurns"
+  | "deleteConversation"
+>
 
 export class ConversationManagementError extends Error {
   constructor(message: string, readonly status: number) {
@@ -28,10 +42,12 @@ export class ConversationManagementService {
 
   async createConversation(input: { title?: unknown } = {}): Promise<ConversationMetadata> {
     const conversationId = createConversationId()
-    return this.dependencies.repository.createConversation({
-      id: conversationId,
-      title: parseOptionalTitle(input.title) ?? "New conversation"
-    })
+    return await this.runLifecycleCommand(() =>
+      this.dependencies.lifecycle.createConversation({
+        conversationId,
+        title: input.title === undefined ? "New conversation" : input.title
+      })
+    )
   }
 
   listConversations(input: { includeArchived?: boolean } = {}): ConversationSummary[] {
@@ -60,30 +76,41 @@ export class ConversationManagementService {
     }
 
     if (hasTitle) {
-      const title = parseRequiredTitle(input.title)
+      const title = await this.runLifecycleCommand(() =>
+        this.dependencies.lifecycle.validateConversationTitle(input.title)
+      )
       await this.dependencies.renameNativeThread?.(metadata.conversationId, title)
-      await this.dependencies.repository.renameConversation(metadata.conversationId, title)
+      await this.runLifecycleCommand(() =>
+        this.dependencies.lifecycle.renameConversation({
+          conversationId: metadata.conversationId,
+          title
+        })
+      )
       return this.requireConversationSummary(metadata.conversationId)
     }
 
     if (hasSelectedModelId || hasSelectedReasoningIntensity) {
-      await this.dependencies.repository.updateConversationProfile({
-        id: metadata.conversationId,
-        selectedModelId: hasSelectedModelId
-          ? parseSelectedModelId(input.selectedModelId)
-          : undefined,
-        selectedReasoningIntensity: hasSelectedReasoningIntensity
-          ? parseSelectedReasoningIntensity(input.selectedReasoningIntensity)
-          : undefined
-      })
+      await this.runLifecycleCommand(() =>
+        this.dependencies.lifecycle.updateConversationSettings({
+          conversationId: metadata.conversationId,
+          selectedModelId: hasSelectedModelId ? input.selectedModelId : undefined,
+          selectedReasoningIntensity: hasSelectedReasoningIntensity
+            ? input.selectedReasoningIntensity
+            : undefined
+        })
+      )
       return this.requireConversationSummary(metadata.conversationId)
     }
 
-    const nextState = parseConversationState(input.state)
+    const nextState = await this.runLifecycleCommand(() =>
+      this.dependencies.lifecycle.validateConversationState(input.state)
+    )
     await this.dependencies.setNativeThreadState?.(metadata.conversationId, nextState)
-    await this.dependencies.repository.setConversationState(
-      metadata.conversationId,
-      nextState
+    await this.runLifecycleCommand(() =>
+      this.dependencies.lifecycle.setConversationState({
+        conversationId: metadata.conversationId,
+        state: nextState
+      })
     )
     return this.requireConversationSummary(metadata.conversationId)
   }
@@ -97,14 +124,16 @@ export class ConversationManagementService {
     }
 
     const metadata = this.requireManagedConversation(input.conversationId)
-    await this.dependencies.cancelQueuedMessages?.(metadata.conversationId)
+    await this.runLifecycleCommand(() =>
+      this.dependencies.lifecycle.cancelPendingTurns(metadata.conversationId)
+    )
 
     if (this.dependencies.repository.getCodexSession(metadata.conversationId)) {
       await this.dependencies.deleteNativeThread?.(metadata.conversationId)
       try {
         await this.dependencies.stopSession(metadata.conversationId)
       } catch (error) {
-        if (error instanceof CodexConversationError) {
+        if (isStopSessionStatusError(error)) {
           throw new ConversationManagementError(error.message, error.status)
         }
 
@@ -115,7 +144,9 @@ export class ConversationManagementService {
       }
     }
 
-    await this.dependencies.repository.deleteConversation(metadata.conversationId)
+    await this.runLifecycleCommand(() =>
+      this.dependencies.lifecycle.deleteConversation({ conversationId: metadata.conversationId })
+    )
   }
 
   private requireManagedConversation(conversationId: string): ConversationMetadata {
@@ -142,6 +173,17 @@ export class ConversationManagementService {
 
     return summary
   }
+
+  private async runLifecycleCommand<T>(command: () => T | Promise<T>): Promise<T> {
+    try {
+      return await command()
+    } catch (error) {
+      if (isConversationLifecycleCommandError(error)) {
+        throw new ConversationManagementError(error.message, error.status)
+      }
+      throw error
+    }
+  }
 }
 
 export function createConversationManagementService(
@@ -154,77 +196,29 @@ function isManagedConversationId(value: string) {
   return value.startsWith("conversation:")
 }
 
-function parseOptionalTitle(value: unknown) {
-  if (value === undefined) {
-    return undefined
-  }
-
-  return parseRequiredTitle(value)
+function isStopSessionStatusError(
+  error: unknown
+): error is { message: string; status: number } {
+  if (typeof error !== "object" || error === null) return false
+  if (!("message" in error) || typeof error.message !== "string") return false
+  if (!("status" in error) || typeof error.status !== "number") return false
+  return Number.isFinite(error.status) &&
+    Number.isInteger(error.status) &&
+    error.status >= 400 &&
+    error.status <= 599
 }
 
-function parseRequiredTitle(value: unknown) {
-  if (typeof value !== "string") {
-    throw new ConversationManagementError("title must be a string.", 400)
-  }
-
-  const normalized = normalizeTitle(value)
-  if (!normalized || normalized.length > 80) {
-    throw new ConversationManagementError(
-      "title must be between 1 and 80 characters.",
-      400
-    )
-  }
-
-  return normalized
-}
-
-function parseConversationState(value: unknown): ConversationState {
-  if (value !== "active" && value !== "archived") {
-    throw new ConversationManagementError(
-      "state must be active or archived.",
-      400
-    )
-  }
-
-  return value
-}
-
-function parseSelectedModelId(value: unknown): string | null {
-  if (value === null) {
-    return null
-  }
-
-  if (typeof value !== "string") {
-    throw new ConversationManagementError(
-      "selectedModelId must be null or a string up to 120 characters.",
-      400
-    )
-  }
-
-  const normalized = value.trim()
-  if (normalized.length > 120) {
-    throw new ConversationManagementError(
-      "selectedModelId must be null or a string up to 120 characters.",
-      400
-    )
-  }
-
-  return normalized || null
-}
-
-function parseSelectedReasoningIntensity(value: unknown): CodexReasoningIntensity | null {
-  if (value === null) return null
-
-  if (value !== "auto" && value !== "low" && value !== "medium" && value !== "high") {
-    throw new ConversationManagementError(
-      "selectedReasoningIntensity must be null, auto, low, medium, or high.",
-      400
-    )
-  }
-
-  return value
-}
-
-function normalizeTitle(value: string) {
-  return value.trim().replaceAll(/\s+/g, " ")
+function isConversationLifecycleCommandError(
+  error: unknown
+): error is ConversationLifecycleCommandError {
+  return error instanceof ConversationLifecycleCommandError || (
+    typeof error === "object" &&
+    error !== null &&
+    "name" in error &&
+    "message" in error &&
+    "status" in error &&
+    error.name === "ConversationLifecycleCommandError" &&
+    typeof error.message === "string" &&
+    typeof error.status === "number"
+  )
 }
