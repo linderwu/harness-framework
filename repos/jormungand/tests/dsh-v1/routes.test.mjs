@@ -9,6 +9,8 @@ import { openStore } from '../../scripts/dsh/store.mjs'
 import { createDshService } from '../../scripts/dsh/service.mjs'
 import { createDshV1Handler } from '../../scripts/dsh/routes.mjs'
 import { createDshBridgeV1 } from '../../scripts/dsh/bridge-v1.mjs'
+import { createEthernetRepair } from '../../scripts/dsh/host-actions/ethernet.mjs'
+import { createHostActionHandler } from '../../scripts/dsh/host-actions/routes.mjs'
 
 async function withServer(fn) {
   const root = await mkdtemp(join(resolve(tmpdir()), 'dsh-route-'))
@@ -58,4 +60,41 @@ test('v1 bridge refuses to mount without an explicit token', async () => {
   const root = await mkdtemp(join(resolve(tmpdir()), 'dsh-token-'))
   await assert.rejects(createDshBridgeV1({ hostId: 'B', registry: [], storeRoot: root }), { code: 'BRIDGE_TOKEN_REQUIRED' })
   await rm(root, { recursive: true, force: true })
+})
+
+test('authenticated host action route is idempotent and never accepts shell input', async () => {
+  const root = await mkdtemp(join(resolve(tmpdir()), 'dsh-host-action-'))
+  const store = await openStore(root)
+  const executions = []
+  const ethernet = createEthernetRepair({
+    store,
+    inspect: async () => ({ kind: 'ethernet', interfaceName: 'fixture-lan', mac: '00:11:22:33:44:55', internetRouteUsesTarget: false }),
+    execute: async input => { executions.push(input); return { status: 'completed', downAttempted: true, upAttempted: true } },
+  })
+  const handler = createDshV1Handler({
+    service: createDshService({ store, registry: [] }),
+    authenticate: request => request.headers.authorization === 'Bearer fixture-token',
+    hostHandlers: createHostActionHandler({ ethernet }),
+  })
+  const server = createServer(async (request, response) => {
+    const handled = await handler(request, response, new URL(request.url, 'http://127.0.0.1'))
+    if (!handled) { response.writeHead(404); response.end() }
+  })
+  server.listen(0, '127.0.0.1')
+  await once(server, 'listening')
+  try {
+    const headers = { authorization: 'Bearer fixture-token', 'content-type': 'application/json' }
+    const payload = { requestId: 'ethernet-1', hostId: 'A', command: 'rm -rf /' }
+    const first = await fetch(`http://127.0.0.1:${server.address().port}/dsh/v1/host-actions/ethernet-restart`, { method: 'POST', headers, body: JSON.stringify(payload) })
+    assert.equal(first.status, 202)
+    assert.equal((await first.json()).status, 'completed')
+    const second = await fetch(`http://127.0.0.1:${server.address().port}/dsh/v1/host-actions/ethernet-restart`, { method: 'POST', headers, body: JSON.stringify(payload) })
+    assert.equal((await second.json()).status, 'completed')
+    assert.equal(executions.length, 1)
+    assert.equal('command' in executions[0], false)
+  } finally {
+    await new Promise(resolveClose => server.close(resolveClose))
+    await store.close()
+    await rm(root, { recursive: true, force: true })
+  }
 })

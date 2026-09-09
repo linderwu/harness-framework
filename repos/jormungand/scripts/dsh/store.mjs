@@ -2,7 +2,7 @@ import { mkdir, open, readFile, rename, unlink } from 'node:fs/promises'
 import { createHash, randomUUID } from 'node:crypto'
 import { join, resolve } from 'node:path'
 
-const COLLECTIONS = new Set(['bindings', 'operations/session', 'operations/turn', 'events'])
+const COLLECTIONS = new Set(['bindings', 'operations/session', 'operations/turn', 'operations/host-action', 'events'])
 const KEY_PATTERN = /^[a-zA-Z0-9_-]{1,200}$/u
 
 function storeError(code, message) {

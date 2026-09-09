@@ -96,4 +96,4 @@ export function createDshV1Handler({ service, authenticate, hostHandlers } = {})
   }
 }
 
-export { readBody, normalizedError }
+export { readBody, normalizedError, sendJson }
