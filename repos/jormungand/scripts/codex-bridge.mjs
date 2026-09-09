@@ -21,7 +21,10 @@ loadBridgeConfig()
 
 const host = process.env.CODEX_BRIDGE_HOST ?? "127.0.0.1"
 const port = Number(process.env.CODEX_BRIDGE_PORT ?? 4177)
-const token = process.env.HARNESS_BRIDGE_TOKEN
+const token =
+  process.env.CODEX_BRIDGE_TOKEN?.trim() ||
+  process.env.HARNESS_BRIDGE_TOKEN?.trim() ||
+  process.env.DSH_BRIDGE_TOKEN?.trim()
 const repoRoot = path.resolve(
   process.env.CODEX_BRIDGE_REPO_ROOT ?? process.cwd()
 )
@@ -2094,7 +2097,7 @@ async function getDshV1Bridge() {
         : null
       return createDshBridgeV1({
         hostId: process.env.DSH_HOST_ID ?? "B",
-        storeRoot: path.resolve(process.env.DSH_V1_STORE_ROOT ?? path.join(repoRoot, ".harness", "dsh-v1")),
+        storeRoot: path.resolve(process.env.DSH_BRIDGE_STATE_DIR ?? process.env.DSH_V1_STORE_ROOT ?? path.join(repoRoot, ".harness", "dsh-v1")),
         token,
         registry: [
           { agentId: process.env.DSH_CODEX_AGENT_ID ?? "codex", hostId: process.env.DSH_HOST_ID ?? "B", adapter },
@@ -2109,9 +2112,14 @@ async function getDshV1Bridge() {
 function wrapDshCodexSession(session) {
   return {
     threadId: session.threadId,
+    get events() { return session.events },
+    get sequence() { return session.sequence },
+    get turnStatus() { return session.turnStatus },
+    get currentTurnId() { return session.currentTurnId },
+    get finalText() { return session.finalText },
     start: async () => ({ threadId: session.threadId }),
-    startTurn: (content, selection) => startCodexTurn(session, content, selection),
-    interrupt: () => interruptCodexTurn(session),
+    startTurn: (content, selection = {}) => startCodexTurn(session, content, selection),
+    interrupt: (nativeRunId) => nativeRunId && nativeRunId !== session.currentTurnId ? false : interruptCodexTurn(session),
   }
 }
 

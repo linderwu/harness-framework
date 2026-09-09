@@ -1,4 +1,6 @@
 import { spawn } from 'node:child_process'
+import { StringDecoder } from 'node:string_decoder'
+import { formatHandoffPrompt } from './input.mjs'
 
 function piError(code, message) {
   const error = new Error(message)
@@ -27,6 +29,7 @@ export function createPiAdapter({ command = 'pi', cwdFor, spawnImpl = spawn, cap
       currentRunId: null,
       buffer: '',
       pending: new Map(),
+      decoder: new StringDecoder('utf8'),
     }
     const append = (type, payload = {}) => {
       session.sequence += 1
@@ -34,39 +37,44 @@ export function createPiAdapter({ command = 'pi', cwdFor, spawnImpl = spawn, cap
       if (session.events.length > 2000) session.events.shift()
     }
     child.stdout.on('data', (chunk) => {
-      session.buffer += chunk.toString()
+      session.buffer += session.decoder.write(chunk)
       const lines = session.buffer.split('\n')
       session.buffer = lines.pop() ?? ''
-      for (const line of lines) {
-        if (!line.trim()) continue
-        let event
-        try { event = JSON.parse(line) } catch { append('status', { message: 'Pi emitted malformed JSON.' }); continue }
-        if (event.type === 'message_update') {
-          const update = event.assistantMessageEvent ?? {}
-          if (update.type === 'text_delta') append('text_delta', { text: update.delta ?? '', nativeType: update.type })
-          else append('status', { nativeType: update.type })
-        } else if (event.type === 'tool_execution_start') {
-          append('tool_started', { nativeBlockId: event.toolCallId, message: event.toolName })
-        } else if (event.type === 'tool_execution_end') {
-          append('tool_finished', { nativeBlockId: event.toolCallId, message: event.toolName })
-        } else if (event.type === 'agent_end') {
-          session.turnStatus = session.turnStatus === 'stopping' ? 'interrupted' : 'completed'
-          append('status', { status: session.turnStatus, nativeType: event.type })
-        } else if (event.type === 'response' && event.command === 'abort') {
-          session.turnStatus = 'interrupted'
-          append('status', { status: 'interrupted', nativeType: event.type })
-        } else {
-          append('status', { nativeType: event.type })
-        }
-      }
+      for (const line of lines) if (line.trim()) processLine(session, line)
     })
     child.on('close', (code) => {
+      session.buffer += session.decoder.end()
+      if (session.buffer.trim()) {
+        try { processLine(session, session.buffer) } catch { append('status', { message: 'Pi emitted an incomplete JSON frame.' }) }
+      }
       if (session.turnStatus === 'running' || session.turnStatus === 'stopping') session.turnStatus = code === 0 ? 'unknown' : 'failed'
       session.status = code === 0 ? 'stopped' : 'failed'
       append('status', { status: session.turnStatus, exitCode: code })
     })
     sessions.set(bindingKey, session)
     return session
+
+    function processLine(activeSession, line) {
+      let event
+      try { event = JSON.parse(line) } catch { append('status', { message: 'Pi emitted malformed JSON.' }); return }
+      if (event.type === 'message_update') {
+        const update = event.assistantMessageEvent ?? {}
+        if (update.type === 'text_delta') append('text_delta', { text: update.delta ?? '', nativeType: update.type })
+        else append('status', { nativeType: update.type })
+      } else if (event.type === 'tool_execution_start') {
+        append('tool_started', { nativeBlockId: event.toolCallId, message: event.toolName })
+      } else if (event.type === 'tool_execution_end') {
+        append('tool_finished', { nativeBlockId: event.toolCallId, message: event.toolName })
+      } else if (event.type === 'agent_end') {
+        activeSession.turnStatus = activeSession.turnStatus === 'stopping' ? 'interrupted' : 'completed'
+        append('status', { status: activeSession.turnStatus, nativeType: event.type })
+      } else if (event.type === 'response' && event.command === 'abort') {
+        activeSession.turnStatus = 'interrupted'
+        append('status', { status: 'interrupted', nativeType: event.type })
+      } else {
+        append('status', { nativeType: event.type })
+      }
+    }
   }
 
   const write = (session, value) => {
@@ -94,14 +102,14 @@ export function createPiAdapter({ command = 'pi', cwdFor, spawnImpl = spawn, cap
       const session = createSession(bindingKey, target)
       return { bindingKey, status: 'ready', nativeSessionId: session.nativeSessionId }
     },
-    async startTurn({ requestId, bindingKey, target, message }) {
+    async startTurn({ requestId, bindingKey, target, message, handoff = null, attachments = [] }) {
       const session = sessions.get(bindingKey)
       if (!session) return { requestId, nativeSessionId: null, nativeRunId: null, status: 'unknown', lastEventSeq: 0 }
       if (session.turnStatus === 'running' || session.turnStatus === 'stopping') throw piError('PI_BUSY', 'Pi already has an active turn')
       session.currentRequestId = requestId
       session.currentRunId = requestId
       session.turnStatus = 'running'
-      appendPrompt(session, target, message)
+      appendPrompt(session, target, message, handoff, attachments)
       return { requestId, nativeSessionId: session.nativeSessionId, nativeRunId: requestId, status: 'running', lastEventSeq: session.sequence }
     },
     async interruptTurn({ requestId, bindingKey, nativeSessionId, nativeRunId }) {
@@ -127,12 +135,12 @@ export function createPiAdapter({ command = 'pi', cwdFor, spawnImpl = spawn, cap
   }
   return adapter
 
-  function appendPrompt(session, target, message) {
+  function appendPrompt(session, target, message, handoff, attachments) {
     if (target.modelId) {
       const [provider, modelId] = target.modelId.includes(':') ? target.modelId.split(':', 2) : ['', target.modelId]
       write(session, { type: 'set_model', provider, modelId })
     }
-    write(session, { type: 'prompt', message })
+    write(session, { type: 'prompt', message: formatHandoffPrompt(message, handoff), ...(attachments.length ? { attachments } : {}) })
   }
 }
 

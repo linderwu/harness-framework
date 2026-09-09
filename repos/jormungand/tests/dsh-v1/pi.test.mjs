@@ -28,3 +28,18 @@ test('Pi adapter uses JSONL prompt and abort controls while retaining event curs
   assert.deepEqual(JSON.parse(child.stdin.writes.at(-1)), { type: 'abort' })
 })
 
+test('Pi adapter preserves UTF-8 text split across JSONL chunks', async () => {
+  const child = fakeChild()
+  const adapter = createPiAdapter({ spawnImpl: () => child, cwdFor: () => process.cwd() })
+  const target = { agentId: 'pi', hostId: 'B', workspaceId: 'repo' }
+  await adapter.ensureSession({ bindingKey: 'utf8', target })
+  await adapter.startTurn({ requestId: 'utf8-run', bindingKey: 'utf8', target, message: 'prompt' })
+  const line = `${JSON.stringify({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: '中文' } })}\n`
+  const bytes = Buffer.from(line)
+  const split = bytes.indexOf(0xe4)
+  child.stdout.emit('data', bytes.subarray(0, split + 1))
+  child.stdout.emit('data', bytes.subarray(split + 1))
+  const page = await adapter.readEvents({ requestId: 'utf8-run', bindingKey: 'utf8', target, afterSeq: 0 })
+  assert.equal(page.events.some((event) => event.payload?.text === '中文'), true)
+})
+

@@ -1,4 +1,5 @@
 import { validateHandoff, validateTarget } from './input.mjs'
+import { capabilityFlags } from './capabilities.mjs'
 
 function serviceError(code, message, httpStatus = 400, retryable = false) {
   const error = new Error(message)
@@ -26,7 +27,7 @@ export function createDshService({ registry = [], store, readQuotaSource = async
     return {
       schemaVersion: 'dsh-agent-bridge/v1',
       hostId: registry[0]?.hostId ?? null,
-      agents: registry.map(item => ({ agentId: item.agentId, capabilities: item.capabilities ?? {} })),
+      agents: registry.map(item => ({ agentId: item.agentId, capabilities: capabilityFlags(item.capabilities ?? item.adapter?.capabilities ?? {}) })),
       limits: { maxRequestBytes: 1024 * 1024, maxEventPageBytes: 256 * 1024, maxEventPageItems: 200 },
       observedAt: new Date().toISOString(),
     }
@@ -148,8 +149,11 @@ export function createDshService({ registry = [], store, readQuotaSource = async
       nativeSessionId,
       nativeRunId,
     })
-    await store.patch('turn', requestId, { status: result?.turn?.status ?? 'stopping' })
-    return { requestId, accepted: result?.accepted === true, turn: result?.turn ?? { ...record, status: 'stopping' } }
+    const latest = await store.read('operations/turn', requestId)
+    const terminal = ['completed', 'interrupted', 'failed'].includes(latest?.status)
+    if (terminal) return { requestId, accepted: result?.accepted === true, turn: latest }
+    const next = await store.patch('turn', requestId, { status: result?.turn?.status ?? 'stopping' })
+    return { requestId, accepted: result?.accepted === true, turn: next }
   }
 
   return { getCapabilities, listModels, getQuota, getInputBudget, ensureSession, recoverSession, startTurn, getTurn, readEvents, interruptTurn, bindingKey }

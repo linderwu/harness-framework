@@ -8,6 +8,7 @@ import test from 'node:test'
 import { openStore } from '../../scripts/dsh/store.mjs'
 import { createDshService } from '../../scripts/dsh/service.mjs'
 import { createDshV1Handler } from '../../scripts/dsh/routes.mjs'
+import { createDshBridgeV1 } from '../../scripts/dsh/bridge-v1.mjs'
 
 async function withServer(fn) {
   const root = await mkdtemp(join(resolve(tmpdir()), 'dsh-route-'))
@@ -51,4 +52,10 @@ test('v1 routes never expose unauthorized native calls', async () => {
     assert.equal(response.status, 401)
     assert.equal((await response.json()).error.code, 'UNAUTHORIZED')
   })
+})
+
+test('v1 bridge refuses to mount without an explicit token', async () => {
+  const root = await mkdtemp(join(resolve(tmpdir()), 'dsh-token-'))
+  await assert.rejects(createDshBridgeV1({ hostId: 'B', registry: [], storeRoot: root }), { code: 'BRIDGE_TOKEN_REQUIRED' })
+  await rm(root, { recursive: true, force: true })
 })

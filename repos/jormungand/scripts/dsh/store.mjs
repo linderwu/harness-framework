@@ -1,4 +1,4 @@
-import { mkdir, open, readFile, rename, unlink, writeFile } from 'node:fs/promises'
+import { mkdir, open, readFile, rename, unlink } from 'node:fs/promises'
 import { createHash, randomUUID } from 'node:crypto'
 import { join, resolve } from 'node:path'
 
@@ -25,7 +25,13 @@ function digest(value) {
 
 export async function writeAtomic(file, value) {
   const temporary = `${file}.${randomUUID()}.tmp`
-  await writeFile(temporary, JSON.stringify(value), { encoding: 'utf8', flag: 'wx', mode: 0o600 })
+  const handle = await open(temporary, 'wx', 0o600)
+  try {
+    await handle.writeFile(JSON.stringify(value), 'utf8')
+    await handle.sync()
+  } finally {
+    await handle.close()
+  }
   try {
     await rename(temporary, file)
   } catch (error) {
@@ -80,14 +86,14 @@ export async function openStore(rootDirectory) {
     await writeAtomic(pathFor(collection, key), record)
     return { created: true, record: structuredClone(record) }
   }
-  const patch = async (operation, key, changes) => {
+  const patch = (operation, key, changes) => transact(async () => {
     const collection = `operations/${operation}`
     const current = await read(collection, key)
     if (!current) throw storeError('RECORD_NOT_FOUND', 'operation record not found')
     const next = { ...current, ...structuredClone(changes), updatedAt: new Date().toISOString() }
     await writeAtomic(pathFor(collection, key), next)
     return structuredClone(next)
-  }
+  })
   const append = (requestId, event) => transact(async () => {
     assertKey(requestId)
     const file = pathFor('events', requestId)
@@ -100,15 +106,19 @@ export async function openStore(rootDirectory) {
     }
     const lastSeq = events.at(-1)?.seq ?? 0
     if (event.seq !== lastSeq + 1) throw storeError('EVENT_SEQUENCE_CONFLICT', 'event sequence is not contiguous')
-    const next = { requestId, events: [...events, structuredClone(event)] }
+    const nextEvents = [...events, structuredClone(event)]
+    while (nextEvents.length > 200 || Buffer.byteLength(JSON.stringify(nextEvents), 'utf8') > 256 * 1024) nextEvents.shift()
+    const next = { requestId, events: nextEvents }
     await writeAtomic(file, next)
     return structuredClone(next)
   })
   const readEvents = async (requestId, afterSeq = 0) => {
     const current = await read('events', requestId)
     const events = current?.events ?? []
+    const firstSeq = events[0]?.seq ?? null
     const visible = events.filter(item => item.seq > afterSeq)
-    return { events: visible, nextSeq: visible.at(-1)?.seq ?? afterSeq, hasMore: false, continuity: 'ok' }
+    const continuity = firstSeq !== null && afterSeq < firstSeq - 1 ? 'gap' : 'ok'
+    return { events: visible, nextSeq: visible.at(-1)?.seq ?? afterSeq, hasMore: continuity === 'gap' || visible.length >= 200, continuity }
   }
   const transact = operation => {
     const job = queue.then(async () => {

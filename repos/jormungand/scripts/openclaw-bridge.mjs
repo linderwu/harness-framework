@@ -16,12 +16,14 @@ import {
 } from "./lucky-quota-store.mjs"
 import { createDshBridgeV1 } from "./dsh/bridge-v1.mjs"
 import { createOpenClawAdapter } from "./dsh/openclaw.mjs"
+import { formatHandoffPrompt } from "./dsh/input.mjs"
 
 const host = process.env.OPENCLAW_BRIDGE_HOST ?? "127.0.0.1"
 const port = Number(process.env.OPENCLAW_BRIDGE_PORT ?? 4188)
 const token =
   process.env.OPENCLAW_BRIDGE_TOKEN?.trim() ||
   process.env.HARNESS_BRIDGE_TOKEN?.trim() ||
+  process.env.DSH_BRIDGE_TOKEN?.trim() ||
   process.env.OPENCLAW_GATEWAY_TOKEN?.trim()
 const container = process.env.OPENCLAW_CONTAINER ?? "openclaw"
 const dockerCommand = resolveCommandOverride(
@@ -566,7 +568,7 @@ async function getDshV1Bridge() {
       })
       return createDshBridgeV1({
         hostId: process.env.DSH_HOST_ID ?? "A",
-        storeRoot: path.resolve(process.env.DSH_V1_STORE_ROOT ?? path.join(runtimeSkillCacheRoot, "dsh-v1")),
+        storeRoot: path.resolve(process.env.DSH_BRIDGE_STATE_DIR ?? process.env.DSH_V1_STORE_ROOT ?? path.join(runtimeSkillCacheRoot, "dsh-v1")),
         token,
         registry: [{ agentId: process.env.DSH_OPENCLAW_AGENT_ID ?? "openclaw", hostId: process.env.DSH_HOST_ID ?? "A", adapter }],
       })
@@ -580,6 +582,7 @@ function createDshOpenClawSession({ bindingKey, target }) {
   let current
   return {
     nativeSessionId,
+    get journal() { return current?.journal ?? { events: [] } },
     async startTurn(message, input = {}) {
       if (current?.activeRun && !current.activeRun.cancelled && current.journal.status === "running") {
         throw Object.assign(new Error("OpenClaw session already has an active turn."), { code: "NATIVE_BUSY", httpStatus: 409 })
@@ -595,7 +598,7 @@ function createDshOpenClawSession({ bindingKey, target }) {
         mainAgent: target.agentId,
         model: target.modelId || defaultModel,
         sessionKey: `dsh-v1:${bindingKey}`,
-        message,
+        message: formatHandoffPrompt(message, input.handoff),
         journal,
         activeRun,
       }).then((result) => { current.result = result }).catch((error) => {
@@ -604,13 +607,13 @@ function createDshOpenClawSession({ bindingKey, target }) {
       })
       return { requestId, nativeSessionId, nativeRunId: requestId, status: "running", lastEventSeq: journal.nextCursor }
     },
-    async interrupt({ requestId, nativeSessionId, nativeRunId }) {
+    async interrupt({ requestId, nativeSessionId: requestedNativeSessionId, nativeRunId }) {
       const active = current?.activeRun
-      if (!active || current.journal.status !== "running") {
-        return { requestId, accepted: false, turn: { requestId, nativeSessionId, nativeRunId, status: current?.journal.status ?? "unknown", lastEventSeq: current?.journal.nextCursor ?? 0 } }
+      if (!active || requestedNativeSessionId !== nativeSessionId || nativeRunId !== current?.journal?.id || current.journal.status !== "running") {
+        return { requestId, accepted: false, turn: { requestId, nativeSessionId: requestedNativeSessionId, nativeRunId, status: current?.journal.status ?? "unknown", lastEventSeq: current?.journal.nextCursor ?? 0 } }
       }
       active.cancel()
-      return { requestId, accepted: true, turn: { requestId, nativeSessionId, nativeRunId, status: "stopping", lastEventSeq: current.journal.nextCursor } }
+      return { requestId, accepted: true, turn: { requestId, nativeSessionId: requestedNativeSessionId, nativeRunId, status: "stopping", lastEventSeq: current.journal.nextCursor } }
     },
     getTurn({ requestId }) {
       const status = current?.activeRun?.cancelled && current?.journal.status !== "completed"

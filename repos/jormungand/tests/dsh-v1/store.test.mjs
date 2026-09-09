@@ -32,3 +32,19 @@ test('store rejects a second writer and conflicting request body', async () => {
     await assert.rejects(store.reserve('turn', 'request-1', { payloadHash: 'b' }), { code: 'IDEMPOTENCY_CONFLICT' })
   })
 })
+
+test('store serializes concurrent patches and bounds event replay', async () => {
+  await withStore(async (store) => {
+    await store.reserve('turn', 'request-1', { payloadHash: 'a', status: 'prepared' })
+    await Promise.all(Array.from({ length: 20 }, (_, index) => store.patch('turn', 'request-1', { marker: index })))
+    const record = await store.read('operations/turn', 'request-1')
+    assert.equal(typeof record.marker, 'number')
+    for (let seq = 1; seq <= 250; seq += 1) {
+      await store.append('request-1', { seq, type: 'text_delta', payload: { text: 'x'.repeat(1200) } })
+    }
+    const page = await store.readEvents('request-1', 0)
+    assert.equal(page.events.length <= 200, true)
+    assert.equal(page.continuity, 'gap')
+    assert.equal(page.hasMore, true)
+  })
+})
