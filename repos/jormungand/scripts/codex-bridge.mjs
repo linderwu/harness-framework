@@ -7,6 +7,9 @@ import { createHash, randomUUID } from "node:crypto"
 import { normalizePermissionMode } from "./agent-permissions.mjs"
 import { loadBridgeConfig } from "./bridge-config.mjs"
 import { createCodexAppServerSession } from "./codex-app-server-session.mjs"
+import { createDshBridgeV1 } from "./dsh/bridge-v1.mjs"
+import { createCodexAdapter } from "./dsh/codex.mjs"
+import { createPiAdapter } from "./dsh/pi.mjs"
 import {
   buildCodexAppServerArgs,
   buildCodexExecModelArgs,
@@ -49,6 +52,8 @@ const codexSessionKeys = new Map()
 const inFlightCodexSessionCreations = new Map()
 const childClosePromiseSymbol = Symbol("codexBridgeChildClosePromise")
 const childTerminationPromiseSymbol = Symbol("codexBridgeChildTerminationPromise")
+const dshV1Enabled = process.env.DSH_V1_ENABLED === "1"
+let dshV1HandlerPromise
 
 // ---------- mavis (Lucky) forwarder ----------------------------------------
 // When the dashboard sends `executor: "mavis"`, codex-bridge becomes a thin
@@ -152,6 +157,11 @@ const server = http.createServer(async (request, response) => {
     if (token && request.headers.authorization !== `Bearer ${token}`) {
       sendJson(response, 401, { error: "invalid bridge token" })
       return
+    }
+
+    if (dshV1Enabled && requestUrl.pathname.startsWith("/dsh/v1/")) {
+      const bridge = await getDshV1Bridge()
+      if (await bridge.handler(request, response, requestUrl)) return
     }
 
     if (request.method === "GET" && requestUrl.pathname === "/agent-quota") {
@@ -1743,7 +1753,7 @@ async function createCodexSession(
   return session
 }
 
-async function startCodexTurn(session, content) {
+async function startCodexTurn(session, content, selection = {}) {
   assertCodexSessionAvailable(session)
   const prompt = content.trim()
   if (!prompt) throw new Error("Codex turn content is required.")
@@ -1764,7 +1774,7 @@ async function startCodexTurn(session, content) {
   session.turnStatus = "inProgress"
   addCodexSessionEvent(session, { type: "turn_requested", message: prompt })
 
-  const turn = await session.appServerSession.startTurn(prompt)
+  const turn = await session.appServerSession.startTurn(prompt, selection)
   const turnId = turn.id
   session.currentTurnId = turnId
   addCodexSessionEvent(session, { type: "turn_started", turnId, message: "Codex is working." })
@@ -2002,6 +2012,115 @@ function codexSessionEvents(session, after) {
     events: session.events.filter((event) => event.sequence > after),
     nextCursor: session.sequence
   }
+}
+
+async function getDshV1Bridge() {
+  if (!dshV1HandlerPromise) {
+    dshV1HandlerPromise = (async () => {
+      const workspaceRoot = path.resolve(
+        process.env.DSH_CODEX_WORKSPACE_ROOT ?? repoRoot
+      )
+      const adapter = createCodexAdapter({
+        capabilities: {
+          sessionResume: true,
+          models: true,
+          reasoning: true,
+          events: true,
+          eventReplay: true,
+          interrupt: true,
+          settledSignal: true,
+          attachments: false,
+          quota: true,
+        },
+        sessionFor: async ({ bindingKey, target, recoverOnly }) => {
+          const workspace = target.workspaceId === "default" || target.workspaceId === path.basename(workspaceRoot)
+            ? { path: workspaceRoot }
+            : await resolveWorkspace(target.workspaceId)
+          if (workspace.error) throw Object.assign(new Error(workspace.error), { code: "UNKNOWN_WORKSPACE", httpStatus: 422 })
+          const payload = { sessionKey: `dsh-v1:${bindingKey}` }
+          if (recoverOnly) {
+            const key = deriveCodexSessionKey(workspace.path, payload)
+            const existing = getReusableCodexSessionByKey(key)
+            if (!existing) return null
+            return wrapDshCodexSession(existing)
+          }
+          const result = await getOrCreateCodexSession(workspace.path, permissionMode, payload, {
+            name: `DSH ${target.agentId}`,
+            modelId: normalizeCodexModelId(target.modelId),
+          })
+          return wrapDshCodexSession(result.session)
+        },
+        models: () => readCodexModels(),
+        quota: () => readCodexQuota().catch(() => null),
+        events: ({ requestId, session, afterSeq }) => {
+          const nativeEvents = session.events.filter((event) => event.sequence > afterSeq)
+          const events = nativeEvents.map((event) => ({
+            seq: event.sequence,
+            type: dshEventType(event.type),
+            payload: {
+              requestId,
+              nativeEventId: event.id,
+              nativeType: event.type,
+              ...(event.turnId ? { nativeRunId: event.turnId } : {}),
+              ...(event.itemId ? { nativeBlockId: event.itemId } : {}),
+              ...(event.text !== undefined ? { text: event.text } : {}),
+              ...(event.message ? { message: event.message } : {}),
+            },
+          }))
+          const status = session.turnStatus === "inProgress"
+            ? "running"
+            : session.turnStatus === "completed"
+              ? "completed"
+              : session.turnStatus === "interrupted"
+                ? "interrupted"
+                : session.turnStatus === "failed"
+                  ? "failed"
+                  : undefined
+          return {
+            events,
+            turn: status ? {
+              requestId,
+              nativeSessionId: session.threadId,
+              nativeRunId: session.currentTurnId ?? null,
+              status,
+              output: session.finalText,
+              lastEventSeq: session.sequence,
+            } : undefined,
+          }
+        },
+      })
+      const piAdapter = process.env.DSH_PI_ENABLED === "1"
+        ? createPiAdapter({ cwdFor: () => workspaceRoot, command: process.env.PI_RPC_COMMAND ?? "pi" })
+        : null
+      return createDshBridgeV1({
+        hostId: process.env.DSH_HOST_ID ?? "B",
+        storeRoot: path.resolve(process.env.DSH_V1_STORE_ROOT ?? path.join(repoRoot, ".harness", "dsh-v1")),
+        token,
+        registry: [
+          { agentId: process.env.DSH_CODEX_AGENT_ID ?? "codex", hostId: process.env.DSH_HOST_ID ?? "B", adapter },
+          ...(piAdapter ? [{ agentId: process.env.DSH_PI_AGENT_ID ?? "pi", hostId: process.env.DSH_HOST_ID ?? "B", adapter: piAdapter }] : []),
+        ],
+      })
+    })()
+  }
+  return dshV1HandlerPromise
+}
+
+function wrapDshCodexSession(session) {
+  return {
+    threadId: session.threadId,
+    start: async () => ({ threadId: session.threadId }),
+    startTurn: (content, selection) => startCodexTurn(session, content, selection),
+    interrupt: () => interruptCodexTurn(session),
+  }
+}
+
+function dshEventType(type) {
+  if (type === "assistant_delta") return "text_delta"
+  if (type === "plan_delta") return "reasoning_delta"
+  if (type === "item_started" || type === "command_output") return "tool_started"
+  if (type === "item_completed") return "tool_finished"
+  return "status"
 }
 
 async function getOrCreateCodexSession(

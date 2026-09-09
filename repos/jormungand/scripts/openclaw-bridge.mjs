@@ -11,8 +11,11 @@ import {
 import { normalizePermissionMode } from "./agent-permissions.mjs"
 import {
   startRun as startLuckyStoreRun,
-  endRun as endLuckyStoreRun
+  endRun as endLuckyStoreRun,
+  readQuota as readLuckyQuota
 } from "./lucky-quota-store.mjs"
+import { createDshBridgeV1 } from "./dsh/bridge-v1.mjs"
+import { createOpenClawAdapter } from "./dsh/openclaw.mjs"
 
 const host = process.env.OPENCLAW_BRIDGE_HOST ?? "127.0.0.1"
 const port = Number(process.env.OPENCLAW_BRIDGE_PORT ?? 4188)
@@ -60,6 +63,9 @@ const completedRunTtlMs = parseCompletedRunTtlMs(
   process.env.OPENCLAW_BRIDGE_COMPLETED_RUN_TTL_MS
 )
 const activeRuns = new Map()
+const dshOpenClawSessions = new Map()
+const dshV1Enabled = process.env.DSH_V1_ENABLED === "1"
+let dshV1HandlerPromise
 const activeWorkflowRuns = new Map()
 const activeIdempotencyKeys = new Map()
 const activeIdempotencyJournals = new Map()
@@ -88,6 +94,11 @@ const server = http.createServer(async (request, response) => {
     if (token && request.headers.authorization !== `Bearer ${token}`) {
       sendJson(response, 401, { error: "invalid bridge token" })
       return
+    }
+
+    if (dshV1Enabled && requestUrl.pathname.startsWith("/dsh/v1/")) {
+      const bridge = await getDshV1Bridge()
+      if (await bridge.handler(request, response, requestUrl)) return
     }
 
     if (request.method === "GET" && requestUrl.pathname === "/health") {
@@ -501,6 +512,120 @@ async function runOpenClawAgent({
         ? `${mainAgent} completed through OpenClaw bridge.`
         : `${mainAgent} exited with status ${exitCode}.`,
     journal
+  }
+}
+
+async function getDshV1Bridge() {
+  if (!dshV1HandlerPromise) {
+    dshV1HandlerPromise = (async () => {
+      const adapter = createOpenClawAdapter({
+        capabilities: {
+          sessionResume: true,
+          models: true,
+          reasoning: false,
+          events: true,
+          eventReplay: true,
+          interrupt: true,
+          settledSignal: true,
+          attachments: false,
+          quota: true,
+        },
+        sessionFor: async ({ bindingKey, target, recoverOnly }) => {
+          const existing = dshOpenClawSessions.get(bindingKey)
+          if (existing) return existing
+          if (recoverOnly) return null
+          const session = createDshOpenClawSession({ bindingKey, target })
+          dshOpenClawSessions.set(bindingKey, session)
+          return session
+        },
+        models: () => ({
+          models: [{ id: defaultModel, name: defaultModel, reasoningEfforts: [] }],
+          observedAt: new Date().toISOString(),
+        }),
+        quota: () => readLuckyQuota(process.env.DSH_OPENCLAW_AGENT_ID ?? "openclaw"),
+        events: ({ requestId, session, afterSeq }) => {
+          const events = session.journal.events
+            .filter((event) => event.sequence > afterSeq)
+            .map((event) => ({
+              seq: event.sequence,
+              type: event.type === "assistant_delta" || event.type === "assistant_message" ? "text_delta" : event.type === "tool_started" ? "tool_started" : event.type === "tool_finished" ? "tool_finished" : "status",
+              payload: {
+                requestId,
+                nativeEventId: event.id,
+                nativeType: event.type,
+                ...(event.text ? { text: event.text } : {}),
+                ...(event.delta ? { text: event.delta } : {}),
+                ...(event.message ? { message: event.message } : {}),
+              },
+            }))
+          return {
+            events,
+            turn: session.getTurn({ requestId }),
+          }
+        },
+      })
+      return createDshBridgeV1({
+        hostId: process.env.DSH_HOST_ID ?? "A",
+        storeRoot: path.resolve(process.env.DSH_V1_STORE_ROOT ?? path.join(runtimeSkillCacheRoot, "dsh-v1")),
+        token,
+        registry: [{ agentId: process.env.DSH_OPENCLAW_AGENT_ID ?? "openclaw", hostId: process.env.DSH_HOST_ID ?? "A", adapter }],
+      })
+    })()
+  }
+  return dshV1HandlerPromise
+}
+
+function createDshOpenClawSession({ bindingKey, target }) {
+  const nativeSessionId = `openclaw:${bindingKey}`
+  let current
+  return {
+    nativeSessionId,
+    async startTurn(message, input = {}) {
+      if (current?.activeRun && !current.activeRun.cancelled && current.journal.status === "running") {
+        throw Object.assign(new Error("OpenClaw session already has an active turn."), { code: "NATIVE_BUSY", httpStatus: 409 })
+      }
+      const requestId = input.requestId
+      const idempotencyKey = `dsh-v1:${requestId}`
+      const journal = createRunJournal({ id: requestId, idempotencyKey })
+      const activeRun = createActiveRunState({ id: requestId, journal })
+      current = { journal, activeRun, result: null }
+      void runOpenClawAgent({
+        id: requestId,
+        idempotencyKey,
+        mainAgent: target.agentId,
+        model: target.modelId || defaultModel,
+        sessionKey: `dsh-v1:${bindingKey}`,
+        message,
+        journal,
+        activeRun,
+      }).then((result) => { current.result = result }).catch((error) => {
+        journal.status = "failed"
+        appendRunEvent(journal, "failed", { message: formatError(error) })
+      })
+      return { requestId, nativeSessionId, nativeRunId: requestId, status: "running", lastEventSeq: journal.nextCursor }
+    },
+    async interrupt({ requestId, nativeSessionId, nativeRunId }) {
+      const active = current?.activeRun
+      if (!active || current.journal.status !== "running") {
+        return { requestId, accepted: false, turn: { requestId, nativeSessionId, nativeRunId, status: current?.journal.status ?? "unknown", lastEventSeq: current?.journal.nextCursor ?? 0 } }
+      }
+      active.cancel()
+      return { requestId, accepted: true, turn: { requestId, nativeSessionId, nativeRunId, status: "stopping", lastEventSeq: current.journal.nextCursor } }
+    },
+    getTurn({ requestId }) {
+      const status = current?.activeRun?.cancelled && current?.journal.status !== "completed"
+        ? "interrupted"
+        : current?.journal.status === "running"
+        ? "running"
+        : current?.journal.status === "completed"
+          ? "completed"
+          : current?.journal.status === "failed"
+            ? "failed"
+            : current?.activeRun?.cancelled
+              ? "interrupted"
+              : undefined
+      return status ? { requestId, nativeSessionId, nativeRunId: requestId, status, output: current.result?.output ?? "", lastEventSeq: current.journal.nextCursor } : null
+    },
   }
 }
 

@@ -54,13 +54,15 @@ export function createCodexAppServerSession(input) {
       }
     },
 
-    async startTurn(content) {
+    async startTurn(content, selection = {}) {
       const result = await input.request("turn/start", {
         threadId: requireThreadId(),
         input: [{ type: "text", text: content, text_elements: [] }],
         approvalPolicy: "never",
         sandboxPolicy: turnSandboxPolicy(input),
-        cwd: input.workspacePath
+        cwd: input.workspacePath,
+        ...(selection.modelId ? { model: selection.modelId } : {}),
+        ...(selection.reasoningEffort ? { effort: selection.reasoningEffort } : {})
       })
       const turnId = result?.turn?.id
       if (!turnId) throw new Error("Codex did not return a turn id.")
