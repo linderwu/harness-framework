@@ -63,8 +63,15 @@ export function createDshService({ registry = [], store, readQuotaSource = async
       return adapter.ensureSession({ bindingKey: key, requestId, target: normalized, recoverOnly: true })
     }
     const reserved = await store.transact(() => store.reserve('session', requestId, { bindingKey: key, target: normalized, status: 'prepared', payloadHash: `${key}:${JSON.stringify(normalized)}` }))
-    if (!reserved.created && reserved.record.nativeSessionId) return reserved.record
-    if (!reserved.created && ['unknown', 'submitted'].includes(reserved.record.status)) return { bindingKey: key, status: reserved.record.status, nativeSessionId: reserved.record.nativeSessionId ?? null }
+    if (!reserved.created) {
+      // A prepared receipt is already owned by another caller (or was left by
+      // a crash before adapter invocation). Do not invoke ensureSession twice;
+      // recovery is an explicit recoverOnly operation.
+      if (reserved.record.nativeSessionId) return reserved.record
+      if (['prepared', 'unknown', 'submitted', 'running', 'stopping'].includes(reserved.record.status)) {
+        return { ...reserved.record, bindingKey: reserved.record.bindingKey ?? key, nativeSessionId: reserved.record.nativeSessionId ?? null }
+      }
+    }
     let result
     try {
       result = await adapter.ensureSession({ bindingKey: key, requestId, target: normalized, recoverOnly: false })
