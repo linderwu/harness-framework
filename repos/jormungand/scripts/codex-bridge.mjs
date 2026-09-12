@@ -2023,6 +2023,10 @@ async function getDshV1Bridge() {
       const workspaceRoot = path.resolve(
         process.env.DSH_CODEX_WORKSPACE_ROOT ?? repoRoot
       )
+      const configuredDshWorkspaceId =
+        process.env.DSH_CODEX_WORKSPACE_ID?.trim() ||
+        process.env.CODEX_WORKSPACE_ID?.trim() ||
+        null
       const adapter = createCodexAdapter({
         capabilities: {
           sessionResume: false,
@@ -2036,7 +2040,9 @@ async function getDshV1Bridge() {
           quota: true,
         },
         sessionFor: async ({ bindingKey, target, recoverOnly }) => {
-          const workspace = target.workspaceId === "default" || target.workspaceId === path.basename(workspaceRoot)
+          const workspace = target.workspaceId === "default"
+            || target.workspaceId === path.basename(workspaceRoot)
+            || target.workspaceId === configuredDshWorkspaceId
             ? { path: workspaceRoot }
             : await resolveWorkspace(target.workspaceId)
           if (workspace.error) throw Object.assign(new Error(workspace.error), { code: "UNKNOWN_WORKSPACE", httpStatus: 422 })

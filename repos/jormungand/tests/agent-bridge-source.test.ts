@@ -22,6 +22,12 @@ test("OpenClaw A2A session keys use the shared bounded session helper", () => {
   assert.doesNotMatch(bridge, /function sanitizeSessionSegment/)
 })
 
+test("DSH Codex bridge accepts the configured workspace alias", () => {
+  assert.match(codexBridge, /process\.env\.DSH_CODEX_WORKSPACE_ID\?\.trim\(\) \|\|/)
+  assert.match(codexBridge, /process\.env\.CODEX_WORKSPACE_ID\?\.trim\(\) \|\|/)
+  assert.match(codexBridge, /target\.workspaceId === configuredDshWorkspaceId/)
+})
+
 test("Codex bridge preserves output-file arguments on Windows", () => {
   assert.match(codexBridge, /function spawnCodex/)
   assert.match(codexBridge, /process\.env\.ComSpec/)
