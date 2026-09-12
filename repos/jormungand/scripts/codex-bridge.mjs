@@ -1633,9 +1633,41 @@ async function createCodexSession(
   options = {}
 ) {
   const id = randomUUID()
+  const delegation = options.enableDshAgentDelegation && process.env.DSH_AGENT_DELEGATION_ENABLED !== "0"
+    ? {
+        command: process.execPath,
+        args: [path.join(repoRoot, "scripts", "dsh", "agent-call-mcp.mjs"), "--parent-session-id", id],
+        envVars: [
+          "CODEX_BRIDGE_TOKEN",
+          "HARNESS_BRIDGE_TOKEN",
+          "DSH_BRIDGE_TOKEN",
+          "CODEX_BRIDGE_PORT",
+          "CODEX_AGENT_ID",
+          "CODEX_HOST_ID",
+          "CODEX_WORKSPACE_ID",
+          "DSH_CODEX_WORKSPACE_ID",
+          "DSH_HOST_ID",
+          "PI_BRIDGE_TOKEN",
+          "PI_BRIDGE_URL",
+          "PI_AGENT_ID",
+          "PI_HOST_ID",
+          "PI_WORKSPACE_ID",
+          "OPENCLAW_BRIDGE_TOKEN",
+          "OPENCLAW_BRIDGE_URL",
+          "OPENCLAW_AGENT_ID",
+          "OPENCLAW_HOST_ID",
+          "OPENCLAW_WORKSPACE_ID",
+          "DSH_AGENT_DELEGATION_MAX_DEPTH",
+          "DSH_AGENT_DELEGATION_DEPTH",
+          "DSH_AGENT_DELEGATION_TARGETS_JSON",
+        ],
+        startupTimeoutSec: 10,
+        toolTimeoutSec: 120,
+      }
+    : undefined
   const session = {
     id,
-    child: spawnCodex(buildConfiguredCodexAppServerArgs(options.modelId), {
+    child: spawnCodex(buildConfiguredCodexAppServerArgs(options.modelId, { dshAgentDelegation: delegation }), {
       cwd: workspacePath,
       stdio: ["pipe", "pipe", "pipe"]
     }),
@@ -2056,6 +2088,7 @@ async function getDshV1Bridge() {
           const result = await getOrCreateCodexSession(workspace.path, permissionMode, payload, {
             name: `DSH ${target.agentId}`,
             modelId: normalizeCodexModelId(target.modelId),
+            enableDshAgentDelegation: true,
           })
           return wrapDshCodexSession(result.session)
         },
@@ -2827,8 +2860,8 @@ function readConfiguredCodexModel() {
   }
 }
 
-function buildConfiguredCodexAppServerArgs(modelId) {
-  return buildCodexAppServerArgs(modelId ?? readConfiguredCodexModel())
+function buildConfiguredCodexAppServerArgs(modelId, options = {}) {
+  return buildCodexAppServerArgs(modelId ?? readConfiguredCodexModel(), options)
 }
 
 function spawnCodex(args, options) {

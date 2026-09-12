@@ -60,10 +60,10 @@ function providerForCodexModel(modelId) {
 
   return undefined
 }
-export function buildCodexAppServerArgs(modelId) {
+export function buildCodexAppServerArgs(modelId, options = {}) {
   const normalizedModelId = String(modelId ?? "").trim()
   const provider = providerForCodexModel(modelId)
-  return [
+  const args = [
     "app-server",
     "--stdio",
     ...(normalizedModelId && normalizedModelId !== "ChatGPT OAuth"
@@ -71,4 +71,37 @@ export function buildCodexAppServerArgs(modelId) {
       : []),
     ...(provider ? ["-c", `model_provider=${provider}`] : [])
   ]
+  const delegation = options.dshAgentDelegation
+  if (delegation) {
+    if (typeof delegation.command !== "string" || delegation.command.trim() === "") {
+      throw new Error("DSH agent delegation command is required")
+    }
+    if (!Array.isArray(delegation.args) || delegation.args.some(value => typeof value !== "string")) {
+      throw new Error("DSH agent delegation args must be an array of strings")
+    }
+    args.push(
+      "-c",
+      `mcp_servers.dsh_agent_bridge.command=${JSON.stringify(delegation.command)}`,
+      "-c",
+      `mcp_servers.dsh_agent_bridge.args=${JSON.stringify(delegation.args)}`,
+    )
+    if (delegation.envVars !== undefined) {
+      if (!Array.isArray(delegation.envVars) || delegation.envVars.some(value => typeof value !== "string" || !/^[A-Z_][A-Z0-9_]*$/u.test(value))) {
+        throw new Error("DSH agent delegation env vars must be uppercase names")
+      }
+      args.push("-c", `mcp_servers.dsh_agent_bridge.env_vars=${JSON.stringify([...new Set(delegation.envVars)])}`)
+    }
+    if (delegation.startupTimeoutSec !== undefined) {
+      args.push("-c", `mcp_servers.dsh_agent_bridge.startup_timeout_sec=${positiveInteger(delegation.startupTimeoutSec, 10)}`)
+    }
+    if (delegation.toolTimeoutSec !== undefined) {
+      args.push("-c", `mcp_servers.dsh_agent_bridge.tool_timeout_sec=${positiveInteger(delegation.toolTimeoutSec, 120)}`)
+    }
+  }
+  return args
+}
+
+function positiveInteger(value, fallback) {
+  const number = Number(value)
+  return Number.isInteger(number) && number > 0 ? number : fallback
 }
