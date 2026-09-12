@@ -39,6 +39,24 @@ function writtenCommands(child) {
   return child.stdin.writes.map((value) => JSON.parse(value))
 }
 
+test('Pi adapter resolves Windows npm command shims for the default executable', async () => {
+  const calls = []
+  const adapter = createPiAdapter({
+    spawnImpl: (...args) => { calls.push(args); return fakeChild() },
+    command: 'pi',
+    cwdFor: () => process.cwd(),
+  })
+  await adapter.ensureSession({ bindingKey: 'platform-command', target: { workspaceId: 'repo' } })
+  if (process.platform === 'win32') {
+    assert.equal(calls[0][0], process.env.ComSpec ?? 'cmd.exe')
+    assert.deepEqual(calls[0][1].slice(0, 3), ['/d', '/s', '/c'])
+    assert.equal('shell' in calls[0][2], false)
+  } else {
+    assert.equal(calls[0][0], 'pi')
+    assert.equal('shell' in calls[0][2], false)
+  }
+})
+
 test('Pi adapter correlates model and prompt responses before accepting a turn', async () => {
   const child = fakeChild()
   const adapter = createPiAdapter({ spawnImpl: () => child, cwdFor: () => process.cwd() })
@@ -224,7 +242,12 @@ test('Pi adapter selects the workspace cwd for each native process', async () =>
   await adapter.ensureSession({ bindingKey: 'cwd', target })
   assert.equal(calls.length, 1)
   assert.equal(calls[0][2].cwd, 'C:/workspaces/project-42')
-  assert.deepEqual(calls[0][1], ['--mode', 'rpc'])
+  if (process.platform === 'win32') {
+    assert.deepEqual(calls[0][1].slice(0, 3), ['/d', '/s', '/c'])
+    assert.match(calls[0][1][3], /--mode rpc/)
+  } else {
+    assert.deepEqual(calls[0][1], ['--mode', 'rpc'])
+  }
 })
 
 test('Pi adapter rejects unsupported attachments and reasoning instead of silently claiming support', async () => {

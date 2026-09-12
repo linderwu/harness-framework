@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process'
+import path from 'node:path'
 import { StringDecoder } from 'node:string_decoder'
 import { formatHandoffPrompt } from './input.mjs'
 
@@ -84,7 +85,7 @@ export function createPiAdapter({ command = 'pi', cwdFor, spawnImpl = spawn, cap
   }
 
   function createSession(bindingKey, target) {
-    const child = spawnImpl(command, ['--mode', 'rpc'], { cwd: resolveCwd(target), stdio: ['pipe', 'pipe', 'pipe'] })
+    const child = spawnPiProcess(command, ['--mode', 'rpc'], { cwd: resolveCwd(target), stdio: ['pipe', 'pipe', 'pipe'] }, spawnImpl)
     const session = {
       bindingKey,
       target,
@@ -334,6 +335,29 @@ export function createPiAdapter({ command = 'pi', cwdFor, spawnImpl = spawn, cap
     })
     return promise
   }
+}
+
+
+function spawnPiProcess(command, args, options, spawnImpl) {
+  if (process.platform !== 'win32') return spawnImpl(command, args, options)
+
+  const commandName = path.win32.basename(command)
+  const isWindowsCmdShim = /\.(cmd|bat)$/i.test(commandName)
+  const isWindowsBarePathCommand = !/[\\/]/.test(command) && !/\.[^\\/.\s]+$/i.test(commandName)
+  if (!isWindowsCmdShim && !isWindowsBarePathCommand) return spawnImpl(command, args, options)
+
+  const commandLine = [command, ...args].map(quoteWindowsArgument).join(' ')
+  return spawnImpl(
+    process.env.ComSpec ?? 'cmd.exe',
+    ['/d', '/s', '/c', commandLine],
+    options,
+  )
+}
+
+function quoteWindowsArgument(value) {
+  const text = String(value)
+  if (!/[\s"]/.test(text)) return text
+  return `"${text.replaceAll(/(\\*)"/g, '$1$1\\"').replaceAll(/(\\+)$/g, '$1$1')}"`
 }
 
 function findPendingResponse(session, event) {
