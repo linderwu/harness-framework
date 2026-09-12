@@ -30,12 +30,15 @@ test('service projects observed adapter capabilities when registry metadata is o
       registry: [{
         agentId: 'codex',
         hostId: 'B',
+        runtimeKind: 'codex-app-server',
+        runtimeVersion: 'fixture',
         adapter: { capabilities: { events: true, interrupt: true } },
       }],
     })
     const result = await service.getCapabilities()
     assert.equal(result.agents[0].capabilities.events, true)
     assert.equal(result.agents[0].capabilities.interrupt, true)
+    assert.deepEqual(result.agents[0].runtime, { kind: 'codex-app-server', version: 'fixture' })
   } finally {
     await store.close()
     await rm(root, { recursive: true, force: true })

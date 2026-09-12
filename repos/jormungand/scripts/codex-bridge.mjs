@@ -2025,7 +2025,7 @@ async function getDshV1Bridge() {
       )
       const adapter = createCodexAdapter({
         capabilities: {
-          sessionResume: true,
+          sessionResume: false,
           models: true,
           reasoning: true,
           events: true,
@@ -2092,21 +2092,46 @@ async function getDshV1Bridge() {
           }
         },
       })
-      const piAdapter = process.env.DSH_PI_ENABLED === "1"
-        ? createPiAdapter({ cwdFor: () => workspaceRoot, command: process.env.PI_RPC_COMMAND ?? "pi" })
+      const piAdapter = ["1", "true"].includes(process.env.DSH_PI_ENABLED ?? "")
+        ? createPiAdapter({
+            cwdFor: (target) => resolvePiWorkspace(target, workspaceRoot),
+            command: process.env.PI_RPC_COMMAND ?? "pi",
+          })
         : null
       return createDshBridgeV1({
         hostId: process.env.DSH_HOST_ID ?? "B",
         storeRoot: path.resolve(process.env.DSH_BRIDGE_STATE_DIR ?? process.env.DSH_V1_STORE_ROOT ?? path.join(repoRoot, ".harness", "dsh-v1")),
         token,
         registry: [
-          { agentId: process.env.DSH_CODEX_AGENT_ID ?? "codex", hostId: process.env.DSH_HOST_ID ?? "B", adapter },
-          ...(piAdapter ? [{ agentId: process.env.DSH_PI_AGENT_ID ?? "pi", hostId: process.env.DSH_HOST_ID ?? "B", adapter: piAdapter }] : []),
+          { agentId: process.env.DSH_CODEX_AGENT_ID ?? "codex", hostId: process.env.DSH_HOST_ID ?? "B", runtimeKind: "codex-app-server", runtimeVersion: process.env.CODEX_RUNTIME_VERSION ?? null, adapter },
+          ...(piAdapter ? [{ agentId: process.env.DSH_PI_AGENT_ID ?? "pi", hostId: process.env.DSH_HOST_ID ?? "B", runtimeKind: "pi-rpc", runtimeVersion: process.env.PI_RUNTIME_VERSION ?? null, adapter: piAdapter }] : []),
         ],
       })
     })()
   }
   return dshV1HandlerPromise
+}
+
+function resolvePiWorkspace(target, defaultRoot) {
+  const workspaceId = String(target?.workspaceId ?? "").trim()
+  if (!workspaceId) throw Object.assign(new Error("Pi workspaceId is required"), { code: "UNKNOWN_WORKSPACE", httpStatus: 422 })
+  if (workspaceId === "default" || workspaceId === path.basename(defaultRoot)) return defaultRoot
+
+  let mappings = {}
+  const raw = process.env.DSH_PI_WORKSPACE_MAP_JSON
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw)
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) mappings = parsed
+    } catch {
+      throw Object.assign(new Error("DSH_PI_WORKSPACE_MAP_JSON is invalid"), { code: "INVALID_WORKSPACE_MAP", httpStatus: 422 })
+    }
+  }
+  const mapped = mappings[workspaceId]
+  if (typeof mapped !== "string" || mapped.trim() === "") {
+    throw Object.assign(new Error(`Pi workspace is not mapped: ${workspaceId}`), { code: "UNKNOWN_WORKSPACE", httpStatus: 422 })
+  }
+  return path.resolve(mapped)
 }
 
 function wrapDshCodexSession(session) {

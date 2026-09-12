@@ -67,6 +67,9 @@ const completedRunTtlMs = parseCompletedRunTtlMs(
 const activeRuns = new Map()
 const dshOpenClawSessions = new Map()
 const dshV1Enabled = process.env.DSH_V1_ENABLED === "1"
+const dshOpenClawAgentId = process.env.DSH_OPENCLAW_AGENT_ID ?? "openclaw"
+const dshOpenClawMainAgent = process.env.DSH_OPENCLAW_MAIN_AGENT ?? "rowlet"
+const dshOpenClawRole = process.env.DSH_OPENCLAW_ROLE ?? "worker"
 let dshV1HandlerPromise
 const activeWorkflowRuns = new Map()
 const activeIdempotencyKeys = new Map()
@@ -521,8 +524,11 @@ async function getDshV1Bridge() {
   if (!dshV1HandlerPromise) {
     dshV1HandlerPromise = (async () => {
       const adapter = createOpenClawAdapter({
+        agentMap: {
+          [dshOpenClawAgentId]: { mainAgent: dshOpenClawMainAgent, role: dshOpenClawRole },
+        },
         capabilities: {
-          sessionResume: true,
+          sessionResume: false,
           models: true,
           reasoning: false,
           events: true,
@@ -550,9 +556,11 @@ async function getDshV1Bridge() {
             .filter((event) => event.sequence > afterSeq)
             .map((event) => ({
               seq: event.sequence,
+              nativeRunId: session.journal.id,
               type: event.type === "assistant_delta" || event.type === "assistant_message" ? "text_delta" : event.type === "tool_started" ? "tool_started" : event.type === "tool_finished" ? "tool_finished" : "status",
               payload: {
                 requestId,
+                nativeRunId: session.journal.id,
                 nativeEventId: event.id,
                 nativeType: event.type,
                 ...(event.text ? { text: event.text } : {}),
@@ -570,7 +578,7 @@ async function getDshV1Bridge() {
         hostId: process.env.DSH_HOST_ID ?? "A",
         storeRoot: path.resolve(process.env.DSH_BRIDGE_STATE_DIR ?? process.env.DSH_V1_STORE_ROOT ?? path.join(runtimeSkillCacheRoot, "dsh-v1")),
         token,
-        registry: [{ agentId: process.env.DSH_OPENCLAW_AGENT_ID ?? "openclaw", hostId: process.env.DSH_HOST_ID ?? "A", adapter }],
+        registry: [{ agentId: dshOpenClawAgentId, hostId: process.env.DSH_HOST_ID ?? "A", runtimeKind: "openclaw-gateway", runtimeVersion: process.env.OPENCLAW_RUNTIME_VERSION ?? null, adapter }],
       })
     })()
   }
@@ -616,16 +624,16 @@ function createDshOpenClawSession({ bindingKey, target }) {
       return { requestId, accepted: true, turn: { requestId, nativeSessionId: requestedNativeSessionId, nativeRunId, status: "stopping", lastEventSeq: current.journal.nextCursor } }
     },
     getTurn({ requestId }) {
-      const status = current?.activeRun?.cancelled && current?.journal.status !== "completed"
-        ? "interrupted"
-        : current?.journal.status === "running"
-        ? "running"
-        : current?.journal.status === "completed"
-          ? "completed"
-          : current?.journal.status === "failed"
-            ? "failed"
-            : current?.activeRun?.cancelled
-              ? "interrupted"
+      const journalStatus = current?.journal?.status
+      const cancelled = current?.activeRun?.cancelled === true
+      const status = journalStatus === "running"
+        ? cancelled ? "stopping" : "running"
+        : cancelled
+          ? "interrupted"
+          : journalStatus === "completed"
+            ? "completed"
+            : journalStatus === "failed"
+              ? "failed"
               : undefined
       return status ? { requestId, nativeSessionId, nativeRunId: requestId, status, output: current.result?.output ?? "", lastEventSeq: current.journal.nextCursor } : null
     },
@@ -1017,17 +1025,10 @@ function buildOpenClawMessage(payload, context) {
 }
 
 function normalizeOpenClawAgent(mainAgent, executor) {
-  const value = mainAgent || String(executor ?? "").replace(/^openclaw\./, "")
-
-  return [
-    "rowlet",
-    "roaringmoon",
-    "charizard",
-    "mrmime",
-    "gengar"
-  ].includes(value)
-    ? value
-    : "rowlet"
+  const value = mainAgent || String(executor ?? "").replace(/^openclaw\./, "") || "rowlet"
+  const allowed = ["rowlet", "roaringmoon", "charizard", "mrmime", "gengar"]
+  if (allowed.includes(value)) return value
+  throw Object.assign(new Error(`Unknown OpenClaw agent: ${value}`), { code: "UNKNOWN_OPENCLAW_AGENT", httpStatus: 422 })
 }
 
 function resolveModel(mainAgent) {

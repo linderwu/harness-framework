@@ -27,7 +27,14 @@ export function createDshService({ registry = [], store, readQuotaSource = async
     return {
       schemaVersion: 'dsh-agent-bridge/v1',
       hostId: registry[0]?.hostId ?? null,
-      agents: registry.map(item => ({ agentId: item.agentId, capabilities: capabilityFlags(item.capabilities ?? item.adapter?.capabilities ?? {}) })),
+      agents: registry.map(item => ({
+        agentId: item.agentId,
+        runtime: {
+          kind: item.runtimeKind ?? null,
+          version: item.runtimeVersion ?? null,
+        },
+        capabilities: capabilityFlags(item.capabilities ?? item.adapter?.capabilities ?? {}),
+      })),
       limits: { maxRequestBytes: 1024 * 1024, maxEventPageBytes: 256 * 1024, maxEventPageItems: 200 },
       observedAt: new Date().toISOString(),
     }
@@ -127,9 +134,13 @@ export function createDshService({ registry = [], store, readQuotaSource = async
     const adapter = record.target ? findAdapter(record.target) : null
     if (typeof adapter?.getTurn !== 'function') return record
     const fresh = await adapter.getTurn({ requestId, ...record })
-    if (!fresh || !fresh.status || fresh.status === record.status) return record
+    if (!fresh || !fresh.status) return record
     if (['completed', 'interrupted', 'failed'].includes(record.status) && !['completed', 'interrupted', 'failed'].includes(fresh.status)) return record
-    return store.patch('turn', requestId, fresh)
+    const changes = {}
+    for (const field of ['status', 'nativeSessionId', 'nativeRunId', 'lastEventSeq', 'output', 'error']) {
+      if (fresh[field] !== undefined && JSON.stringify(fresh[field]) !== JSON.stringify(record[field])) changes[field] = fresh[field]
+    }
+    return Object.keys(changes).length > 0 ? store.patch('turn', requestId, changes) : record
   }
 
   async function readEvents({ requestId, afterSeq = 0 }) {
