@@ -265,3 +265,33 @@ test('Pi adapter rejects unsupported attachments and reasoning instead of silent
   )
   assert.equal(child.stdin.writes.length, 0)
 })
+
+test('Pi provider errors become failed turns without leaking credential text', async () => {
+  const child = fakeChild()
+  const adapter = createPiAdapter({ spawnImpl: () => child, cwdFor: () => process.cwd() })
+  const target = { agentId: 'pi', hostId: 'B', workspaceId: 'provider-error' }
+  const ensured = await adapter.ensureSession({ bindingKey: 'provider-error', target })
+  const turnPromise = adapter.startTurn({ requestId: 'provider-error-run', bindingKey: 'provider-error', nativeSessionId: ensured.nativeSessionId, target, message: 'answer' })
+  await waitForWrites(child, 1)
+  emitResponse(child, 'prompt', { id: 'provider-error-run', success: true })
+  await turnPromise
+
+  const errorMessage = 'OpenAI API error (401): Incorrect API key provided: sk-proj-secret-value'
+  const errorMessageEvent = {
+    role: 'assistant',
+    content: [],
+    stopReason: 'error',
+    errorMessage,
+  }
+  emitJson(child, { type: 'message_start', message: errorMessageEvent })
+  emitJson(child, { type: 'message_end', message: errorMessageEvent })
+  emitJson(child, { type: 'turn_end', message: errorMessageEvent })
+  emitJson(child, { type: 'agent_end', messages: [{ role: 'assistant', content: [], stopReason: 'error', errorMessage }] })
+  emitJson(child, { type: 'agent_settled' })
+
+  const turn = await adapter.getTurn({ requestId: 'provider-error-run', bindingKey: 'provider-error', nativeSessionId: ensured.nativeSessionId, nativeRunId: 'provider-error-run' })
+  assert.equal(turn.status, 'failed')
+  assert.equal(turn.error.code, 'PI_AUTH_FAILED')
+  assert.equal(turn.error.message, 'Pi provider authentication failed.')
+  assert.doesNotMatch(JSON.stringify(turn), /sk-proj-secret-value/)
+})

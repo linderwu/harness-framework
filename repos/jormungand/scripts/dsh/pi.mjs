@@ -34,6 +34,34 @@ function textFromMessage(message) {
   return textFromContent(message.content ?? message.text)
 }
 
+function runtimeErrorFromMessage(message) {
+  if (!message || typeof message !== 'object') return null
+  const raw = [
+    message.errorMessage,
+    typeof message.error === 'string' ? message.error : message.error?.message,
+  ].filter(value => typeof value === 'string' && value.trim()).join(' ')
+  if (message.stopReason !== 'error' && !raw) return null
+  if (/\b401\b|invalid[_ -]?api[_ -]?key|incorrect api key|credentials?_not_configured/iu.test(raw)) {
+    return { code: 'PI_AUTH_FAILED', message: 'Pi provider authentication failed.' }
+  }
+  return { code: 'PI_RUNTIME_ERROR', message: 'Pi provider returned an error.' }
+}
+
+function runtimeErrorFromEvent(event) {
+  const direct = runtimeErrorFromMessage(event?.message)
+  if (direct) return direct
+  if (event?.type === 'agent_end' && Array.isArray(event.messages)) {
+    for (let index = event.messages.length - 1; index >= 0; index -= 1) {
+      const error = runtimeErrorFromMessage(event.messages[index])
+      if (error) return error
+    }
+  }
+  if (event?.errorMessage || event?.error) {
+    return runtimeErrorFromMessage({ stopReason: 'error', errorMessage: event.errorMessage, error: event.error })
+  }
+  return null
+}
+
 function finalAssistantText(messages) {
   if (!Array.isArray(messages)) return ''
   for (let index = messages.length - 1; index >= 0; index -= 1) {
@@ -103,6 +131,7 @@ export function createPiAdapter({ command = 'pi', cwdFor, spawnImpl = spawn, cap
       commandSequence: 0,
       liveText: '',
       finalText: null,
+      error: null,
       stopRequested: false,
       closed: false,
       queueDepth: 0,
@@ -130,6 +159,11 @@ export function createPiAdapter({ command = 'pi', cwdFor, spawnImpl = spawn, cap
       let event
       try { event = JSON.parse(line) } catch { append('status', { message: 'Pi emitted malformed JSON.' }); return }
       if (!event || typeof event !== 'object' || Array.isArray(event)) { append('status', { message: 'Pi emitted an invalid JSON event.' }); return }
+      const runtimeError = runtimeErrorFromEvent(event)
+      if (runtimeError && !session.error) {
+        session.error = runtimeError
+        append('status', { nativeType: 'runtime_error', errorCode: runtimeError.code })
+      }
       if (event.type === 'response') {
         const pending = findPendingResponse(session, event)
         if (!pending) {
@@ -172,11 +206,12 @@ export function createPiAdapter({ command = 'pi', cwdFor, spawnImpl = spawn, cap
         updateFinalText(finalAssistantText(event.messages))
         append('status', { nativeType: event.type })
       } else if (event.type === 'agent_settled') {
-        if (session.turnStatus === 'stopping' || session.stopRequested) session.turnStatus = 'interrupted'
+        if (session.error) session.turnStatus = 'failed'
+        else if (session.turnStatus === 'stopping' || session.stopRequested) session.turnStatus = 'interrupted'
         else if (session.turnStatus === 'running') session.turnStatus = 'completed'
         session.stopRequested = false
         session.queueDepth = 0
-        append('status', { status: session.turnStatus, nativeType: event.type })
+        append('status', { status: session.turnStatus, nativeType: event.type, ...(session.error ? { errorCode: session.error.code } : {}) })
       } else {
         append('status', { nativeType: event.type })
       }
@@ -262,6 +297,7 @@ export function createPiAdapter({ command = 'pi', cwdFor, spawnImpl = spawn, cap
       session.queueDepth = 0
       session.liveText = ''
       session.finalText = null
+      session.error = null
       try {
         if (target.modelId) {
           const separator = target.modelId.indexOf(':')
@@ -403,6 +439,7 @@ function getTurn(session, requestId, projectedCursor = 0) {
     status: statusFor(session),
     lastEventSeq: projectedCursor,
     output: session.finalText ?? session.liveText,
+    ...(session.error ? { error: { ...session.error } } : {}),
   }
 }
 

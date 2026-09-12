@@ -310,7 +310,6 @@ export function createCodexAdapter({ sessionFor, capabilities = {}, models, quot
         return unknownTurn({ requestId, nativeSessionId, nativeRunId, lastEventSeq: 0 })
       }
       const projection = eventProjectionFor(bindingKey, nativeRunId)
-      projectEvents(projection, session.events, Number.MAX_SAFE_INTEGER, nativeRunId)
       return {
         requestId,
         nativeSessionId: actualNativeSessionId,

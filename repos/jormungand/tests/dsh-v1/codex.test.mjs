@@ -296,3 +296,66 @@ test('Codex adapter filters custom event pages without rewriting their payloads'
   })
   assert.deepEqual(result.events, [{ seq: 1, type: 'custom', payload: { nativeRunId: 'turn-contract', value: 'keep', nativeSeq: 2, nativeType: 'custom' } }])
 })
+
+test('Codex adapter keeps projected event sequences contiguous when status polling precedes replay', async () => {
+  const session = {
+    threadId: 'thread-contiguous',
+    currentTurnId: 'turn-contiguous',
+    turnStatus: 'inProgress',
+    finalText: '',
+    events: [
+      { sequence: 1, id: 'native-1', type: 'turn_started', turnId: 'turn-contiguous' },
+      { sequence: 2, id: 'native-2', type: 'item_started', turnId: 'turn-contiguous' },
+    ],
+  }
+  const adapter = createCodexAdapter({
+    sessionFor: async () => session,
+    events: ({ session: current }) => ({
+      events: current.events.map(event => ({
+        seq: event.sequence,
+        type: 'status',
+        payload: {
+          nativeEventId: event.id,
+          nativeType: event.type,
+          nativeRunId: event.turnId,
+        },
+      })),
+      turn: {
+        nativeSessionId: current.threadId,
+        nativeRunId: current.currentTurnId,
+        status: current.turnStatus,
+      },
+    }),
+  })
+  await adapter.ensureSession({ bindingKey: 'contiguous', target: {} })
+  const first = await adapter.readEvents({
+    requestId: 'contiguous-run',
+    bindingKey: 'contiguous',
+    target: {},
+    nativeSessionId: 'thread-contiguous',
+    nativeRunId: 'turn-contiguous',
+    afterSeq: 0,
+  })
+  assert.deepEqual(first.events.map(event => event.seq), [1, 2])
+
+  session.events.push({ sequence: 3, id: 'native-3', type: 'turn_completed', turnId: 'turn-contiguous' })
+  session.turnStatus = 'completed'
+  const status = await adapter.getTurn({
+    requestId: 'contiguous-run',
+    bindingKey: 'contiguous',
+    target: {},
+    nativeSessionId: 'thread-contiguous',
+    nativeRunId: 'turn-contiguous',
+  })
+  assert.equal(status.lastEventSeq, 2)
+
+  const next = await adapter.readEvents({
+    requestId: 'contiguous-run',
+    bindingKey: 'contiguous',
+    target: {},
+    nativeSessionId: 'thread-contiguous',
+    nativeRunId: 'turn-contiguous',
+    afterSeq: 2,
+  })
+  assert.deepEqual(next.events.map(event => event.seq), [3])
+})

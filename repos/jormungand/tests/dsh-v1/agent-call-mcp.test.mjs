@@ -122,3 +122,16 @@ test('delegation MCP returns unknown when a target never settles', async () => {
   assert.equal(result.result.isError, true)
   assert.match(result.result.content[0].text, /DELEGATION_UNKNOWN|DELEGATION_TIMEOUT/)
 })
+
+test('delegation rejects non-loopback HTTP target origins', () => {
+  assert.throws(
+    () => createDelegationService({
+      env: {
+        DSH_AGENT_DELEGATION_TARGETS_JSON: JSON.stringify([{ agentId: 'pi', hostId: 'B', workspaceId: 'pi-main', origin: 'http://192.168.50.1:4177', tokenEnv: 'TEST_BRIDGE_TOKEN' }]),
+        TEST_BRIDGE_TOKEN: 'bridge-secret',
+      },
+      fetchImpl: async () => response({}),
+    }),
+    { code: 'INVALID_TARGET_CONFIG' },
+  )
+})

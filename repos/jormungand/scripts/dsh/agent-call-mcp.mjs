@@ -29,10 +29,10 @@ function normalizeOrigin(value) {
   if (typeof value !== 'string' || value.trim() === '') return null
   let parsed
   try { parsed = new URL(value) } catch { return null }
-  if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password || parsed.search || parsed.hash) return null
+  const loopback = ['localhost', '127.0.0.1', '[::1]', '::1'].includes(parsed.hostname.toLowerCase())
+  if ((parsed.protocol !== 'https:' && !(parsed.protocol === 'http:' && loopback)) || parsed.username || parsed.password || parsed.search || parsed.hash) return null
   return parsed.origin
 }
-
 function normalizeIdentity(value, field) {
   if (typeof value !== 'string' || !AGENT_ID_RE.test(value)) {
     throw delegationError('INVALID_TARGET_CONFIG', `${field} must be a short agent identity`)

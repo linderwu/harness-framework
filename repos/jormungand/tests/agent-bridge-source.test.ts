@@ -28,6 +28,13 @@ test("DSH Codex bridge accepts the configured workspace alias", () => {
   assert.match(codexBridge, /target\.workspaceId === configuredDshWorkspaceId/)
 })
 
+
+test("Windows bridge launches the default Codex command directly for MCP-safe arguments", () => {
+  assert.match(codexBridge, /const useBundledCodex = !configured \|\| \/\^codex/)
+  assert.match(codexBridge, /if \(useBundledCodex\) \{[\s\S]*spawn\(\s*process\.execPath/)
+  assert.match(codexBridge, /if \(useBundledCodex\) \{[\s\S]*shell: false/)
+})
+
 test("Codex bridge preserves output-file arguments on Windows", () => {
   assert.match(codexBridge, /function spawnCodex/)
   assert.match(codexBridge, /process\.env\.ComSpec/)

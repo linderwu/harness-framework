@@ -81,15 +81,15 @@ export function buildCodexAppServerArgs(modelId, options = {}) {
     }
     args.push(
       "-c",
-      `mcp_servers.dsh_agent_bridge.command=${JSON.stringify(delegation.command)}`,
+      `mcp_servers.dsh_agent_bridge.command=${tomlLiteralString(delegation.command)}`,
       "-c",
-      `mcp_servers.dsh_agent_bridge.args=${JSON.stringify(delegation.args)}`,
+      `mcp_servers.dsh_agent_bridge.args=${tomlLiteralArray(delegation.args)}`,
     )
     if (delegation.envVars !== undefined) {
       if (!Array.isArray(delegation.envVars) || delegation.envVars.some(value => typeof value !== "string" || !/^[A-Z_][A-Z0-9_]*$/u.test(value))) {
         throw new Error("DSH agent delegation env vars must be uppercase names")
       }
-      args.push("-c", `mcp_servers.dsh_agent_bridge.env_vars=${JSON.stringify([...new Set(delegation.envVars)])}`)
+      args.push("-c", `mcp_servers.dsh_agent_bridge.env_vars=${tomlLiteralArray([...new Set(delegation.envVars)])}`)
     }
     if (delegation.startupTimeoutSec !== undefined) {
       args.push("-c", `mcp_servers.dsh_agent_bridge.startup_timeout_sec=${positiveInteger(delegation.startupTimeoutSec, 10)}`)
@@ -99,6 +99,17 @@ export function buildCodexAppServerArgs(modelId, options = {}) {
     }
   }
   return args
+}
+
+
+function tomlLiteralString(value) {
+  const text = String(value)
+  if (/[\r\n']/.test(text)) throw new Error("DSH agent delegation config contains an unsupported string")
+  return `'${text}'`
+}
+
+function tomlLiteralArray(values) {
+  return `[${values.map(tomlLiteralString).join(',')}]`
 }
 
 function positiveInteger(value, fallback) {

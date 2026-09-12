@@ -2866,11 +2866,12 @@ function buildConfiguredCodexAppServerArgs(modelId, options = {}) {
 
 function spawnCodex(args, options) {
   const configured = process.env.CODEX_BRIDGE_COMMAND?.trim()
+  const useBundledCodex = !configured || /^codex(?:\.cmd)?$/i.test(configured)
   if (process.platform === "win32") {
-    const command = configured || process.execPath
-    const commandArgs = configured
-      ? args
-      : [
+    if (useBundledCodex) {
+      return spawn(
+        process.execPath,
+        [
           path.join(
             process.env.APPDATA ?? path.join(os.homedir(), "AppData", "Roaming"),
             "npm",
@@ -2881,8 +2882,11 @@ function spawnCodex(args, options) {
             "codex.js"
           ),
           ...args
-        ]
-    const commandLine = [command, ...commandArgs]
+        ],
+        { ...options, shell: false }
+      )
+    }
+    const commandLine = [configured, ...args]
       .map(quoteWindowsArgument)
       .join(" ")
     return spawn(
