@@ -94,7 +94,12 @@ function projectEvents(projection, nativeEvents, afterSeq, nativeRunId) {
  * Small JSONL RPC adapter for Pi. It intentionally keeps the subprocess
  * behind the same v1 receipt/event contract as the other bridges.
  */
-export function createPiAdapter({ command = 'pi', cwdFor, spawnImpl = spawn, capabilities = {}, responseTimeoutMs = 5000 } = {}) {
+export function createPiAdapter({ command = 'pi', provider = 'minimax', model = 'MiniMax-M2.7', cwdFor, spawnImpl = spawn, capabilities = {}, responseTimeoutMs = 5000 } = {}) {
+  const piProvider = String(provider).trim() || 'minimax'
+  const piModel = String(model).trim() || 'MiniMax-M2.7'
+  const piEnvironment = { ...process.env }
+  delete piEnvironment.OPENAI_API_KEY
+  delete piEnvironment.OPENAI_API_KEY_DIR
   const sessions = new Map()
   const eventProjections = new Map()
   const eventProjectionFor = (bindingKey, nativeRunId) => {
@@ -113,7 +118,7 @@ export function createPiAdapter({ command = 'pi', cwdFor, spawnImpl = spawn, cap
   }
 
   function createSession(bindingKey, target) {
-    const child = spawnPiProcess(command, ['--mode', 'rpc'], { cwd: resolveCwd(target), stdio: ['pipe', 'pipe', 'pipe'] }, spawnImpl)
+    const child = spawnPiProcess(command, ['--mode', 'rpc', '--provider', piProvider, '--model', piModel], { cwd: resolveCwd(target), stdio: ['pipe', 'pipe', 'pipe'], env: piEnvironment }, spawnImpl)
     const session = {
       bindingKey,
       target,

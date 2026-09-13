@@ -295,3 +295,18 @@ test('Pi provider errors become failed turns without leaking credential text', a
   assert.equal(turn.error.message, 'Pi provider authentication failed.')
   assert.doesNotMatch(JSON.stringify(turn), /sk-proj-secret-value/)
 })
+
+test('Pi adapter launches an explicit MiniMax model without OpenAI credential inheritance', async () => {
+  const calls = []
+  const adapter = createPiAdapter({
+    spawnImpl: (...args) => { calls.push(args); return fakeChild() },
+    cwdFor: () => process.cwd(),
+  })
+  await adapter.ensureSession({ bindingKey: 'explicit-provider', target: { workspaceId: 'repo' } })
+  const launchedArgs = calls[0][1].join(' ')
+  assert.match(launchedArgs, /--provider minimax/)
+  assert.match(launchedArgs, /--model MiniMax-M2\.7/)
+  assert.equal(Object.hasOwn(calls[0][2].env, 'OPENAI_API_KEY'), false)
+  assert.equal(Object.hasOwn(calls[0][2].env, 'OPENAI_API_KEY_DIR'), false)
+  assert.equal(calls[0][2].env.MINIMAX_API_KEY, process.env.MINIMAX_API_KEY)
+})
