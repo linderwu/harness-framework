@@ -106,6 +106,17 @@ if ($Action -eq "sync") {
   $bridgeB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($bridgeSource))
   $sessionSource = Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot "openclaw-session.mjs")
   $sessionB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($sessionSource))
+  $permissionsSource = Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot "agent-permissions.mjs")
+  $permissionsB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($permissionsSource))
+  $quotaStoreSource = Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot "lucky-quota-store.mjs")
+  $quotaStoreB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($quotaStoreSource))
+  $dshBridgeV1B64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes((Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot "dsh/bridge-v1.mjs"))))
+  $dshOpenClawB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes((Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot "dsh/openclaw.mjs"))))
+  $dshInputB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes((Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot "dsh/input.mjs"))))
+  $dshCapabilitiesB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes((Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot "dsh/capabilities.mjs"))))
+  $dshStoreB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes((Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot "dsh/store.mjs"))))
+  $dshServiceB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes((Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot "dsh/service.mjs"))))
+  $dshRoutesB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes((Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot "dsh/routes.mjs"))))
   $lockSource = Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot "..\.harness\skill.lock.json")
   $lockB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($lockSource))
   $remoteScript = @'
@@ -113,7 +124,12 @@ set -eu
 bridge_dir="$HOME/jormungandr-openclaw-bridge"
 config_dir="$HOME/.config/jormungandr"
 drop_in="$HOME/.config/systemd/user/jormungandr-openclaw-bridge.service.d"
-mkdir -p "$bridge_dir" "$config_dir" "$drop_in"
+mkdir -p "$bridge_dir" "$bridge_dir/dsh" "$config_dir" "$drop_in"
+systemctl --user stop jormungandr-openclaw-bridge.service || true
+for attempt in $(seq 1 15); do
+  if ! systemctl --user is-active --quiet jormungandr-openclaw-bridge.service; then break; fi
+  sleep 1
+done
 if [ -f "$bridge_dir/openclaw-bridge.mjs" ]; then
   cp "$bridge_dir/openclaw-bridge.mjs" "$bridge_dir/openclaw-bridge.mjs.previous"
 fi
@@ -125,24 +141,57 @@ if [ -f "$config_dir/skill.lock.json" ]; then
 fi
 printf '%s' '__BRIDGE_B64__' | base64 -d > "$bridge_dir/openclaw-bridge.mjs"
 printf '%s' '__SESSION_B64__' | base64 -d > "$bridge_dir/openclaw-session.mjs"
+printf '%s' '__PERMISSIONS_B64__' | base64 -d > "$bridge_dir/agent-permissions.mjs"
+printf '%s' '__QUOTA_STORE_B64__' | base64 -d > "$bridge_dir/lucky-quota-store.mjs"
+printf '%s' '__DSH_BRIDGE_V1_B64__' | base64 -d > "$bridge_dir/dsh/bridge-v1.mjs"
+printf '%s' '__DSH_OPENCLAW_B64__' | base64 -d > "$bridge_dir/dsh/openclaw.mjs"
+printf '%s' '__DSH_INPUT_B64__' | base64 -d > "$bridge_dir/dsh/input.mjs"
+printf '%s' '__DSH_CAPABILITIES_B64__' | base64 -d > "$bridge_dir/dsh/capabilities.mjs"
+printf '%s' '__DSH_STORE_B64__' | base64 -d > "$bridge_dir/dsh/store.mjs"
+printf '%s' '__DSH_SERVICE_B64__' | base64 -d > "$bridge_dir/dsh/service.mjs"
+printf '%s' '__DSH_ROUTES_B64__' | base64 -d > "$bridge_dir/dsh/routes.mjs"
 printf '%s' '__LOCK_B64__' | base64 -d > "$config_dir/skill.lock.json"
 bridge_token=$(printf '%s' '__TOKEN_B64__' | base64 -d)
 {
   printf 'OPENCLAW_BRIDGE_TOKEN=%s\n' "$bridge_token"
   printf 'OPENCLAW_BRIDGE_PORT=4188\n'
+  printf 'OPENCLAW_EXEC_MODE=host\n'
+  printf 'OPENCLAW_BIN=%s\n' "$HOME/.nvm/versions/node/v24.19.0/bin/openclaw"
+  printf 'OPENCLAW_A2A_MODEL=minimax-portal/MiniMax-M3\n'
   printf 'OPENCLAW_RUNTIME_SKILL_LOCK=%s\n' "$config_dir/skill.lock.json"
+  printf 'DSH_V1_ENABLED=1\n'
+  printf 'DSH_HOST_ID=A\n'
+  printf 'DSH_OPENCLAW_AGENT_ID=openclaw\n'
+  printf 'DSH_OPENCLAW_MAIN_AGENT=rowlet\n'
+  printf 'DSH_OPENCLAW_ROLE=worker\n'
 } > "$config_dir/openclaw-bridge.env"
 chmod 600 "$config_dir/openclaw-bridge.env" "$config_dir/skill.lock.json"
+dsh_store_root="$HOME/.cache/jormungandr/runtime-skills/dsh-v1"
+lock="$dsh_store_root/writer.lock"
+if [ -f "$lock" ]; then
+  lock_pid=$(sed -n 's/.*"pid":\([0-9][0-9]*\).*/\1/p' "$lock")
+  if [ -z "$lock_pid" ] || ! kill -0 "$lock_pid" 2>/dev/null; then rm -f "$lock"; fi
+fi
 printf '%s\n' '[Service]' "EnvironmentFile=$config_dir/openclaw-bridge.env" > "$drop_in/environment.conf"
 systemctl --user daemon-reload
-systemctl --user restart jormungandr-openclaw-bridge.service
+systemctl --user start jormungandr-openclaw-bridge.service
 sleep 3
 systemctl --user is-active jormungandr-openclaw-bridge.service
 curl -fsS -H "Authorization: Bearer $bridge_token" http://127.0.0.1:4188/health
+curl -fsS -H "Authorization: Bearer $bridge_token" http://127.0.0.1:4188/dsh/v1/capabilities
 printf '\n'
 '@
   $remoteScript = $remoteScript.Replace("__BRIDGE_B64__", $bridgeB64)
   $remoteScript = $remoteScript.Replace("__SESSION_B64__", $sessionB64)
+  $remoteScript = $remoteScript.Replace("__PERMISSIONS_B64__", $permissionsB64)
+  $remoteScript = $remoteScript.Replace("__QUOTA_STORE_B64__", $quotaStoreB64)
+  $remoteScript = $remoteScript.Replace("__DSH_BRIDGE_V1_B64__", $dshBridgeV1B64)
+  $remoteScript = $remoteScript.Replace("__DSH_OPENCLAW_B64__", $dshOpenClawB64)
+  $remoteScript = $remoteScript.Replace("__DSH_INPUT_B64__", $dshInputB64)
+  $remoteScript = $remoteScript.Replace("__DSH_CAPABILITIES_B64__", $dshCapabilitiesB64)
+  $remoteScript = $remoteScript.Replace("__DSH_STORE_B64__", $dshStoreB64)
+  $remoteScript = $remoteScript.Replace("__DSH_SERVICE_B64__", $dshServiceB64)
+  $remoteScript = $remoteScript.Replace("__DSH_ROUTES_B64__", $dshRoutesB64)
   $remoteScript = $remoteScript.Replace("__LOCK_B64__", $lockB64)
   $remoteScript = $remoteScript.Replace("__TOKEN_B64__", $tokenB64)
   Invoke-Remote $remoteScript
@@ -203,6 +252,7 @@ if [ "$(systemctl --user is-active jormungandr-openclaw-bridge.service)" != "act
 fi
 printf 'BRIDGE_SERVICE=active\n'
 curl -fsS -H "Authorization: Bearer $bridge_token" http://127.0.0.1:4188/health
+curl -fsS -H "Authorization: Bearer $bridge_token" http://127.0.0.1:4188/dsh/v1/capabilities
 printf '\n'
 '@
   $remoteScript = $remoteScript.Replace("__TOKEN_B64__", $tokenB64)
@@ -217,7 +267,8 @@ bridge_token=$(printf '%s' '__TOKEN_B64__' | base64 -d)
 bridge_status=$(systemctl --user is-active jormungandr-openclaw-bridge.service 2>/dev/null || true)
 printf 'BRIDGE_SERVICE=%s\n' "$bridge_status"
 printf 'LOCAL_HEALTH='
-curl -fsS -H "Authorization: Bearer $bridge_token" http://127.0.0.1:4188/health || true
+curl -fsS -H "Authorization: Bearer $bridge_token" http://127.0.0.1:4188/health
+curl -fsS -H "Authorization: Bearer $bridge_token" http://127.0.0.1:4188/dsh/v1/capabilities || true
 printf '\n'
 docker ps --filter 'name=^/cloudflared$' --format 'CLOUDFLARED={{.Status}}'
 '@

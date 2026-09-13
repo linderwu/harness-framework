@@ -260,6 +260,13 @@ $bridgeB64 = Get-SourceBase64 "openclaw-bridge.mjs"
 $sessionB64 = Get-SourceBase64 "openclaw-session.mjs"
 $permissionsB64 = Get-SourceBase64 "agent-permissions.mjs"
 $quotaStoreB64 = Get-SourceBase64 "lucky-quota-store.mjs"
+$dshBridgeV1B64 = Get-SourceBase64 "dsh/bridge-v1.mjs"
+$dshOpenClawB64 = Get-SourceBase64 "dsh/openclaw.mjs"
+$dshInputB64 = Get-SourceBase64 "dsh/input.mjs"
+$dshCapabilitiesB64 = Get-SourceBase64 "dsh/capabilities.mjs"
+$dshStoreB64 = Get-SourceBase64 "dsh/store.mjs"
+$dshServiceB64 = Get-SourceBase64 "dsh/service.mjs"
+$dshRoutesB64 = Get-SourceBase64 "dsh/routes.mjs"
 $lockPath = Join-Path $projectRoot ".harness\skill.lock.json"
 $lockB64 = if (Test-Path -LiteralPath $lockPath) {
   Convert-ToBase64 (Get-Content -Raw -LiteralPath $lockPath)
@@ -281,7 +288,7 @@ config_dir="$HOME/.config/jormungandr"
 unit_dir="$HOME/.config/systemd/user"
 unit="$unit_dir/jormungandr-openclaw-bridge.service"
 sudo_password=$(printf '%s' '__SUDO_PASSWORD_B64__' | base64 -d)
-mkdir -p "$bridge_dir" "$config_dir" "$unit_dir"
+mkdir -p "$bridge_dir" "$bridge_dir/dsh" "$config_dir" "$unit_dir"
 
 sudo_run() {
   printf '%s\n' "$sudo_password" | sudo -S -p '' "$@"
@@ -308,6 +315,11 @@ DROPIN
 }
 
 install_bridge() {
+  systemctl --user stop jormungandr-openclaw-bridge.service || true
+  for attempt in $(seq 1 15); do
+    if ! systemctl --user is-active --quiet jormungandr-openclaw-bridge.service; then break; fi
+    sleep 1
+  done
   for file in openclaw-bridge.mjs openclaw-session.mjs agent-permissions.mjs lucky-quota-store.mjs; do
     if [ -f "$bridge_dir/$file" ]; then
       cp "$bridge_dir/$file" "$bridge_dir/$file.previous"
@@ -317,6 +329,13 @@ install_bridge() {
   printf '%s' '__SESSION_B64__' | base64 -d > "$bridge_dir/openclaw-session.mjs"
   printf '%s' '__PERMISSIONS_B64__' | base64 -d > "$bridge_dir/agent-permissions.mjs"
   printf '%s' '__QUOTA_STORE_B64__' | base64 -d > "$bridge_dir/lucky-quota-store.mjs"
+  printf '%s' '__DSH_BRIDGE_V1_B64__' | base64 -d > "$bridge_dir/dsh/bridge-v1.mjs"
+  printf '%s' '__DSH_OPENCLAW_B64__' | base64 -d > "$bridge_dir/dsh/openclaw.mjs"
+  printf '%s' '__DSH_INPUT_B64__' | base64 -d > "$bridge_dir/dsh/input.mjs"
+  printf '%s' '__DSH_CAPABILITIES_B64__' | base64 -d > "$bridge_dir/dsh/capabilities.mjs"
+  printf '%s' '__DSH_STORE_B64__' | base64 -d > "$bridge_dir/dsh/store.mjs"
+  printf '%s' '__DSH_SERVICE_B64__' | base64 -d > "$bridge_dir/dsh/service.mjs"
+  printf '%s' '__DSH_ROUTES_B64__' | base64 -d > "$bridge_dir/dsh/routes.mjs"
   printf '%s' '__LOCK_B64__' | base64 -d > "$config_dir/skill.lock.json"
   bridge_token=$(printf '%s' '__BRIDGE_TOKEN_B64__' | base64 -d)
   gateway_token=$(printf '%s' '__GATEWAY_TOKEN_B64__' | base64 -d)
@@ -330,9 +349,20 @@ install_bridge() {
     printf 'OPENCLAW_BRIDGE_TOKEN=%s\n' "$bridge_token"
     printf 'OPENCLAW_GATEWAY_TOKEN=%s\n' "$gateway_token"
     printf 'OPENCLAW_RUNTIME_SKILL_LOCK=%s\n' "$config_dir/skill.lock.json"
+    printf 'DSH_V1_ENABLED=1\n'
+    printf 'DSH_HOST_ID=A\n'
+    printf 'DSH_OPENCLAW_AGENT_ID=openclaw\n'
+    printf 'DSH_OPENCLAW_MAIN_AGENT=rowlet\n'
+    printf 'DSH_OPENCLAW_ROLE=worker\n'
   } > "$config_dir/openclaw-bridge.env"
   chmod 700 "$bridge_dir/openclaw-bridge.mjs"
   chmod 600 "$config_dir/openclaw-bridge.env" "$config_dir/skill.lock.json"
+  dsh_store_root="$HOME/.cache/jormungandr/runtime-skills/dsh-v1"
+  lock="$dsh_store_root/writer.lock"
+  if [ -f "$lock" ]; then
+    lock_pid=$(sed -n 's/.*"pid":\([0-9][0-9]*\).*/\1/p' "$lock")
+    if [ -z "$lock_pid" ] || ! kill -0 "$lock_pid" 2>/dev/null; then rm -f "$lock"; fi
+  fi
   cat > "$unit" <<UNIT
 [Unit]
 Description=OpenClaw native HTTP bridge
@@ -373,7 +403,7 @@ fi
 case "$action" in
   install)
     systemctl --user start openclaw-gateway.service
-    systemctl --user restart jormungandr-openclaw-bridge.service
+    systemctl --user start jormungandr-openclaw-bridge.service
     ;;
   start)
     systemctl --user start openclaw-gateway.service
@@ -451,6 +481,13 @@ $remoteScript = $remoteScript.Replace("__BRIDGE_B64__", $bridgeB64)
 $remoteScript = $remoteScript.Replace("__SESSION_B64__", $sessionB64)
 $remoteScript = $remoteScript.Replace("__PERMISSIONS_B64__", $permissionsB64)
 $remoteScript = $remoteScript.Replace("__QUOTA_STORE_B64__", $quotaStoreB64)
+$remoteScript = $remoteScript.Replace("__DSH_BRIDGE_V1_B64__", $dshBridgeV1B64)
+$remoteScript = $remoteScript.Replace("__DSH_OPENCLAW_B64__", $dshOpenClawB64)
+$remoteScript = $remoteScript.Replace("__DSH_INPUT_B64__", $dshInputB64)
+$remoteScript = $remoteScript.Replace("__DSH_CAPABILITIES_B64__", $dshCapabilitiesB64)
+$remoteScript = $remoteScript.Replace("__DSH_STORE_B64__", $dshStoreB64)
+$remoteScript = $remoteScript.Replace("__DSH_SERVICE_B64__", $dshServiceB64)
+$remoteScript = $remoteScript.Replace("__DSH_ROUTES_B64__", $dshRoutesB64)
 $remoteScript = $remoteScript.Replace("__LOCK_B64__", $lockB64)
 $remoteScript = $remoteScript.Replace("__BRIDGE_TOKEN_B64__", $bridgeTokenB64)
 $remoteScript = $remoteScript.Replace("__GATEWAY_TOKEN_B64__", $gatewayTokenB64)

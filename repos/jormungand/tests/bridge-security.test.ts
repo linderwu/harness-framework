@@ -19,6 +19,10 @@ const openClawDeploySource = readFileSync(
   "scripts/deploy-openclaw-bridge.ps1",
   "utf8"
 )
+const openClawStackSource = readFileSync(
+  "scripts/start-openclaw-stack.ps1",
+  "utf8"
+)
 const proxySource = readFileSync("proxy.ts", "utf8")
 const healthSource = readFileSync("app/health/route.ts", "utf8")
 
@@ -199,6 +203,22 @@ test("OpenClaw deployment pins SSH hosts and deploys the skill lock", () => {
   assert.doesNotMatch(openClawDeploySource, /SITE_AUTH_PASSWORD/)
   assert.match(openClawDeploySource, /127\.0\.0\.1:4188/)
 })
+
+test("OpenClaw deployment enables DSH v1 and ships its native modules", () => {
+  assert.match(openClawDeploySource, /DSH_V1_ENABLED=1/)
+  assert.match(openClawDeploySource, /OPENCLAW_EXEC_MODE=host/)
+  assert.match(openClawStackSource, /OPENCLAW_EXEC_MODE=host/)
+  assert.match(openClawStackSource, /DSH_V1_ENABLED=1/)
+  assert.match(openClawDeploySource, /bridge_dir\/dsh/)
+  assert.match(openClawStackSource, /bridge_dir\/dsh/)
+})
+
+test("OpenClaw bridge closes its DSH v1 store during signal shutdown", () => {
+  assert.match(openClawBridgeSource, /for \(const signal of \[\"SIGTERM\", \"SIGINT\"\]\)/)
+  assert.match(openClawBridgeSource, /dshV1HandlerPromise/)
+  assert.match(openClawBridgeSource, /bridge\?\.close\?\.\(\)/)
+})
+
 
 test("site health stays public while application routes remain protected", () => {
   assert.match(proxySource, /favicon\.ico\|apple-icon\.png\|health\$/)

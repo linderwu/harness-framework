@@ -358,6 +358,30 @@ const server = http.createServer(async (request, response) => {
   }
 })
 
+let shutdownPromise
+
+async function shutdownBridge() {
+  if (shutdownPromise) return shutdownPromise
+  shutdownPromise = (async () => {
+    for (const activeRun of activeRuns.values()) activeRun.cancel()
+    const bridge = dshV1HandlerPromise
+      ? await dshV1HandlerPromise.catch(() => null)
+      : null
+    await bridge?.close?.()
+    if (server.listening) {
+      server.closeAllConnections?.()
+      await new Promise((resolve) => server.close(() => resolve()))
+    }
+  })()
+  return shutdownPromise
+}
+
+for (const signal of ["SIGTERM", "SIGINT"]) {
+  process.on(signal, () => {
+    void shutdownBridge().finally(() => process.exit(0))
+  })
+}
+
 if (process.env.OPENCLAW_BRIDGE_DISABLE_LISTEN !== "1") {
   server.listen(port, host, () => {
     console.log(`OpenClaw bridge listening at http://${host}:${port}`)
