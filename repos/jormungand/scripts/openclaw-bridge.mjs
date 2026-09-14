@@ -15,7 +15,7 @@ import {
   readQuota as readLuckyQuota
 } from "./lucky-quota-store.mjs"
 import { createDshBridgeV1 } from "./dsh/bridge-v1.mjs"
-import { createOpenClawAdapter } from "./dsh/openclaw.mjs"
+import { buildOpenClawAgentMap, createOpenClawAdapter } from "./dsh/openclaw.mjs"
 import { formatHandoffPrompt } from "./dsh/input.mjs"
 
 const host = process.env.OPENCLAW_BRIDGE_HOST ?? "127.0.0.1"
@@ -70,6 +70,7 @@ const dshV1Enabled = process.env.DSH_V1_ENABLED === "1"
 const dshOpenClawAgentId = process.env.DSH_OPENCLAW_AGENT_ID ?? "openclaw"
 const dshOpenClawMainAgent = process.env.DSH_OPENCLAW_MAIN_AGENT ?? "rowlet"
 const dshOpenClawRole = process.env.DSH_OPENCLAW_ROLE ?? "worker"
+const dshOpenClawAgents = process.env.DSH_OPENCLAW_AGENTS
 let dshV1HandlerPromise
 const activeWorkflowRuns = new Map()
 const activeIdempotencyKeys = new Map()
@@ -547,10 +548,14 @@ async function runOpenClawAgent({
 async function getDshV1Bridge() {
   if (!dshV1HandlerPromise) {
     dshV1HandlerPromise = (async () => {
+      const openClawMap = buildOpenClawAgentMap({
+        dshAgentId: dshOpenClawAgentId,
+        legacyMainAgent: dshOpenClawMainAgent,
+        role: dshOpenClawRole,
+        agents: dshOpenClawAgents === undefined ? undefined : dshOpenClawAgents.split(',').map(value => value.trim()).filter(Boolean),
+      })
       const adapter = createOpenClawAdapter({
-        agentMap: {
-          [dshOpenClawAgentId]: { mainAgent: dshOpenClawMainAgent, role: dshOpenClawRole },
-        },
+        agentMap: openClawMap.agentMap,
         capabilities: {
           sessionResume: false,
           models: true,
@@ -602,7 +607,7 @@ async function getDshV1Bridge() {
         hostId: process.env.DSH_HOST_ID ?? "A",
         storeRoot: path.resolve(process.env.DSH_BRIDGE_STATE_DIR ?? process.env.DSH_V1_STORE_ROOT ?? path.join(runtimeSkillCacheRoot, "dsh-v1")),
         token,
-        registry: [{ agentId: dshOpenClawAgentId, hostId: process.env.DSH_HOST_ID ?? "A", runtimeKind: "openclaw-gateway", runtimeVersion: process.env.OPENCLAW_RUNTIME_VERSION ?? null, adapter }],
+        registry: openClawMap.agentIds.map(agentId => ({ agentId, hostId: process.env.DSH_HOST_ID ?? "A", runtimeKind: "openclaw-gateway", runtimeVersion: process.env.OPENCLAW_RUNTIME_VERSION ?? null, adapter })),
       })
     })()
   }

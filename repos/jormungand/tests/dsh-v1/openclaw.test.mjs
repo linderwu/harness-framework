@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { createOpenClawAdapter } from '../../scripts/dsh/openclaw.mjs'
+import { buildOpenClawAgentMap, createOpenClawAdapter } from '../../scripts/dsh/openclaw.mjs'
 
 function target(agentId = 'openclaw.rowlet') {
   return { agentId, hostId: 'B', workspaceId: 'repo' }
@@ -320,3 +320,13 @@ test('OpenClaw keeps an explicit restart outcome unknown during cancellation', a
   assert.equal(result.turn.status, 'unknown')
 })
 
+
+test('OpenClaw exposes stable DSH ids for the configured native agent list', () => {
+  const result = buildOpenClawAgentMap({ dshAgentId: 'openclaw', legacyMainAgent: 'rowlet', role: 'worker', agents: ['rowlet', 'charizard'] })
+  assert.deepEqual(result.agentIds, ['openclaw', 'openclaw.rowlet', 'openclaw.charizard'])
+  assert.deepEqual(result.agentMap, {
+    openclaw: { mainAgent: 'rowlet', role: 'worker' },
+    'openclaw.rowlet': { mainAgent: 'rowlet', role: 'worker' },
+    'openclaw.charizard': { mainAgent: 'charizard', role: 'worker' },
+  })
+})

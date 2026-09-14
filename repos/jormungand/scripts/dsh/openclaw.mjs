@@ -21,6 +21,22 @@ const UNKNOWN_STATUSES = new Set([
   'timeout',
   'unknown',
 ])
+export const DEFAULT_OPENCLAW_AGENTS = Object.freeze(['rowlet', 'roaringmoon', 'charizard', 'mrmime', 'gengar'])
+
+export function buildOpenClawAgentMap({ dshAgentId = 'openclaw', legacyMainAgent = 'rowlet', role = 'worker', agents = DEFAULT_OPENCLAW_AGENTS } = {}) {
+  const uniqueAgents = [...new Set(agents)]
+  if (uniqueAgents.length === 0 || uniqueAgents.some(agent => !DEFAULT_OPENCLAW_AGENTS.includes(agent))) {
+    throw new Error(`unsupported OpenClaw agent list; use ${DEFAULT_OPENCLAW_AGENTS.join(',')}`)
+  }
+  const agentMap = {
+    [dshAgentId]: { mainAgent: legacyMainAgent, role },
+  }
+  for (const mainAgent of uniqueAgents) {
+    agentMap[`${dshAgentId}.${mainAgent}`] = { mainAgent, role }
+  }
+  return { agentMap, agentIds: Object.keys(agentMap) }
+}
+
 const AMBIGUOUS_ERROR_CODES = new Set([
   'ABORT_ERR',
   'ECONNABORTED',
